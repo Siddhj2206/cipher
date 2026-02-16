@@ -233,8 +233,48 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Init { .. } => {
-            println!("TODO: Initialize book project");
+        Commands::Init {
+            book_dir,
+            profile,
+            from,
+            import_glossary,
+        } => {
+            match book::init_book(
+                &book_dir,
+                profile.as_deref(),
+                from.as_deref(),
+                import_glossary.as_deref(),
+            ) {
+                Ok(report) => {
+                    println!("Initialized book: {}", report.book_dir.display());
+                    println!();
+                    if !report.created_dirs.is_empty() {
+                        println!("Created directories:");
+                        for dir in &report.created_dirs {
+                            println!("  - {}/", dir);
+                        }
+                    }
+                    if !report.created_files.is_empty() {
+                        println!("Created files:");
+                        for file in &report.created_files {
+                            println!("  - {}", file);
+                        }
+                    }
+                    if !report.skipped_files.is_empty() {
+                        println!("Skipped (already exist):");
+                        for file in &report.skipped_files {
+                            println!("  - {}", file);
+                        }
+                    }
+                    if let Some(src) = report.imported_glossary {
+                        println!("Imported glossary from: {}", src.display());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Error initializing book: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Commands::Translate { .. } => {
             println!("TODO: Translate book");
