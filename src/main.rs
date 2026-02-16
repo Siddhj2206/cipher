@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod book;
+
 #[derive(Parser)]
 #[command(name = "cipher")]
 #[command(about = "A book translator powered by LLMs")]
@@ -138,6 +140,95 @@ enum ProfileCommands {
     },
 }
 
+fn run_book_doctor(dir: &PathBuf) {
+    use book::BookLayout;
+
+    let layout = BookLayout::discover(dir);
+
+    println!("Book directory: {}", layout.paths.root.display());
+    println!(
+        "Root exists: {}",
+        if layout.exists.root_dir { "yes" } else { "NO" }
+    );
+    println!();
+
+    println!("Configuration:");
+    println!(
+        "  config.json:      {}",
+        format_path_status(&layout.paths.config_json, layout.exists.config_json)
+    );
+    println!();
+
+    println!("Content directories:");
+    println!(
+        "  raw/              {}",
+        format_path_status(&layout.paths.raw_dir, layout.exists.raw_dir)
+    );
+
+    let effective_out = layout.effective_out_dir();
+    let is_legacy = layout.is_using_legacy_out();
+
+    println!(
+        "  tl/               {}",
+        format_path_status(&layout.paths.out_dir, layout.exists.out_dir)
+    );
+    if layout.exists.legacy_out_dir {
+        println!(
+            "  translated/       {} (legacy)",
+            format_path_status(&layout.paths.legacy_out_dir, layout.exists.legacy_out_dir)
+        );
+    }
+
+    if is_legacy {
+        println!("  Using legacy output dir: translated/");
+    } else {
+        println!("  Effective output: {}", effective_out.display());
+    }
+    println!();
+
+    println!("Glossary and style:");
+    println!(
+        "  glossary.json:    {}",
+        format_path_status(&layout.paths.glossary_json, layout.exists.glossary_json)
+    );
+    println!(
+        "  style.md:         {}",
+        format_path_status(&layout.paths.style_md, layout.exists.style_md)
+    );
+    println!();
+
+    println!("Tool state:");
+    println!(
+        "  .cipher/          {}",
+        format_path_status(&layout.paths.state_dir, layout.exists.state_dir)
+    );
+    println!();
+
+    if layout.is_valid_book() {
+        println!("Status: Valid book layout");
+    } else {
+        println!("Status: Invalid book layout");
+        if !layout.exists.root_dir {
+            eprintln!("  ERROR: Book directory does not exist");
+        }
+        if !layout.exists.raw_dir {
+            eprintln!("  ERROR: raw/ directory is missing");
+        }
+    }
+}
+
+fn run_global_doctor() {
+    println!("Running global doctor...");
+    println!();
+    println!("Global configuration: Not yet implemented (Feature 5)");
+    println!("Use: cipher doctor <bookDir> to check a book layout");
+}
+
+fn format_path_status(path: &PathBuf, exists: bool) -> String {
+    let status = if exists { "exists" } else { "missing" };
+    format!("({}) {}", status, path.display())
+}
+
 fn main() {
     let cli = Cli::parse();
 
@@ -159,11 +250,10 @@ fn main() {
         }
         Commands::Doctor { book_dir } => {
             if let Some(dir) = book_dir {
-                println!("Running doctor on: {}", dir.display());
+                run_book_doctor(&dir);
             } else {
-                println!("Running global doctor...");
+                run_global_doctor();
             }
-            println!("TODO: Implement doctor");
         }
         Commands::Profile { .. } => {
             println!("TODO: Manage profiles");
