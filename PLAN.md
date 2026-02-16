@@ -37,10 +37,11 @@ This document describes how the rebuilt tool (renamed from `btranslate` to `ciph
 
 Commands:
 
-- `cipher configure` (interactive; adds providers/keys; creates a default profile)
+- `cipher profile new` (interactive; adds providers/keys; creates a profile)
 - `cipher profile list`
 - `cipher profile show <name>`
 - `cipher profile set-default <name>`
+- `cipher profile test [name]`
 
 ### 2) Create a new book
 
@@ -169,6 +170,8 @@ Rules:
 - Deduping should be deterministic. Prefer `og_term` when present, otherwise `term`.
 - Importing merges new entries, skipping duplicates.
 
+There is no `status` field or pending state. The glossary is the enforced source of truth.
+
 ### Glossary injection strategy
 
 The tool should support modes (book-configurable):
@@ -180,12 +183,7 @@ If `smart` is used, it must be predictable and tuneable, with a clear fallback t
 
 ### Migration and import
 
-`cipher glossary import` should accept:
-
-- legacy text format
-- existing json arrays
-
-and convert into the canonical glossary format with `status=approved` by default (or user choice).
+`cipher glossary import` accepts canonical JSON arrays and merges into the book glossary. Duplicate entries (by normalized key) are skipped.
 
 ## Prompting and consistency
 
@@ -251,13 +249,12 @@ When overwriting an existing translated chapter:
 
 ## CLI surface (proposed)
 
-- `cipher configure`
 - `cipher init <bookDir>`
 - `cipher translate <bookDir>`
 - `cipher status <bookDir>`
 - `cipher retry-failed <bookDir>`
 - `cipher glossary list|import|export <bookDir>`
-- `cipher profile list|show|set-default|test`
+- `cipher profile new|list|show|set-default|test`
 - `cipher doctor [bookDir]` (validate config, paths, glossary parse, provider reachability)
 
 ## Implementation milestones
@@ -265,7 +262,7 @@ When overwriting an existing translated chapter:
 1) Skeleton
 - CLI layout + command parsing
 - book init scaffold
-- global config + profile resolution
+- global config + interactive profile creation
 
 2) Translation core
 - chapter discovery + ordering
@@ -346,11 +343,11 @@ Scope
 - Define `glossary.json` schema and implement:
   - load/save
   - deterministic dedupe
-  - rendering for prompt injection (approved only)
+  - rendering for prompt injection
 - Add commands:
-  - `cipher glossary list <bookDir> [--status approved|pending]`
-  - `cipher glossary approve <id|term>`
-  - `cipher glossary reject <id|term>`
+  - `cipher glossary list <bookDir>`
+  - `cipher glossary import <bookDir> <path>`
+  - `cipher glossary export <bookDir> <path>`
 
 Glossary entry fields
 - `term` (string)
@@ -358,26 +355,27 @@ Glossary entry fields
 - `definition` (string)
 - `notes` (string|null)
 
-Commands
-- `cipher glossary list <bookDir>`
-- `cipher glossary import <bookDir> <path>`
-- `cipher glossary export <bookDir> <path>`
-
 Done when
 - Glossary round-trips cleanly and commands behave deterministically.
 
-### Feature 5: Global config (XDG) + profile resolution (no secrets in books)
+### Feature 5: Global config (XDG) + interactive profile creation (no secrets in books)
 
 Scope
-- Implement a global config file in the user config directory containing:
+- Implement a global config file in the user config directory (`~/.config/cipher/config.json`) containing:
   - providers (endpoint/base_url + provider kind)
-  - API keys (multiple)
-  - profiles (provider + model + fallback chain + generation knobs)
-  - defaults (timeouts, retries, validation policy)
+  - API keys (multiple per provider)
+  - profiles (provider + model + generation knobs)
 - Book `config.json` references a profile name.
+- Add interactive `cipher profile new`:
+  - Select provider kind (OpenAI or OpenAI-compatible)
+  - Enter base URL (only for compatible)
+  - Enter API key
+  - Enter model name
+  - Optionally set as default
+- Provider design is extensible for future provider kinds (rig.rs-native or custom).
 
 Done when
-- `cipher profile list|show|set-default` works.
+- `cipher profile new|list|show|set-default|test` works.
 - `cipher doctor <bookDir>` can resolve the effective profile for that book.
 
 ### Feature 6: Provider layer using rig.rs (MVP)
@@ -400,10 +398,9 @@ Scope
 - Translation loop:
   - skip if output exists (default)
   - write translation to `tl/<same-filename>.md`
-  
 
 Done when
-- Translating a folder produces outputs and updates `glossary.json` with `pending` items.
+- Translating a folder produces outputs.
 
 ### Feature 8: `.cipher/` run state + resumability
 
@@ -448,14 +445,7 @@ Scope
 Done when
 - Failed chapters can be retried without reprocessing successful chapters.
 
-### Feature 12: Interactive workflows (configure + glossary review)
 
-Scope
-- `cipher configure` interactive global config creation/editing.
-- `cipher glossary review <bookDir>` interactive approve/edit/reject for pending items.
-
-Done when
-- A user can go from empty machine state to a configured profile, translate a book, and review glossary without editing JSON manually.
 
 ### Feature 13: Multiple keys + cooldown/rotation
 

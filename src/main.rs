@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod book;
+mod config;
 mod glossary;
 
 #[derive(Parser)]
@@ -71,8 +72,6 @@ enum Commands {
         #[command(subcommand)]
         command: ProfileCommands,
     },
-    /// Interactive configuration
-    Configure,
 }
 
 #[derive(Subcommand)]
@@ -100,6 +99,8 @@ enum GlossaryCommands {
 
 #[derive(Subcommand)]
 enum ProfileCommands {
+    /// Create a new profile (interactive)
+    New,
     /// List available profiles
     List,
     /// Show profile details
@@ -119,7 +120,7 @@ enum ProfileCommands {
     },
 }
 
-fn run_book_doctor(dir: &PathBuf) {
+fn run_book_doctor(dir: &PathBuf, config: &config::GlobalConfig) {
     use book::BookLayout;
 
     let layout = BookLayout::discover(dir);
@@ -194,13 +195,58 @@ fn run_book_doctor(dir: &PathBuf) {
             eprintln!("  ERROR: raw/ directory is missing");
         }
     }
+
+    println!();
+    println!("Profile configuration:");
+    let book_config = book::load_book_config(&layout.paths.config_json).unwrap_or_default();
+    let profile_name = config.effective_profile_name(book_config.profile.as_deref());
+
+    if let Some(name) = profile_name {
+        match config.resolve_profile(name) {
+            Some(profile) => {
+                println!("  Profile: {}", name);
+                let is_default = config.default_profile.as_ref() == Some(&name.to_string());
+                if is_default {
+                    println!("    [default]");
+                }
+                if book_config.profile.is_some() {
+                    println!("    [set in book config]");
+                }
+                println!("  Provider: {}", profile.provider);
+                println!("  Model: {}", profile.model);
+
+                let validation = config::validate_profile(config, name);
+                if validation.is_valid() {
+                    println!("  Status: ✓ Valid");
+                } else {
+                    println!("  Status: ✗ Configuration errors");
+                    for err in &validation.errors {
+                        println!("    - {}", err);
+                    }
+                }
+            }
+            None => {
+                println!("  Profile: {} (not found)", name);
+                if book_config.profile.is_some() {
+                    println!("    [set in book config]");
+                }
+            }
+        }
+    } else {
+        println!("  No profile configured.");
+        println!("  Run: cipher profile new");
+    }
 }
 
-fn run_global_doctor() {
-    println!("Running global doctor...");
-    println!();
-    println!("Global configuration: Not yet implemented (Feature 5)");
-    println!("Use: cipher doctor <bookDir> to check a book layout");
+fn run_global_doctor(config: &config::GlobalConfig) {
+    config::profile::run_global_doctor(config);
+}
+
+fn run_profile_command(
+    config: &mut config::GlobalConfig,
+    command: ProfileCommands,
+) -> anyhow::Result<()> {
+    config::cli::run_profile_command(config, command)
 }
 
 fn format_path_status(path: &PathBuf, exists: bool) -> String {
@@ -271,17 +317,33 @@ fn main() {
             }
         }
         Commands::Doctor { book_dir } => {
+            let config = match config::GlobalConfig::load() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error loading global config: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
             if let Some(dir) = book_dir {
-                run_book_doctor(&dir);
+                run_book_doctor(&dir, &config);
             } else {
-                run_global_doctor();
+                run_global_doctor(&config);
             }
         }
-        Commands::Profile { .. } => {
-            println!("TODO: Manage profiles");
-        }
-        Commands::Configure => {
-            println!("TODO: Interactive configuration");
+        Commands::Profile { command } => {
+            let mut config = match config::GlobalConfig::load() {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error loading global config: {}", e);
+                    std::process::exit(1);
+                }
+            };
+
+            if let Err(e) = run_profile_command(&mut config, command) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
     }
 }

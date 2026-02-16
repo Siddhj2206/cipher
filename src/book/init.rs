@@ -1,3 +1,4 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
@@ -209,4 +210,15 @@ mod tests {
         let config = BookConfig::with_profile("default");
         assert_eq!(config.profile, Some("default".to_string()));
     }
+}
+
+pub fn load_book_config(path: &Path) -> anyhow::Result<BookConfig> {
+    if !path.exists() {
+        return Ok(BookConfig::default());
+    }
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read book config from {}", path.display()))?;
+    let config: BookConfig = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse book config from {}", path.display()))?;
+    Ok(config)
 }
