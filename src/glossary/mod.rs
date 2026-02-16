@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
@@ -49,7 +49,7 @@ fn dedupe_and_sort_terms(terms: &mut Vec<GlossaryTerm>) {
 }
 
 fn normalize_key(s: &str) -> String {
-    s.trim().split_whitespace().collect::<Vec<_>>().join(" ")
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 pub fn render_for_prompt(terms: &[GlossaryTerm]) -> String {

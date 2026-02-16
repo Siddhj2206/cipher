@@ -209,6 +209,7 @@ Each chapter request should include:
 The model response should include:
 
 - translated markdown
+- new glossary terms identified during translation
 
 ## Validation and safety
 
@@ -382,25 +383,54 @@ Done when
 
 Scope
 - Implement a provider abstraction backed by `rig` that can:
-  - send a prompt
-  - parse a structured JSON response into `TranslationResponse`
-- Start with an OpenAI-compatible provider (works for OpenAI and Gemini’s compatible endpoint).
+  - Send a structured prompt built from Book-Translator-Go's base prompt
+  - Parse a structured JSON response with `translation` and `new_glossary_terms`
+- Provider design:
+  - File-per-provider structure (`src/translate/providers/openai.rs`)
+  - `Provider` trait for modularity (easy to add more providers later)
+  - OpenAI and OpenAI-compatible providers (both use rig's OpenAI provider with optional base_url)
+- Use rig's `Extractor` for typed JSON output with JSON schema derived from Rust types
+- Base prompt copied from Book-Translator-Go:
+  - Tone/atmosphere requirements
+  - Dialogue, pacing, cultural nuance guidelines
+  - Extremely selective glossary term criteria
+  - Strict formatting: must start with `# Chapter X: Title` or `# Chapter X`
 
 Done when
-- A small internal smoke test can call the model (behind an env flag) and parse `TranslationResponse`.
+- `Translator::translate_chapter()` returns `TranslationResponse` with translation and new glossary terms.
+- Provider can be constructed from global config and profile.
 
-### Feature 7: `cipher translate <bookDir>` (single chapter -> batch)
+### Feature 7: `cipher translate <bookDir>` (batch translation)
 
 Scope
 - Chapter discovery:
-  - list `.md` files under `raw/`
-  - numeric-first stable ordering (files without digits sort last)
+  - List `.md` files under `raw/`
+  - Numeric-first stable ordering (files without digits sort last)
 - Translation loop:
-  - skip if output exists (default)
-  - write translation to `tl/<same-filename>.md`
+  - Load global config and resolve effective profile for the book
+  - Skip if output exists (default)
+  - Translate each chapter using the provider
+  - Validate output before accepting:
+    - Non-empty
+    - Starts with `#` heading
+    - Strict heading: must start with `# Chapter X: Title` or `# Chapter X`
+    - Balanced code fences
+  - On validation failure: mark chapter as failed, continue (unless `--fail-fast`)
+  - On validation success:
+    - Write translation to `tl/<same-filename>.md`
+    - Auto-merge `new_glossary_terms` into `glossary.json` (dedupe by og_term/term)
+- Overwrite controls:
+  - `--overwrite` - retranslate even if output exists
+  - `--overwrite-bad` - only retranslate outputs that fail validation
+  - `--backup` (default true) - timestamped backups before overwrite
+- State tracking:
+  - Store per-chapter status under `.cipher/`
+  - Record success/failed/skipped counts
 
 Done when
-- Translating a folder produces outputs.
+- Translating a folder produces outputs in deterministic order.
+- Glossary is updated with new terms only from successfully translated chapters.
+- Overwrite-bad, skip, and fail-fast behaviors work correctly.
 
 ### Feature 8: `.cipher/` run state + resumability
 

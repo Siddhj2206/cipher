@@ -1,6 +1,8 @@
 //! OpenAI provider implementation
 //!
 //! Supports both OpenAI and OpenAI-compatible endpoints
+//! - OpenAI: Uses Responses API (best structured output support)
+//! - OpenAI-compatible: Uses Chat Completions API (more widely supported)
 
 use crate::translate::prompt::build_prompt;
 use crate::translate::providers::{Provider, ProviderParams};
@@ -13,6 +15,7 @@ pub struct OpenAiProvider {
     model: String,
     temperature: Option<f32>,
     max_tokens: Option<u64>,
+    use_completions_api: bool,
 }
 
 impl OpenAiProvider {
@@ -28,11 +31,15 @@ impl OpenAiProvider {
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {}", e))?
         };
 
+        // Use completions API for OpenAI-compatible endpoints (they typically don't support Responses API)
+        let use_completions_api = base_url.is_some();
+
         Ok(Self {
             client,
             model: params.model,
             temperature: params.temperature,
             max_tokens: params.max_tokens,
+            use_completions_api,
         })
     }
 }
@@ -41,18 +48,33 @@ impl OpenAiProvider {
 impl Provider for OpenAiProvider {
     async fn translate(&self, req: TranslationRequest) -> Result<TranslationResponse> {
         let prompt = build_prompt(&req);
-        
-        let extractor = self
-            .client
-            .extractor::<TranslationResponse>(&self.model)
-            .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
-            .build();
-        
-        let response = extractor
-            .extract(&prompt)
-            .await
-            .context("Failed to extract translation from LLM")?;
-        
+
+        let response = if self.use_completions_api {
+            // Use Chat Completions API (for OpenAI-compatible endpoints)
+            let completions_client = self.client.clone().completions_api();
+            let extractor = completions_client
+                .extractor::<TranslationResponse>(&self.model)
+                .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
+                .build();
+
+            extractor
+                .extract(&prompt)
+                .await
+                .context("Failed to extract translation from LLM (Chat Completions API)")?
+        } else {
+            // Use Responses API (for real OpenAI - best structured output support)
+            let extractor = self
+                .client
+                .extractor::<TranslationResponse>(&self.model)
+                .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
+                .build();
+
+            extractor
+                .extract(&prompt)
+                .await
+                .context("Failed to extract translation from LLM (Responses API)")?
+        };
+
         Ok(response)
     }
 }

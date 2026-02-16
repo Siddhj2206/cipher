@@ -4,7 +4,9 @@ use std::path::PathBuf;
 mod book;
 mod config;
 mod glossary;
+mod state;
 mod translate;
+mod validate;
 
 #[derive(Parser)]
 #[command(name = "cipher")]
@@ -303,8 +305,24 @@ async fn main() {
                 }
             }
         }
-        Commands::Translate { .. } => {
-            println!("TODO: Translate book");
+        Commands::Translate {
+            book_dir,
+            overwrite,
+            overwrite_bad,
+            backup,
+            fail_fast,
+        } => {
+            let options = translate::TranslateOptions {
+                overwrite,
+                overwrite_bad,
+                backup,
+                fail_fast,
+            };
+            
+            if let Err(e) = translate::translate_book(&book_dir, options).await {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
         Commands::Status { .. } => {
             println!("TODO: Show book status");

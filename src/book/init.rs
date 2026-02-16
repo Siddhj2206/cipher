@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
@@ -134,10 +134,8 @@ fn write_json_if_missing<T: Serialize>(
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
-    } else {
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            report.skipped_files.push(name.to_string());
-        }
+    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        report.skipped_files.push(name.to_string());
     }
     Ok(())
 }
@@ -153,10 +151,8 @@ fn write_file_if_missing(
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
-    } else {
-        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            report.skipped_files.push(name.to_string());
-        }
+    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        report.skipped_files.push(name.to_string());
     }
     Ok(())
 }
@@ -167,10 +163,8 @@ fn copy_file_if_missing(src: &Path, dst: &Path, report: &mut InitReport) -> anyh
         if let Some(name) = dst.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
-    } else {
-        if let Some(name) = dst.file_name().and_then(|n| n.to_str()) {
-            report.skipped_files.push(name.to_string());
-        }
+    } else if let Some(name) = dst.file_name().and_then(|n| n.to_str()) {
+        report.skipped_files.push(name.to_string());
     }
     Ok(())
 }

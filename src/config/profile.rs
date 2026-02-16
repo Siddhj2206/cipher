@@ -186,7 +186,7 @@ pub fn list_profiles(config: &GlobalConfig) {
 
     println!("Configured profiles:\n");
     for (name, profile) in &config.profiles {
-        let is_default = config.default_profile.as_ref().map(|s| s.as_str()) == Some(name);
+        let is_default = config.default_profile.as_deref() == Some(name);
         let marker = if is_default { " (default)" } else { "" };
         println!("{}{}", name, marker);
         println!("  Provider: {}", profile.provider);
@@ -204,7 +204,7 @@ pub fn show_profile(config: &GlobalConfig, name: &str) {
         return;
     };
 
-    let is_default = config.default_profile.as_ref().map(|s| s.as_str()) == Some(name);
+    let is_default = config.default_profile.as_deref() == Some(name);
     println!("Profile: {}", name);
     if is_default {
         println!("  [default profile]");

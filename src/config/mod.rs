@@ -8,6 +8,7 @@ use std::fs;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct GlobalConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
@@ -19,16 +20,6 @@ pub struct GlobalConfig {
     pub profiles: BTreeMap<String, ProfileConfig>,
 }
 
-impl Default for GlobalConfig {
-    fn default() -> Self {
-        Self {
-            default_profile: None,
-            providers: BTreeMap::new(),
-            keys: BTreeMap::new(),
-            profiles: BTreeMap::new(),
-        }
-    }
-}
 
 impl GlobalConfig {
     pub fn config_path() -> Result<PathBuf> {
@@ -81,7 +72,7 @@ impl GlobalConfig {
     }
 
     pub fn effective_profile_name<'a>(&'a self, book_profile: Option<&'a str>) -> Option<&'a str> {
-        book_profile.or_else(|| self.default_profile.as_deref())
+        book_profile.or(self.default_profile.as_deref())
     }
 }
 
