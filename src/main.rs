@@ -4,6 +4,7 @@ use std::path::PathBuf;
 mod book;
 mod config;
 mod glossary;
+mod translate;
 
 #[derive(Parser)]
 #[command(name = "cipher")]
@@ -254,7 +255,8 @@ fn format_path_status(path: &PathBuf, exists: bool) -> String {
     format!("({}) {}", status, path.display())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
 
     match cli.command {

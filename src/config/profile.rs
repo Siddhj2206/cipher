@@ -42,12 +42,10 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
         .context("Failed to select provider type")?;
 
     let provider_name: String;
-    let base_url: Option<String>;
 
     match selection {
         0 => {
             provider_name = "openai".to_string();
-            base_url = Some("https://api.openai.com/v1".to_string());
             if !config.providers.contains_key(&provider_name) {
                 config.providers.insert(
                     provider_name.clone(),
@@ -79,7 +77,6 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
                 .default("https://api.openai.com/v1".to_string())
                 .interact_text()
                 .context("Failed to get base URL")?;
-            base_url = Some(url.clone());
 
             config.providers.insert(
                 provider_name.clone(),
