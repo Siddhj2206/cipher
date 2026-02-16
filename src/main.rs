@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod book;
+mod glossary;
 
 #[derive(Parser)]
 #[command(name = "cipher")]
@@ -80,34 +81,12 @@ enum GlossaryCommands {
     List {
         /// Directory containing the book
         book_dir: PathBuf,
-        /// Filter by status
-        #[arg(long)]
-        status: Option<String>,
     },
-    /// Review pending entries interactively
-    Review {
-        /// Directory containing the book
-        book_dir: PathBuf,
-    },
-    /// Approve a glossary entry
-    Approve {
-        /// Directory containing the book
-        book_dir: PathBuf,
-        /// Entry ID or term to approve
-        entry: String,
-    },
-    /// Reject a glossary entry
-    Reject {
-        /// Directory containing the book
-        book_dir: PathBuf,
-        /// Entry ID or term to reject
-        entry: String,
-    },
-    /// Import glossary from file
+    /// Import glossary from file (merges into existing)
     Import {
         /// Directory containing the book
         book_dir: PathBuf,
-        /// Path to glossary file (json or txt)
+        /// Path to glossary file (json)
         path: PathBuf,
     },
     /// Export glossary to file
@@ -285,8 +264,11 @@ fn main() {
         Commands::RetryFailed { .. } => {
             println!("TODO: Retry failed chapters");
         }
-        Commands::Glossary { .. } => {
-            println!("TODO: Manage glossary");
+        Commands::Glossary { command } => {
+            if let Err(e) = run_glossary_command(command) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
         Commands::Doctor { book_dir } => {
             if let Some(dir) = book_dir {
@@ -302,4 +284,72 @@ fn main() {
             println!("TODO: Interactive configuration");
         }
     }
+}
+
+fn run_glossary_command(command: GlossaryCommands) -> Result<(), anyhow::Error> {
+    use glossary::{load_glossary, merge_terms, save_glossary};
+
+    match command {
+        GlossaryCommands::List { book_dir } => {
+            let layout = book::BookLayout::discover(&book_dir);
+            let terms = load_glossary(&layout.paths.glossary_json)?;
+
+            if terms.is_empty() {
+                println!("No glossary entries found.");
+            } else {
+                println!("Glossary entries ({}):\n", terms.len());
+                for (i, term) in terms.iter().enumerate() {
+                    let def_preview = if term.definition.len() > 60 {
+                        format!("{}...", &term.definition[..60])
+                    } else {
+                        term.definition.clone()
+                    };
+                    if let Some(ref og) = term.og_term {
+                        println!("{}: {} [{}] - {}", i + 1, term.term, og, def_preview);
+                    } else {
+                        println!("{}: {} - {}", i + 1, term.term, def_preview);
+                    }
+                }
+            }
+        }
+        GlossaryCommands::Import { book_dir, path } => {
+            let layout = book::BookLayout::discover(&book_dir);
+            let incoming = load_glossary(&path)?;
+
+            if incoming.is_empty() {
+                println!("Import file is empty. Nothing to import.");
+                return Ok(());
+            }
+
+            let existing = load_glossary(&layout.paths.glossary_json)?;
+            let (merged, added, skipped) = merge_terms(existing, incoming);
+
+            if added > 0 {
+                let mut merged_mut = merged;
+                save_glossary(&layout.paths.glossary_json, &mut merged_mut)?;
+                println!(
+                    "Import complete: {} added, {} skipped (duplicates)",
+                    added, skipped
+                );
+            } else {
+                println!(
+                    "Import complete: {} added, {} skipped (all duplicates)",
+                    added, skipped
+                );
+            }
+        }
+        GlossaryCommands::Export { book_dir, path } => {
+            let layout = book::BookLayout::discover(&book_dir);
+            let terms = load_glossary(&layout.paths.glossary_json)?;
+
+            let mut terms_mut = terms;
+            save_glossary(&path, &mut terms_mut)?;
+            println!(
+                "Exported {} glossary entries to {}",
+                terms_mut.len(),
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }

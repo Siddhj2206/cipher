@@ -87,15 +87,11 @@ Companion commands:
 
 Glossary updates should be a first-class user step.
 
-- During translation, model-suggested terms are saved as `pending`.
-- Only `approved` glossary entries are injected into the translation prompt.
+- Commands:
 
-Commands:
-
-- `cipher glossary list /path/to/book` (filter by status: approved/pending)
-- `cipher glossary review /path/to/book` (interactive approve/edit/reject)
-- `cipher glossary approve <id|term>` / `cipher glossary reject <id|term>`
-- `cipher glossary export /path/to/book --format <...>` (optional)
+- `cipher glossary list /path/to/book`
+- `cipher glossary import <bookDir> <path>`
+- `cipher glossary export <bookDir> <path>`
 
 ## Book layout
 
@@ -158,23 +154,20 @@ Fallback should not increase routine request volume.
 
 ### Canonical glossary file
 
-Use a single canonical glossary file per book (human-editable), with enough metadata to support review.
+Use a single canonical glossary file per book (human-editable). This is the source of truth for enforced translations.
 
-Recommended fields per entry:
+Fields per entry:
 
 - `term`: translated term to use (English)
 - `og_term`: original-language form (optional)
 - `definition`: short explanation for the model and the reader
-- `status`: `approved` or `pending`
 - `notes`: optional user notes (pronunciation, context)
-- `first_seen`: chapter/file id (optional)
-- `last_seen`: chapter/file id (optional)
 
 Rules:
 
-- Only `approved` entries are injected.
-- New terms from the model are appended as `pending` (deduped).
+- All entries in the glossary are treated as authoritative and injected into translation prompts.
 - Deduping should be deterministic. Prefer `og_term` when present, otherwise `term`.
+- Importing merges new entries, skipping duplicates.
 
 ### Glossary injection strategy
 
@@ -218,7 +211,6 @@ Each chapter request should include:
 The model response should include:
 
 - translated markdown
-- `new_glossary_terms` suggestions (saved as pending)
 
 ## Validation and safety
 
@@ -264,7 +256,7 @@ When overwriting an existing translated chapter:
 - `cipher translate <bookDir>`
 - `cipher status <bookDir>`
 - `cipher retry-failed <bookDir>`
-- `cipher glossary list|review|approve|reject|import|export <bookDir>`
+- `cipher glossary list|import|export <bookDir>`
 - `cipher profile list|show|set-default|test`
 - `cipher doctor [bookDir]` (validate config, paths, glossary parse, provider reachability)
 
@@ -282,8 +274,7 @@ When overwriting an existing translated chapter:
 
 3) Glossary workflow
 - canonical glossary format
-- pending/approved split
-- glossary review/approve/reject commands
+- glossary list/import/export commands
 
 4) Provider robustness
 - multiple API keys + cooldown/rotation
@@ -304,7 +295,7 @@ This section is the step-by-step implementation plan for building `cipher` in Ru
 - Default book layout: `raw/` input, `tl/` output, `glossary.json`, `style.md`, `.cipher/` state.
 - Legacy compatibility: accept `translated/` as an output folder name when importing/migrating, but new books default to `tl/`.
 - Book config file: `config.json` (portable; no secrets).
-- Canonical glossary: JSON with stable `id` per entry; only `approved` injected.
+- Canonical glossary: JSON format with term/og_term/definition/notes.
 - Translation response: structured JSON with `translation` and `new_glossary_terms`.
 
 ### Feature 1: CLI skeleton + project structure
@@ -361,15 +352,16 @@ Scope
   - `cipher glossary approve <id|term>`
   - `cipher glossary reject <id|term>`
 
-Glossary entry fields (minimum)
-- `id` (string)
+Glossary entry fields
 - `term` (string)
 - `og_term` (string|null)
 - `definition` (string)
-- `status` (`approved`|`pending`)
 - `notes` (string|null)
-- `first_seen` (string|null)
-- `last_seen` (string|null)
+
+Commands
+- `cipher glossary list <bookDir>`
+- `cipher glossary import <bookDir> <path>`
+- `cipher glossary export <bookDir> <path>`
 
 Done when
 - Glossary round-trips cleanly and commands behave deterministically.
@@ -408,7 +400,7 @@ Scope
 - Translation loop:
   - skip if output exists (default)
   - write translation to `tl/<same-filename>.md`
-  - append model-suggested glossary terms as `pending` (deduped)
+  
 
 Done when
 - Translating a folder produces outputs and updates `glossary.json` with `pending` items.
@@ -499,4 +491,4 @@ Done when
 
 - Should `cipher init` default to `full` glossary injection or `smart`?
 - What is the minimum validation strictness that catches bad outputs without false positives?
-- Should the canonical glossary entries be addressable by stable ids (recommended) or by term text only?
+
