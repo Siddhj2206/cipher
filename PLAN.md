@@ -295,6 +295,206 @@ When overwriting an existing translated chapter:
 - overwrite-bad flow
 - improved logging + per-chapter summaries
 
+## Engineering implementation plan (Rust + rig.rs)
+
+This section is the step-by-step implementation plan for building `cipher` in Rust, using `rig` (rig.rs) for LLM calls. The goal is to deliver working value in small increments; each feature should land in a runnable state.
+
+### Decisions and defaults (lock these in early)
+
+- Default book layout: `raw/` input, `tl/` output, `glossary.json`, `style.md`, `.cipher/` state.
+- Legacy compatibility: accept `translated/` as an output folder name when importing/migrating, but new books default to `tl/`.
+- Book config file: `config.json` (portable; no secrets).
+- Canonical glossary: JSON with stable `id` per entry; only `approved` injected.
+- Translation response: structured JSON with `translation` and `new_glossary_terms`.
+
+### Feature 1: CLI skeleton + project structure
+
+Scope
+- Choose CLI framework (`clap`) and error/reporting conventions.
+- Establish module layout so later features don’t require large refactors.
+
+Implementation notes
+- Crate layout (suggested):
+  - `src/main.rs` (thin) -> `src/cli.rs`
+  - `src/book/*` (book layout + config)
+  - `src/config/*` (global config, profiles, key state)
+  - `src/glossary/*` (parse, dedupe, render for prompt)
+  - `src/translate/*` (chapter discovery, prompting, response parsing)
+  - `src/state/*` (.cipher run state)
+  - `src/validate.rs` (output validation)
+  - `src/fs.rs` (atomic writes + backups)
+
+Done when
+- `cipher --help` lists all planned subcommands (even if some are stubs).
+- `cipher doctor` can run and prints a placeholder report.
+
+### Feature 2: Book layout discovery + path resolution
+
+Scope
+- Given a `bookDir`, resolve all paths (raw dir, output dir, glossary path, style path, state dir).
+
+Done when
+- `cipher doctor <bookDir>` reports the resolved paths and whether each exists.
+
+### Feature 3: `cipher init <bookDir>` scaffold
+
+Scope
+- Create directories and starter files:
+  - `raw/`, `tl/`, `.cipher/`
+  - `config.json` (portable defaults)
+  - `glossary.json` (empty but valid)
+  - `style.md` (template)
+
+Done when
+- Running `cipher init ./MyBook` creates a ready-to-translate scaffold.
+- Re-running init is non-destructive (does not overwrite user-edited files by default).
+
+### Feature 4: Canonical glossary format + basic commands
+
+Scope
+- Define `glossary.json` schema and implement:
+  - load/save
+  - deterministic dedupe
+  - rendering for prompt injection (approved only)
+- Add commands:
+  - `cipher glossary list <bookDir> [--status approved|pending]`
+  - `cipher glossary approve <id|term>`
+  - `cipher glossary reject <id|term>`
+
+Glossary entry fields (minimum)
+- `id` (string)
+- `term` (string)
+- `og_term` (string|null)
+- `definition` (string)
+- `status` (`approved`|`pending`)
+- `notes` (string|null)
+- `first_seen` (string|null)
+- `last_seen` (string|null)
+
+Done when
+- Glossary round-trips cleanly and commands behave deterministically.
+
+### Feature 5: Global config (XDG) + profile resolution (no secrets in books)
+
+Scope
+- Implement a global config file in the user config directory containing:
+  - providers (endpoint/base_url + provider kind)
+  - API keys (multiple)
+  - profiles (provider + model + fallback chain + generation knobs)
+  - defaults (timeouts, retries, validation policy)
+- Book `config.json` references a profile name.
+
+Done when
+- `cipher profile list|show|set-default` works.
+- `cipher doctor <bookDir>` can resolve the effective profile for that book.
+
+### Feature 6: Provider layer using rig.rs (MVP)
+
+Scope
+- Implement a provider abstraction backed by `rig` that can:
+  - send a prompt
+  - parse a structured JSON response into `TranslationResponse`
+- Start with an OpenAI-compatible provider (works for OpenAI and Gemini’s compatible endpoint).
+
+Done when
+- A small internal smoke test can call the model (behind an env flag) and parse `TranslationResponse`.
+
+### Feature 7: `cipher translate <bookDir>` (single chapter -> batch)
+
+Scope
+- Chapter discovery:
+  - list `.md` files under `raw/`
+  - numeric-first stable ordering (files without digits sort last)
+- Translation loop:
+  - skip if output exists (default)
+  - write translation to `tl/<same-filename>.md`
+  - append model-suggested glossary terms as `pending` (deduped)
+
+Done when
+- Translating a folder produces outputs and updates `glossary.json` with `pending` items.
+
+### Feature 8: `.cipher/` run state + resumability
+
+Scope
+- Persist per-chapter status and last errors under `.cipher/`.
+- Record enough metadata for debugging (provider, model, timing) without leaking secrets.
+
+Done when
+- `cipher status <bookDir>` shows counts of success/failed/skipped/pending.
+- Re-running translate uses existing outputs + state to skip work predictably.
+
+### Feature 9: Validation + repair retry
+
+Scope
+- Implement minimum output validation:
+  - non-empty
+  - balanced code fences
+  - starts with `#` heading (configurable)
+  - does not contain obvious JSON/schema leakage
+- On failure: one repair retry with a “repair instruction” prompt.
+
+Done when
+- Bad outputs are detected and either repaired or marked failed with a clear reason.
+
+### Feature 10: Overwrite, overwrite-bad, atomic writes, backups
+
+Scope
+- Implement:
+  - `--overwrite`
+  - `--overwrite-bad`
+  - atomic output writing
+  - timestamped backups on overwrite (default on overwrite)
+
+Done when
+- Overwrites never corrupt files (even on crash) and backups are created deterministically.
+
+### Feature 11: Retry failed
+
+Scope
+- `cipher retry-failed <bookDir>` retries only failed chapters using the same rules as translate.
+
+Done when
+- Failed chapters can be retried without reprocessing successful chapters.
+
+### Feature 12: Interactive workflows (configure + glossary review)
+
+Scope
+- `cipher configure` interactive global config creation/editing.
+- `cipher glossary review <bookDir>` interactive approve/edit/reject for pending items.
+
+Done when
+- A user can go from empty machine state to a configured profile, translate a book, and review glossary without editing JSON manually.
+
+### Feature 13: Multiple keys + cooldown/rotation
+
+Scope
+- Store per-key cooldown + last-used state outside books.
+- Selection algorithm:
+  - choose an available key by rotation
+  - on quota/rate-limit errors, cooldown that key until T
+  - retry with another available key
+
+Done when
+- Sustained batch runs rotate keys automatically and recover from 429/quota errors.
+
+### Feature 14: Fallback chain (models/providers)
+
+Scope
+- Implement fallback strictly on failure, not for routine requests.
+- Add strict mode to disable fallback for reproducibility.
+
+Done when
+- A configured fallback chain is exercised only when needed, and decisions are visible in logs/state.
+
+### Feature 15: Smart glossary injection (optional, later)
+
+Scope
+- Add `smart` injection mode to include only relevant approved terms.
+- Keep it predictable/tuneable and fall back to `full` when uncertain.
+
+Done when
+- Smart mode reduces prompt size without causing term drift; falling back to full is explainable.
+
 ## Open questions
 
 - Should `cipher init` default to `full` glossary injection or `smart`?
