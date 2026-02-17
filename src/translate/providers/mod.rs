@@ -28,22 +28,32 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     let profile = config
         .resolve_profile(profile_name)
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
-    
+
     let provider_config = config
         .resolve_provider(&profile.provider)
         .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", profile.provider))?;
-    
+
     let api_key = config
-        .get_provider_key(&profile.provider)
-        .ok_or_else(|| anyhow::anyhow!("No API key for provider '{}'", profile.provider))?;
-    
+        .get_provider_key_by_label(&profile.provider, profile.key.as_deref())
+        .ok_or_else(|| {
+            if let Some(label) = profile.key.as_deref() {
+                anyhow::anyhow!(
+                    "No API key labeled '{}' for provider '{}'",
+                    label,
+                    profile.provider
+                )
+            } else {
+                anyhow::anyhow!("No API key for provider '{}'", profile.provider)
+            }
+        })?;
+
     let params = ProviderParams {
         api_key: api_key.to_string(),
         model: profile.model.clone(),
         temperature: profile.temperature,
         max_tokens: None, // Can add to profile later
     };
-    
+
     match provider_config.kind.as_str() {
         "openai" => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
         "openai_compatible" => {
@@ -51,7 +61,10 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
                 .base_url
                 .as_deref()
                 .ok_or_else(|| anyhow::anyhow!("OpenAI-compatible provider requires base_url"))?;
-            Ok(Box::new(openai::OpenAiProvider::new(params, Some(base_url))?))
+            Ok(Box::new(openai::OpenAiProvider::new(
+                params,
+                Some(base_url),
+            )?))
         }
         _ => anyhow::bail!("Unknown provider kind: {}", provider_config.kind),
     }
@@ -62,14 +75,27 @@ pub fn validate_provider_config(config: &GlobalConfig, profile: &ProfileConfig) 
     let provider = config
         .resolve_provider(&profile.provider)
         .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", profile.provider))?;
-    
+
     config
-        .get_provider_key(&profile.provider)
-        .ok_or_else(|| anyhow::anyhow!("No API key for provider '{}'", profile.provider))?;
-    
+        .get_provider_key_by_label(&profile.provider, profile.key.as_deref())
+        .ok_or_else(|| {
+            if let Some(label) = profile.key.as_deref() {
+                anyhow::anyhow!(
+                    "No API key labeled '{}' for provider '{}'",
+                    label,
+                    profile.provider
+                )
+            } else {
+                anyhow::anyhow!("No API key for provider '{}'", profile.provider)
+            }
+        })?;
+
     if provider.kind == "openai_compatible" && provider.base_url.is_none() {
-        anyhow::bail!("OpenAI-compatible provider '{}' requires base_url", profile.provider);
+        anyhow::bail!(
+            "OpenAI-compatible provider '{}' requires base_url",
+            profile.provider
+        );
     }
-    
+
     Ok(())
 }

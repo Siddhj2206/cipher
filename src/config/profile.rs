@@ -1,7 +1,76 @@
 use anyhow::Context;
-use dialoguer::{Input, Select};
+use dialoguer::{Confirm, Input, Password, Select};
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig};
+
+fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
+    match cfg.kind.as_str() {
+        "openai" => format!("{} (OpenAI)", name),
+        "openai_compatible" => {
+            if let Some(url) = cfg.base_url.as_deref() {
+                format!("{} (OpenAI-compatible, {})", name, url)
+            } else {
+                format!("{} (OpenAI-compatible)", name)
+            }
+        }
+        other => format!("{} ({})", name, other),
+    }
+}
+
+fn prompt_provider_name() -> anyhow::Result<String> {
+    loop {
+        let name: String = Input::new()
+            .with_prompt("Provider name (e.g., 'gemini', 'local-llm')")
+            .interact_text()
+            .context("Failed to get provider name")?;
+        if name.trim().is_empty() {
+            eprintln!("Provider name cannot be empty. Please try again.");
+        } else if name.contains(' ') {
+            eprintln!("Provider name cannot contain spaces. Please try again.");
+        } else {
+            return Ok(name.trim().to_string());
+        }
+    }
+}
+
+fn generate_unique_key_label(existing: &[ApiKey]) -> String {
+    for n in 1..=10_000usize {
+        let candidate = format!("key-{}", n);
+        if !existing
+            .iter()
+            .any(|k| k.name.as_deref() == Some(candidate.as_str()))
+        {
+            return candidate;
+        }
+    }
+    // Extremely unlikely fallback.
+    "key".to_string()
+}
+
+fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Option<String>> {
+    loop {
+        let label: String = Input::new()
+            .with_prompt("Key label (recommended, e.g., 'work', 'personal')")
+            .allow_empty(allow_empty)
+            .interact_text()
+            .context("Failed to get key label")?;
+
+        let label = label.trim().to_string();
+        if label.is_empty() {
+            return Ok(None);
+        }
+
+        if existing
+            .iter()
+            .any(|k| k.name.as_deref() == Some(label.as_str()))
+        {
+            eprintln!("That key label is already used for this provider. Please choose another.");
+            continue;
+        }
+
+        return Ok(Some(label));
+    }
+}
 
 pub fn create_profile_interactive() -> anyhow::Result<()> {
     let mut config = GlobalConfig::load()?;
@@ -34,85 +103,174 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
         }
     }
 
-    let provider_options = vec!["OpenAI", "OpenAI-compatible"];
+    let mut existing_provider_names: Vec<String> = config.providers.keys().cloned().collect();
+    existing_provider_names.sort();
+
+    let mut provider_options: Vec<String> = existing_provider_names
+        .iter()
+        .filter_map(|name| {
+            config
+                .providers
+                .get(name)
+                .map(|cfg| provider_display_name(name, cfg))
+        })
+        .collect();
+    let existing_count = provider_options.len();
+    provider_options.push("Create new: OpenAI".to_string());
+    provider_options.push("Create new: OpenAI-compatible".to_string());
+
     let selection = Select::new()
-        .with_prompt("Select provider type")
+        .with_prompt("Select provider")
         .items(&provider_options)
         .interact()
-        .context("Failed to select provider type")?;
+        .context("Failed to select provider")?;
 
-    let provider_name: String;
-
-    match selection {
-        0 => {
-            provider_name = "openai".to_string();
-            if !config.providers.contains_key(&provider_name) {
-                config.providers.insert(
-                    provider_name.clone(),
-                    ProviderConfig {
+    let provider_name: String = if selection < existing_count {
+        existing_provider_names[selection].clone()
+    } else {
+        match selection - existing_count {
+            0 => {
+                let name = "openai".to_string();
+                config
+                    .providers
+                    .entry(name.clone())
+                    .or_insert(ProviderConfig {
                         kind: "openai".to_string(),
                         base_url: None,
                         extras: None,
+                    });
+                name
+            }
+            1 => {
+                let name = prompt_provider_name()?;
+
+                if config.providers.contains_key(&name) {
+                    let confirm = Confirm::new()
+                        .with_prompt(format!(
+                            "Provider '{}' already exists. Overwrite its config?",
+                            name
+                        ))
+                        .default(false)
+                        .interact()
+                        .context("Failed to get confirmation")?;
+                    if !confirm {
+                        println!("Cancelled.");
+                        return Ok(());
+                    }
+                }
+
+                let url: String = Input::new()
+                    .with_prompt("Base URL")
+                    .default("https://api.openai.com/v1".to_string())
+                    .interact_text()
+                    .context("Failed to get base URL")?;
+
+                config.providers.insert(
+                    name.clone(),
+                    ProviderConfig {
+                        kind: "openai_compatible".to_string(),
+                        base_url: Some(url),
+                        extras: None,
                     },
                 );
+
+                name
             }
+            _ => unreachable!(),
         }
-        1 => {
-            provider_name = loop {
-                let name: String = Input::new()
-                    .with_prompt("Provider name (e.g., 'gemini', 'local-llm')")
-                    .interact_text()
-                    .context("Failed to get provider name")?;
-                if name.is_empty() {
-                    eprintln!("Provider name cannot be empty. Please try again.");
-                } else if name.contains(' ') {
-                    eprintln!("Provider name cannot contain spaces. Please try again.");
-                } else {
-                    break name;
-                }
-            };
-
-            let url: String = Input::new()
-                .with_prompt("Base URL")
-                .default("https://api.openai.com/v1".to_string())
-                .interact_text()
-                .context("Failed to get base URL")?;
-
-            config.providers.insert(
-                provider_name.clone(),
-                ProviderConfig {
-                    kind: "openai_compatible".to_string(),
-                    base_url: Some(url),
-                    extras: None,
-                },
-            );
-        }
-        _ => unreachable!(),
-    }
-
-    let api_key = dialoguer::Password::new()
-        .with_prompt("API key")
-        .interact()
-        .context("Failed to get API key")?;
-
-    let key_label: String = Input::new()
-        .with_prompt("Key label (optional, e.g., 'work', 'personal')")
-        .allow_empty(true)
-        .interact_text()
-        .context("Failed to get key label")?;
-
-    let key_label = if key_label.trim().is_empty() {
-        None
-    } else {
-        Some(key_label.trim().to_string())
     };
 
     let provider_keys = config.keys.entry(provider_name.clone()).or_default();
-    let api_key_entry = ApiKey {
-        value: api_key,
-        name: key_label.clone(),
-    };
-    provider_keys.push(api_key_entry);
+    let selected_key_label: Option<String>;
+
+    if !provider_keys.is_empty() {
+        let key_mode_options = vec!["Use existing API key", "Add new API key"];
+        let key_mode = Select::new()
+            .with_prompt("API key")
+            .items(&key_mode_options)
+            .interact()
+            .context("Failed to select API key mode")?;
+
+        match key_mode {
+            0 => {
+                let key_items: Vec<String> = provider_keys
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, k)| {
+                        k.name
+                            .clone()
+                            .unwrap_or_else(|| format!("(unnamed) #{}", idx + 1))
+                    })
+                    .collect();
+                let key_idx = Select::new()
+                    .with_prompt("Select existing key")
+                    .items(&key_items)
+                    .interact()
+                    .context("Failed to select key")?;
+
+                if provider_keys[key_idx].name.is_none() {
+                    let label = loop {
+                        let label: String = Input::new()
+                            .with_prompt("Assign a label to this key")
+                            .interact_text()
+                            .context("Failed to get key label")?;
+                        let label = label.trim().to_string();
+                        if label.is_empty() {
+                            eprintln!("Key label cannot be empty. Please try again.");
+                            continue;
+                        }
+                        if provider_keys
+                            .iter()
+                            .any(|k| k.name.as_deref() == Some(label.as_str()))
+                        {
+                            eprintln!(
+                                "That key label is already used for this provider. Please choose another."
+                            );
+                            continue;
+                        }
+                        break label;
+                    };
+                    provider_keys[key_idx].name = Some(label.clone());
+                    selected_key_label = Some(label);
+                } else {
+                    selected_key_label = provider_keys[key_idx].name.clone();
+                }
+            }
+            1 => {
+                let api_key = Password::new()
+                    .with_prompt("API key")
+                    .interact()
+                    .context("Failed to get API key")?;
+
+                let mut label = prompt_key_label(provider_keys, true)?;
+                if label.is_none() {
+                    label = Some(generate_unique_key_label(provider_keys));
+                    println!("Assigned key label: {}", label.as_deref().unwrap_or(""));
+                }
+
+                provider_keys.push(ApiKey {
+                    value: api_key,
+                    name: label.clone(),
+                });
+                selected_key_label = label;
+            }
+            _ => unreachable!(),
+        }
+    } else {
+        let api_key = Password::new()
+            .with_prompt("API key")
+            .interact()
+            .context("Failed to get API key")?;
+
+        let label = prompt_key_label(provider_keys, true)?
+            .or_else(|| Some(generate_unique_key_label(provider_keys)));
+
+        provider_keys.push(ApiKey {
+            value: api_key,
+            name: label.clone(),
+        });
+        selected_key_label = label;
+    }
 
     let model: String = Input::new()
         .with_prompt("Model name")
@@ -147,7 +305,7 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
     let profile = ProfileConfig {
         provider: provider_name,
         model,
-        key: key_label,
+        key: selected_key_label,
         temperature,
     };
 

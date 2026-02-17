@@ -83,15 +83,11 @@ fn format_completion_error(err: &CompletionError) -> String {
 
 fn format_extraction_error(err: &ExtractionError) -> String {
     match err {
-        ExtractionError::NoData => {
-            "No data extracted".to_string()
-        }
+        ExtractionError::NoData => "No data extracted".to_string(),
         ExtractionError::DeserializationError(json_err) => {
             format!("JSON deserialization error: {}", json_err)
         }
-        ExtractionError::CompletionError(comp_err) => {
-            format_completion_error(comp_err)
-        }
+        ExtractionError::CompletionError(comp_err) => format_completion_error(comp_err),
     }
 }
 
@@ -108,9 +104,7 @@ impl Provider for OpenAiProvider {
                 .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
                 .build();
 
-            extractor
-                .extract(&prompt)
-                .await
+            extractor.extract(&prompt).await
         } else {
             // Use Responses API (for real OpenAI - best structured output support)
             let extractor = self
@@ -119,9 +113,7 @@ impl Provider for OpenAiProvider {
                 .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
                 .build();
 
-            extractor
-                .extract(&prompt)
-                .await
+            extractor.extract(&prompt).await
         };
 
         match result {

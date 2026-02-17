@@ -313,7 +313,7 @@ async fn main() {
                 backup,
                 fail_fast,
             };
-            
+
             if let Err(e) = translate::translate_book(&book_dir, options).await {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);

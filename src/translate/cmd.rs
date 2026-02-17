@@ -1,4 +1,4 @@
-use crate::book::{load_book_config, BookLayout};
+use crate::book::{BookLayout, load_book_config};
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{load_glossary, merge_terms, save_glossary};
 use crate::state::{ChapterStatus, RunOptions, RunState};
@@ -15,13 +15,10 @@ pub struct TranslateOptions {
     pub fail_fast: bool,
 }
 
-pub async fn translate_book(
-    book_dir: &Path,
-    options: TranslateOptions,
-) -> Result<()> {
+pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Result<()> {
     // Load book layout
     let layout = BookLayout::discover(book_dir);
-    
+
     if !layout.is_valid_book() {
         anyhow::bail!(
             "Invalid book layout. Run 'cipher doctor {}' for details.",
@@ -30,13 +27,12 @@ pub async fn translate_book(
     }
 
     // Load global config
-    let global_config = GlobalConfig::load()
-        .context("Failed to load global config")?;
+    let global_config = GlobalConfig::load().context("Failed to load global config")?;
 
     // Resolve effective profile
     let book_config = load_book_config(&layout.paths.config_json).unwrap_or_default();
     let profile_name = global_config.effective_profile_name(book_config.profile.as_deref());
-    
+
     let profile_name = profile_name.ok_or_else(|| {
         anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
     })?;
@@ -51,7 +47,8 @@ pub async fn translate_book(
         anyhow::bail!("Cannot translate with invalid profile");
     }
 
-    let profile = global_config.resolve_profile(profile_name)
+    let profile = global_config
+        .resolve_profile(profile_name)
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
 
     println!("Using profile: {}", profile_name);
@@ -137,7 +134,12 @@ pub async fn translate_book(
 
         if chapter_text.trim().is_empty() {
             println!("  Empty chapter, skipping");
-            run_state.set_chapter(&filename, ChapterStatus::Skipped, Some("Empty chapter".to_string()), None);
+            run_state.set_chapter(
+                &filename,
+                ChapterStatus::Skipped,
+                Some("Empty chapter".to_string()),
+                None,
+            );
             skipped += 1;
             continue;
         }
@@ -147,7 +149,7 @@ pub async fn translate_book(
         match translator.translate_chapter(&chapter_text, &glossary).await {
             Ok(response) => {
                 let duration = start.elapsed();
-                
+
                 // Validate translation
                 let validation = validate_translation(&response.translation);
                 if !validation.is_valid() {
@@ -158,11 +160,14 @@ pub async fn translate_book(
                     run_state.set_chapter(
                         &filename,
                         ChapterStatus::Failed,
-                        Some(format!("Validation failed: {}", validation.errors().join(", "))),
+                        Some(format!(
+                            "Validation failed: {}",
+                            validation.errors().join(", ")
+                        )),
                         Some(duration.as_millis() as u64),
                     );
                     failed += 1;
-                    
+
                     if options.fail_fast {
                         println!();
                         println!("Stopping due to --fail-fast");
@@ -192,16 +197,26 @@ pub async fn translate_book(
                 }
 
                 println!("  Done in {:.2}s", duration.as_secs_f64());
-                run_state.set_chapter(&filename, ChapterStatus::Success, None, Some(duration.as_millis() as u64));
+                run_state.set_chapter(
+                    &filename,
+                    ChapterStatus::Success,
+                    None,
+                    Some(duration.as_millis() as u64),
+                );
                 translated += 1;
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
                 println!("  Error: {}", err_msg);
                 let duration = start.elapsed();
-                run_state.set_chapter(&filename, ChapterStatus::Failed, Some(err_msg), Some(duration.as_millis() as u64));
+                run_state.set_chapter(
+                    &filename,
+                    ChapterStatus::Failed,
+                    Some(err_msg),
+                    Some(duration.as_millis() as u64),
+                );
                 failed += 1;
-                
+
                 if options.fail_fast {
                     println!();
                     println!("Stopping due to --fail-fast");
@@ -242,7 +257,7 @@ pub async fn translate_book(
 
 fn discover_chapters(raw_dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     let mut chapters = Vec::new();
-    
+
     if !raw_dir.exists() {
         return Ok(chapters);
     }
@@ -250,7 +265,7 @@ fn discover_chapters(raw_dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     for entry in std::fs::read_dir(raw_dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         if path.extension().map(|e| e == "md").unwrap_or(false) {
             chapters.push(path);
         }
@@ -260,10 +275,10 @@ fn discover_chapters(raw_dir: &Path) -> Result<Vec<std::path::PathBuf>> {
     chapters.sort_by(|a, b| {
         let a_name = a.file_stem().unwrap().to_string_lossy();
         let b_name = b.file_stem().unwrap().to_string_lossy();
-        
+
         let a_num = extract_number(&a_name);
         let b_num = extract_number(&b_name);
-        
+
         match (a_num, b_num) {
             (Some(n1), Some(n2)) => n1.cmp(&n2),
             (Some(_), None) => std::cmp::Ordering::Less,
@@ -282,7 +297,7 @@ fn extract_number(filename: &str) -> Option<u32> {
         .skip_while(|c| !c.is_ascii_digit())
         .take_while(|c| c.is_ascii_digit())
         .collect();
-    
+
     if digits.is_empty() {
         None
     } else {
@@ -292,12 +307,12 @@ fn extract_number(filename: &str) -> Option<u32> {
 
 fn create_backup(path: &Path) -> Result<PathBuf> {
     use chrono::Local;
-    
+
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let filename = path.file_stem().unwrap().to_string_lossy();
     let backup_name = format!("{}_{}.md.bak", filename, timestamp);
     let backup_path = path.with_file_name(&backup_name);
-    
+
     std::fs::copy(path, &backup_path)?;
     Ok(backup_path)
 }

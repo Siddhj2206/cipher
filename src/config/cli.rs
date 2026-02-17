@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::config::GlobalConfig;
 use crate::ProfileCommands;
+use crate::config::GlobalConfig;
 
 pub fn run_profile_command(config: &mut GlobalConfig, command: ProfileCommands) -> Result<()> {
     match command {

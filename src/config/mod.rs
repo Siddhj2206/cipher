@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GlobalConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_profile: Option<String>,
@@ -19,7 +18,6 @@ pub struct GlobalConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub profiles: BTreeMap<String, ProfileConfig>,
 }
-
 
 impl GlobalConfig {
     pub fn config_path() -> Result<PathBuf> {
@@ -64,11 +62,16 @@ impl GlobalConfig {
         self.providers.get(provider)
     }
 
-    pub fn get_provider_key(&self, provider: &str) -> Option<&str> {
-        self.keys
-            .get(provider)
-            .and_then(|keys| keys.first())
-            .map(|k| k.value.as_str())
+    pub fn get_provider_key_by_label(&self, provider: &str, label: Option<&str>) -> Option<&str> {
+        let keys = self.keys.get(provider)?;
+
+        if let Some(label) = label {
+            keys.iter()
+                .find(|k| k.name.as_deref() == Some(label))
+                .map(|k| k.value.as_str())
+        } else {
+            keys.first().map(|k| k.value.as_str())
+        }
     }
 
     pub fn effective_profile_name<'a>(&'a self, book_profile: Option<&'a str>) -> Option<&'a str> {
@@ -138,11 +141,19 @@ pub fn validate_profile(config: &GlobalConfig, profile_name: &str) -> ConfigVali
         validation.provider_exists = true;
     }
 
-    if config.get_provider_key(&profile.provider).is_none() {
-        errors.push(format!(
-            "No API key configured for provider '{}'",
-            profile.provider
-        ));
+    let selected_key = config.get_provider_key_by_label(&profile.provider, profile.key.as_deref());
+    if selected_key.is_none() {
+        if let Some(label) = profile.key.as_deref() {
+            errors.push(format!(
+                "No API key labeled '{}' configured for provider '{}'",
+                label, profile.provider
+            ));
+        } else {
+            errors.push(format!(
+                "No API key configured for provider '{}'",
+                profile.provider
+            ));
+        }
     } else {
         validation.has_key = true;
     }

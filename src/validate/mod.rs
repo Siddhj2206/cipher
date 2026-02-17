@@ -1,4 +1,3 @@
-
 pub fn validate_translation(text: &str) -> ValidationResult {
     let mut errors = Vec::new();
 
