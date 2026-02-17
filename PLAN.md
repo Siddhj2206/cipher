@@ -1,6 +1,6 @@
 # cipher
 
-This document describes how the rebuilt tool (renamed from `btranslate` to `cipher`) should work for end users, how books are initialized and managed, and how config/providers/keys/glossary are handled. It intentionally avoids committing to specific languages, libraries, or frameworks.
+This document describes how the rebuilt tool (renamed from `btranslate` to `cipher`) should work for end users, how books are initialized and managed, and how config/providers/keys/glossary are handled. The later "Engineering implementation plan" section is allowed to be implementation-specific.
 
 ## Goals
 
@@ -9,7 +9,7 @@ This document describes how the rebuilt tool (renamed from `btranslate` to `ciph
 - Allow fast switching between providers/models without editing every book.
 - Support multiple API keys and automatic key rotation/cooldowns.
 - Provide reliable reruns: easy overwrite, backups, and "overwrite only bad outputs".
-- Keep glossary consistent: only approved terms influence future translations; new terms are collected but not silently canonized.
+- Keep glossary consistent: the book glossary is the source of truth; the model may return new glossary terms and `cipher` merges them deterministically (deduped) after successful chapter writes.
 - Fail loudly and recover well: validation, clear error messages, resumable runs.
 
 ## Non-goals
@@ -49,7 +49,7 @@ Commands:
 
 - Book config (no secrets)
 - Input folder (e.g. `raw/`)
-- Output folder (e.g. `translated/`)
+- Output folder (default `tl/`)
 - Glossary file (empty, but valid)
 - Optional style/voice guide template (user editable)
 
@@ -57,7 +57,7 @@ Suggested flags:
 
 - `--profile <name>` (defaults to global default profile)
 - `--from <existingBook>` (copy style + glossary structure; optional)
-- `--import-glossary <path>` (accept legacy text or json; converts into canonical glossary format)
+- `--import-glossary <path>` (accept canonical JSON; copies into the book if missing)
 
 ### 3) Translate
 
@@ -75,14 +75,13 @@ Behavior:
 Important rerun controls:
 
 - `--overwrite` overwrite outputs even if present
-- `--overwrite-bad` overwrite only chapters that fail validation
+- `--overwrite-bad` overwrite only chapters whose existing output fails the full validator
 - `--backup` (default on overwrite): keep timestamped backups of replaced outputs
 - `--fail-fast` stop on first error (default should continue and report failures)
 
 Companion commands:
 
 - `cipher status /path/to/book` (progress, failures, last run details)
-- `cipher retry-failed /path/to/book`
 
 ### 4) Review glossary (no extra model calls required)
 
@@ -170,16 +169,16 @@ Rules:
 - Deduping should be deterministic. Prefer `og_term` when present, otherwise `term`.
 - Importing merges new entries, skipping duplicates.
 
-There is no `status` field or pending state. The glossary is the enforced source of truth.
+The glossary has no approval workflow: there is no `id` and no `status` field (no pending/approved states). The glossary is the enforced source of truth.
 
 ### Glossary injection strategy
 
 The tool should support modes (book-configurable):
 
-- `full`: inject all approved terms
-- `smart`: inject a relevant subset + always include entries marked "always include" (optional)
+- `full`: inject all glossary terms
+- `smart`: inject a relevant, deterministic subset (with a clear fallback to `full` when uncertain)
 
-If `smart` is used, it must be predictable and tuneable, with a clear fallback to `full` when uncertain.
+If `smart` is used, it must be predictable and tuneable (same inputs => same injected subset), with a clear fallback to `full` when uncertain.
 
 ### Migration and import
 
@@ -203,7 +202,7 @@ Each chapter request should include:
 
 - base translation instructions
 - book style guide
-- approved glossary context (full or smart subset)
+- glossary context (full or smart subset)
 - the chapter text
 
 The model response should include:
@@ -211,18 +210,23 @@ The model response should include:
 - translated markdown
 - new glossary terms identified during translation
 
+`cipher` auto-merges `new_glossary_terms` into `glossary.json` only when the chapter output passes validation and is written successfully.
+
 ## Validation and safety
 
 Validation is required before accepting output.
 
-Minimum checks:
+Minimum checks (current):
 
-- output is valid markdown-ish text (not empty)
+- output is not empty
+- output starts with a top-level heading and the first line matches `# Chapter X` or `# Chapter X: Title`
 - code fences are balanced
-- no obvious JSON/schema artifacts leaked into the translation
-- required top-level heading is present (configurable)
 
-On validation failure:
+Additional checks (future, optional):
+
+- detect obvious JSON/schema artifacts leaked into the translation
+
+On validation failure (future behavior):
 
 - retry once (same model) with a repair instruction
 - then use fallback model/provider only if configured
@@ -234,7 +238,7 @@ On validation failure:
 
 Store run state under `.cipher/` in the book:
 
-- per-chapter status: pending/success/failed/skipped
+- per-chapter status: success/failed/skipped
 - error summaries
 - per-chapter logs (optional)
 - optional metadata for debugging (provider/model used, timing)
@@ -243,7 +247,7 @@ This state must never prevent a user from rerunning a chapter; it is information
 
 ### Output overwrite behavior
 
-When overwriting an existing translated chapter:
+When overwriting an existing translated chapter (target behavior):
 
 - create a timestamped backup by default
 - write new output atomically
@@ -253,8 +257,9 @@ When overwriting an existing translated chapter:
 - `cipher init <bookDir>`
 - `cipher translate <bookDir>`
 - `cipher status <bookDir>`
-- `cipher retry-failed <bookDir>`
-- `cipher glossary list|import|export <bookDir>`
+- `cipher glossary list <bookDir>`
+- `cipher glossary import <bookDir> <path>`
+- `cipher glossary export <bookDir> <path>`
 - `cipher profile new|list|show|set-default|test`
 - `cipher doctor [bookDir]` (validate config, paths, glossary parse, provider reachability)
 
@@ -275,8 +280,9 @@ When overwriting an existing translated chapter:
 - glossary list/import/export commands
 
 4) Provider robustness
-- multiple API keys + cooldown/rotation
+- smart glossary injection (optional, to control prompt size)
 - fallback chain on failure only
+- multiple API keys + cooldown/rotation
 - `doctor` and `profile test`
 
 5) Quality gates
@@ -303,15 +309,15 @@ Scope
 - Establish module layout so later features don’t require large refactors.
 
 Implementation notes
-- Crate layout (suggested):
-  - `src/main.rs` (thin) -> `src/cli.rs`
+- Crate layout (current/expected):
+  - `src/main.rs` (clap CLI + dispatch)
   - `src/book/*` (book layout + config)
   - `src/config/*` (global config, profiles, key state)
   - `src/glossary/*` (parse, dedupe, render for prompt)
   - `src/translate/*` (chapter discovery, prompting, response parsing)
   - `src/state/*` (.cipher run state)
-  - `src/validate.rs` (output validation)
-  - `src/fs.rs` (atomic writes + backups)
+  - `src/validate/*` (output validation)
+  - `src/fs.rs` (atomic writes + backups; optional future module)
 
 Done when
 - `cipher --help` lists all planned subcommands (even if some are stubs).
@@ -390,6 +396,9 @@ Scope
   - `Provider` trait for modularity (easy to add more providers later)
   - OpenAI and OpenAI-compatible providers (both use rig's OpenAI provider with optional base_url)
 - Use rig's `Extractor` for typed JSON output with JSON schema derived from Rust types
+- Provider API notes (important for compatibility):
+  - OpenAI: rig's default extractor targets the Responses API (`POST /responses`).
+  - OpenAI-compatible endpoints: many only implement Chat Completions (`POST /chat/completions`), so the provider must use rig's chat-completions extractor (e.g. `completions_api().extractor(...)`) when configured as compatible.
 - Base prompt copied from Book-Translator-Go:
   - Tone/atmosphere requirements
   - Dialogue, pacing, cultural nuance guidelines
@@ -410,10 +419,9 @@ Scope
   - Load global config and resolve effective profile for the book
   - Skip if output exists (default)
   - Translate each chapter using the provider
-  - Validate output before accepting:
+  - Validate output before accepting (current):
     - Non-empty
-    - Starts with `#` heading
-    - Strict heading: must start with `# Chapter X: Title` or `# Chapter X`
+    - Strict heading: first line must be `# Chapter X: Title` or `# Chapter X`
     - Balanced code fences
   - On validation failure: mark chapter as failed, continue (unless `--fail-fast`)
   - On validation success:
@@ -439,17 +447,16 @@ Scope
 - Record enough metadata for debugging (provider, model, timing) without leaking secrets.
 
 Done when
-- `cipher status <bookDir>` shows counts of success/failed/skipped/pending.
+- `cipher status <bookDir>` shows last run details and counts of success/failed/skipped.
 - Re-running translate uses existing outputs + state to skip work predictably.
 
 ### Feature 9: Validation + repair retry
 
 Scope
-- Implement minimum output validation:
-  - non-empty
-  - balanced code fences
-  - starts with `#` heading (configurable)
+- Extend validation beyond the current checks, and add a single repair retry.
+- Additional validation targets (future):
   - does not contain obvious JSON/schema leakage
+  - (optional) more markdown structure checks as needed
 - On failure: one repair retry with a “repair instruction” prompt.
 
 Done when
@@ -467,17 +474,18 @@ Scope
 Done when
 - Overwrites never corrupt files (even on crash) and backups are created deterministically.
 
-### Feature 11: Retry failed
+### Feature 11: Smart glossary injection (optional)
 
 Scope
-- `cipher retry-failed <bookDir>` retries only failed chapters using the same rules as translate.
+- Add `smart` injection mode to include only relevant glossary terms for a chapter.
+- Keep it deterministic and explainable; fall back to `full` when uncertain.
 
 Done when
-- Failed chapters can be retried without reprocessing successful chapters.
+- Smart mode reduces prompt size without causing term drift; falling back to full is explainable.
 
 
 
-### Feature 13: Multiple keys + cooldown/rotation
+### Feature 12: Multiple keys + cooldown/rotation
 
 Scope
 - Store per-key cooldown + last-used state outside books.
@@ -489,7 +497,7 @@ Scope
 Done when
 - Sustained batch runs rotate keys automatically and recover from 429/quota errors.
 
-### Feature 14: Fallback chain (models/providers)
+### Feature 13: Fallback chain (models/providers)
 
 Scope
 - Implement fallback strictly on failure, not for routine requests.
@@ -498,17 +506,7 @@ Scope
 Done when
 - A configured fallback chain is exercised only when needed, and decisions are visible in logs/state.
 
-### Feature 15: Smart glossary injection (optional, later)
-
-Scope
-- Add `smart` injection mode to include only relevant approved terms.
-- Keep it predictable/tuneable and fall back to `full` when uncertain.
-
-Done when
-- Smart mode reduces prompt size without causing term drift; falling back to full is explainable.
-
 ## Open questions
 
 - Should `cipher init` default to `full` glossary injection or `smart`?
 - What is the minimum validation strictness that catches bad outputs without false positives?
-

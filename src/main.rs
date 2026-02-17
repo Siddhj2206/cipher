@@ -55,11 +55,6 @@ enum Commands {
         /// Directory containing the book
         book_dir: PathBuf,
     },
-    /// Retry failed chapters
-    RetryFailed {
-        /// Directory containing the book
-        book_dir: PathBuf,
-    },
     /// Manage glossary
     Glossary {
         #[command(subcommand)]
@@ -324,11 +319,11 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Commands::Status { .. } => {
-            println!("TODO: Show book status");
-        }
-        Commands::RetryFailed { .. } => {
-            println!("TODO: Retry failed chapters");
+        Commands::Status { book_dir } => {
+            if let Err(e) = state::status::show_status(&book_dir) {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
         }
         Commands::Glossary { command } => {
             if let Err(e) = run_glossary_command(command) {

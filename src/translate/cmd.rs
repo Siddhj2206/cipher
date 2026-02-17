@@ -1,7 +1,7 @@
 use crate::book::{load_book_config, BookLayout};
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{load_glossary, merge_terms, save_glossary};
-use crate::state::{ChapterStatus, RunState};
+use crate::state::{ChapterStatus, RunOptions, RunState};
 use crate::translate::Translator;
 use crate::validate::validate_translation;
 use anyhow::{Context, Result};
@@ -77,11 +77,22 @@ pub async fn translate_book(
     let mut glossary = load_glossary(&layout.paths.glossary_json)?;
     let initial_glossary_count = glossary.len();
 
-    // Load or create run state
+    // Load previous run state for merging
+    let previous_state = RunState::load(book_dir)?;
+
+    // Create run state with options
+    let run_options = RunOptions {
+        overwrite: options.overwrite,
+        overwrite_bad: options.overwrite_bad,
+        backup: options.backup,
+        fail_fast: options.fail_fast,
+    };
+
     let mut run_state = RunState::new(
         profile_name.to_string(),
         profile.provider.clone(),
         profile.model.clone(),
+        Some(run_options),
     );
 
     // Determine output directory
@@ -113,7 +124,7 @@ pub async fn translate_book(
 
         if !should_translate {
             println!("[SKIP] {}", filename);
-            run_state.set_chapter(&filename, ChapterStatus::Skipped, None);
+            run_state.set_chapter(&filename, ChapterStatus::Skipped, None, None);
             skipped += 1;
             continue;
         }
@@ -126,7 +137,7 @@ pub async fn translate_book(
 
         if chapter_text.trim().is_empty() {
             println!("  Empty chapter, skipping");
-            run_state.set_chapter(&filename, ChapterStatus::Skipped, Some("Empty chapter".to_string()));
+            run_state.set_chapter(&filename, ChapterStatus::Skipped, Some("Empty chapter".to_string()), None);
             skipped += 1;
             continue;
         }
@@ -148,6 +159,7 @@ pub async fn translate_book(
                         &filename,
                         ChapterStatus::Failed,
                         Some(format!("Validation failed: {}", validation.errors().join(", "))),
+                        Some(duration.as_millis() as u64),
                     );
                     failed += 1;
                     
@@ -180,13 +192,14 @@ pub async fn translate_book(
                 }
 
                 println!("  Done in {:.2}s", duration.as_secs_f64());
-                run_state.set_chapter(&filename, ChapterStatus::Success, None);
+                run_state.set_chapter(&filename, ChapterStatus::Success, None, Some(duration.as_millis() as u64));
                 translated += 1;
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
                 println!("  Error: {}", err_msg);
-                run_state.set_chapter(&filename, ChapterStatus::Failed, Some(err_msg));
+                let duration = start.elapsed();
+                run_state.set_chapter(&filename, ChapterStatus::Failed, Some(err_msg), Some(duration.as_millis() as u64));
                 failed += 1;
                 
                 if options.fail_fast {
@@ -205,6 +218,10 @@ pub async fn translate_book(
         println!();
         println!("Updated glossary: {} new term(s)", new_glossary_terms);
     }
+
+    // Merge previous state and mark finished
+    run_state.merge_previous(previous_state);
+    run_state.mark_finished();
 
     // Save run state
     run_state.save(book_dir)?;

@@ -7,7 +7,9 @@
 use crate::translate::prompt::build_prompt;
 use crate::translate::providers::{Provider, ProviderParams};
 use crate::translate::{TranslationRequest, TranslationResponse};
-use anyhow::{Context, Result};
+use anyhow::Result;
+use rig::completion::CompletionError;
+use rig::extractor::ExtractionError;
 use rig::providers::openai;
 
 pub struct OpenAiProvider {
@@ -44,12 +46,61 @@ impl OpenAiProvider {
     }
 }
 
+fn format_completion_error(err: &CompletionError) -> String {
+    match err {
+        CompletionError::HttpError(http_err) => {
+            // Format the HTTP error to show status code if available
+            let err_str = format!("{}", http_err);
+            if err_str.contains("404") {
+                "HTTP 404: Not Found - Check your base URL and model name".to_string()
+            } else if err_str.contains("401") {
+                "HTTP 401: Unauthorized - Check your API key".to_string()
+            } else if err_str.contains("429") {
+                "HTTP 429: Too Many Requests - Rate limit exceeded".to_string()
+            } else if err_str.contains("500") {
+                "HTTP 500: Internal Server Error - Provider issue".to_string()
+            } else {
+                format!("HTTP error: {}", err_str)
+            }
+        }
+        CompletionError::JsonError(json_err) => {
+            format!("JSON parsing error: {}", json_err)
+        }
+        CompletionError::RequestError(req_err) => {
+            format!("Request error: {}", req_err)
+        }
+        CompletionError::ResponseError(resp) => {
+            format!("Provider response error: {}", resp)
+        }
+        CompletionError::ProviderError(msg) => {
+            format!("Provider error: {}", msg)
+        }
+        _ => {
+            format!("Unknown error: {:?}", err)
+        }
+    }
+}
+
+fn format_extraction_error(err: &ExtractionError) -> String {
+    match err {
+        ExtractionError::NoData => {
+            "No data extracted".to_string()
+        }
+        ExtractionError::DeserializationError(json_err) => {
+            format!("JSON deserialization error: {}", json_err)
+        }
+        ExtractionError::CompletionError(comp_err) => {
+            format_completion_error(comp_err)
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Provider for OpenAiProvider {
     async fn translate(&self, req: TranslationRequest) -> Result<TranslationResponse> {
         let prompt = build_prompt(&req);
 
-        let response = if self.use_completions_api {
+        let result = if self.use_completions_api {
             // Use Chat Completions API (for OpenAI-compatible endpoints)
             let completions_client = self.client.clone().completions_api();
             let extractor = completions_client
@@ -60,7 +111,6 @@ impl Provider for OpenAiProvider {
             extractor
                 .extract(&prompt)
                 .await
-                .context("Failed to extract translation from LLM (Chat Completions API)")?
         } else {
             // Use Responses API (for real OpenAI - best structured output support)
             let extractor = self
@@ -72,10 +122,15 @@ impl Provider for OpenAiProvider {
             extractor
                 .extract(&prompt)
                 .await
-                .context("Failed to extract translation from LLM (Responses API)")?
         };
 
-        Ok(response)
+        match result {
+            Ok(response) => Ok(response),
+            Err(err) => {
+                let detailed_error = format_extraction_error(&err);
+                Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
+            }
+        }
     }
 }
 
