@@ -238,20 +238,16 @@ The model response should include:
 
 Validation is required before accepting output.
 
-Minimum checks (current):
+Current checks:
 
 - output is not empty
 - output starts with a top-level heading and the first line matches `# Chapter X` or `# Chapter X: Title`
 - code fences are balanced
+- no JSON/schema leakage: detects `{...}`, `[...]`, `"type":`, `"properties":`, `"$ref"`
 
-Additional checks (future, optional):
+On validation failure:
 
-- detect obvious JSON/schema artifacts leaked into the translation
-
-On validation failure (future behavior):
-
-- retry once (same model) with a repair instruction
-- then use fallback model/provider only if configured
+- retry once (same model) with a repair instruction including validation errors, failed translation, and original text
 - if still failing, mark chapter as failed and continue (unless `--fail-fast`)
 
 ## Reruns, state, and backups
@@ -366,7 +362,7 @@ Scope
 Done when
 - Running `cipher init ./MyBook` creates a ready-to-translate scaffold.
 - Re-running init is non-destructive (does not overwrite user-edited files by default).
-- New books have `"profile": "default"` in config.json.
+- New books have `"profile": ""` in config.json (empty string falls back to global default_profile).
 
 ### Feature 4: Canonical glossary format + basic commands
 
@@ -444,9 +440,11 @@ Scope
   - Load global config and resolve effective profile for the book
   - Skip if output exists (default)
   - Translate each chapter using the provider with retry logic:
-    - Max 3 attempts (initial + 2 retries)
-    - Retries on both API errors and validation failures
-    - Output shows retry progress: `- Attempt X/3 failed: <error>. Retrying...`
+    - API errors: retry same prompt up to 3 times total (initial + 2 retries)
+    - Validation failure on first attempt: single repair retry with error context
+    - Repair retry includes: validation errors, failed translation, original text
+    - After repair failure: mark chapter as failed, continue
+    - Output shows progress: `- Attempt X/3 failed: <error>. Retrying...`
   - Validate output before accepting (current):
     - Non-empty
     - Strict heading: first line must be `# Chapter X: Title` or `# Chapter X`
@@ -485,14 +483,25 @@ Done when
 - `cipher status <bookDir>` shows last run details and counts of success/failed/skipped.
 - Re-running translate uses existing outputs + state to skip work predictably.
 
-### Feature 9: Validation + repair retry
+### Feature 9: Validation + repair retry ✓ DONE
 
 Scope
-- Extend validation beyond the current checks, and add a single repair retry.
-- Additional validation targets (future):
-  - does not contain obvious JSON/schema leakage
-  - (optional) more markdown structure checks as needed
-- On failure: one repair retry with a “repair instruction” prompt.
+- Extended validation with JSON/schema leakage detection
+- Repair retry on validation failure
+
+Implementation
+- `src/validate/mod.rs`:
+  - `check_json_leakage()`: Detects raw JSON patterns (`{...}`, `[...]`)
+  - `check_schema_leakage()`: Detects schema artifacts (`"type":`, `"properties":`, `"$ref"`)
+- `src/translate/types.rs`:
+  - Added `repair_instruction: Option<String>` and `failed_translation: Option<String>` to `TranslationRequest`
+  - Builder methods for repair context
+- `src/translate/prompt.rs`:
+  - When repair_instruction is set, prompt includes: previous errors, failed translation, original text
+- `src/translate/cmd.rs`:
+  - API errors: retry same prompt up to 3 times
+  - Validation failure on 1st attempt: 1 repair retry with error context
+  - Validation failure on retries 2-3: fail immediately (no repair)
 
 Done when
 - Bad outputs are detected and either repaired or marked failed with a clear reason.

@@ -22,6 +22,14 @@ Produce a translation that is both accurate to the source and captivating to rea
 pub fn build_prompt(req: &TranslationRequest) -> String {
     let glossary_section = build_glossary_section(&req.glossary_terms);
 
+    if req.is_repair() {
+        build_repair_prompt(req, &glossary_section)
+    } else {
+        build_initial_prompt(req, &glossary_section)
+    }
+}
+
+fn build_initial_prompt(req: &TranslationRequest, glossary_section: &str) -> String {
     format!(
         r#"**Project Overview & Core Task:**
 
@@ -59,6 +67,58 @@ Return your response as a JSON object with exactly two fields:
 - "translation": string containing the translated markdown
 - "new_glossary_terms": array of glossary term objects"#,
         BASE_PROMPT, glossary_section, req.chapter_markdown
+    )
+}
+
+fn build_repair_prompt(req: &TranslationRequest, glossary_section: &str) -> String {
+    let errors_list = req
+        .validation_errors
+        .iter()
+        .map(|e| format!("- {}", e))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let failed = req.failed_translation.as_deref().unwrap_or("");
+
+    format!(
+        r#"**Project Overview & Core Task:**
+
+{}
+
+**Glossary and New Terms:**
+
+Adhere strictly to the established glossary below for consistency.
+
+**Established Glossary:**
+{}
+
+**REPAIR REQUEST:**
+
+Your previous translation had the following validation errors:
+{}
+
+**Original text to translate:**
+{}
+
+**Your previous (failed) translation:**
+{}
+
+Please fix the issues above and provide a corrected translation. Pay special attention to the validation errors listed.
+
+**Formatting Requirements: [IMPORTANT]**
+
+  * The final output must be in proper Markdown.
+  * Start with a top-level heading ('#') for the chapter.
+      * If the original has a chapter number and title like 'X: [Chapter Title]', format it as: '# Chapter X: [Chapter Title]'. Even if the original may not have '# Chapter', use it in the translation
+      * If only a number is present, use: '# Chapter X'
+  * Preserve the original paragraph structure and line breaks. Do **not** merge paragraphs into a single block of text.
+  * Maintain proper spacing between paragraphs.
+  * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker).
+
+Return your response as a JSON object with exactly two fields:
+- "translation": string containing the translated markdown
+- "new_glossary_terms": array of glossary term objects"#,
+        BASE_PROMPT, glossary_section, errors_list, req.chapter_markdown, failed
     )
 }
 
@@ -111,5 +171,33 @@ mod tests {
         let req = TranslationRequest::new("Text".to_string());
         let prompt = build_prompt(&req);
         assert!(prompt.contains("(No glossary terms available)"));
+    }
+
+    #[test]
+    fn test_build_repair_prompt_includes_errors() {
+        let req = TranslationRequest::new("Original text".to_string())
+            .with_failed_translation("Bad translation".to_string())
+            .with_validation_errors(vec![
+                "Missing chapter heading".to_string(),
+                "Unbalanced code fences".to_string(),
+            ]);
+        let prompt = build_prompt(&req);
+
+        assert!(prompt.contains("REPAIR REQUEST"));
+        assert!(prompt.contains("Missing chapter heading"));
+        assert!(prompt.contains("Unbalanced code fences"));
+        assert!(prompt.contains("Original text"));
+        assert!(prompt.contains("Bad translation"));
+    }
+
+    #[test]
+    fn test_build_repair_prompt_is_repair() {
+        let req = TranslationRequest::new("Text".to_string())
+            .with_failed_translation("Failed".to_string())
+            .with_validation_errors(vec!["Error".to_string()]);
+        assert!(req.is_repair());
+
+        let normal_req = TranslationRequest::new("Text".to_string());
+        assert!(!normal_req.is_repair());
     }
 }

@@ -30,7 +30,7 @@ pub struct BookConfig {
 impl Default for BookConfig {
     fn default() -> Self {
         Self {
-            profile: Some("default".to_string()),
+            profile: Some(String::new()),
             raw_dir: "raw".to_string(),
             out_dir: "tl".to_string(),
             glossary_path: "glossary.json".to_string(),
@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(config.glossary_path, "glossary.json");
         assert_eq!(config.style_path, "style.md");
         assert_eq!(config.glossary_injection, "smart");
-        assert_eq!(config.profile, Some("default".to_string()));
+        assert_eq!(config.profile, Some(String::new()));
     }
 
     #[test]

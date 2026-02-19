@@ -153,7 +153,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             InjectionMode::Smart => {
                 if selection.used_fallback_to_full {
                     println!(
-                        "- Using smart glossary (fallback): {}/{} terms",
+                        "- Using full glossary (fallback from smart): {}/{} terms",
                         selection.selected_count, selection.total_count
                     );
                 } else {
@@ -168,11 +168,11 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             }
         }
 
-        const MAX_RETRIES: usize = 3;
+        const MAX_API_RETRIES: usize = 3;
         let mut last_error: Option<String> = None;
         let mut response: Option<crate::translate::TranslationResponse> = None;
 
-        for attempt in 1..=MAX_RETRIES {
+        for api_attempt in 1..=MAX_API_RETRIES {
             match translator
                 .translate_chapter(&chapter_text, &selection.terms)
                 .await
@@ -182,28 +182,57 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                     if validation.is_valid() {
                         response = Some(resp);
                         break;
-                    } else {
-                        last_error = Some(format!(
-                            "Validation failed: {}",
-                            validation.errors().join(", ")
-                        ));
-                        if attempt < MAX_RETRIES {
-                            println!(
-                                "- Attempt {}/{} failed: {}. Retrying...",
-                                attempt,
-                                MAX_RETRIES,
-                                last_error.as_ref().unwrap()
-                            );
+                    }
+
+                    let validation_errors = validation.errors();
+                    last_error = Some(format!(
+                        "Validation failed: {}",
+                        validation_errors.join(", ")
+                    ));
+
+                    if api_attempt == 1 {
+                        println!(
+                            "- Validation failed: {}. Attempting repair...",
+                            validation_errors.join(", ")
+                        );
+
+                        let repair_req =
+                            crate::translate::TranslationRequest::new(chapter_text.clone())
+                                .with_glossary_terms(selection.terms.clone())
+                                .with_failed_translation(resp.translation)
+                                .with_validation_errors(validation_errors.to_vec());
+
+                        match translator.translate_with_request(&repair_req).await {
+                            Ok(repair_resp) => {
+                                let repair_validation =
+                                    validate_translation(&repair_resp.translation);
+                                if repair_validation.is_valid() {
+                                    response = Some(repair_resp);
+                                    println!("- Repair succeeded");
+                                    break;
+                                }
+                                last_error = Some(format!(
+                                    "Repair validation failed: {}",
+                                    repair_validation.errors().join(", ")
+                                ));
+                                println!("- {}", last_error.as_ref().unwrap());
+                            }
+                            Err(e) => {
+                                last_error = Some(format!("Repair API error: {}", e));
+                                println!("- {}", last_error.as_ref().unwrap());
+                            }
                         }
                     }
+
+                    break;
                 }
                 Err(e) => {
-                    last_error = Some(format!("{}", e));
-                    if attempt < MAX_RETRIES {
+                    last_error = Some(format!("API error: {}", e));
+                    if api_attempt < MAX_API_RETRIES {
                         println!(
                             "- Attempt {}/{} failed: {}. Retrying...",
-                            attempt,
-                            MAX_RETRIES,
+                            api_attempt,
+                            MAX_API_RETRIES,
                             last_error.as_ref().unwrap()
                         );
                     }
@@ -255,7 +284,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             println!(
                 "- Failed to translate {} after {} attempts: {}",
                 filename,
-                MAX_RETRIES,
+                MAX_API_RETRIES,
                 last_error
                     .clone()
                     .unwrap_or_else(|| "Unknown error".to_string())

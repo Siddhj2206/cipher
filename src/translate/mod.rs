@@ -32,4 +32,11 @@ impl Translator {
 
         self.provider.translate(request).await
     }
+
+    pub async fn translate_with_request(
+        &self,
+        request: &TranslationRequest,
+    ) -> Result<TranslationResponse> {
+        self.provider.translate(request.clone()).await
+    }
 }

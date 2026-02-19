@@ -1,17 +1,14 @@
 pub fn validate_translation(text: &str) -> ValidationResult {
     let mut errors = Vec::new();
 
-    // Check non-empty
     if text.trim().is_empty() {
         errors.push("Translation is empty".to_string());
     }
 
-    // Check starts with # heading
     let trimmed = text.trim_start();
     if !trimmed.starts_with('#') {
         errors.push("Translation must start with a heading (#)".to_string());
     } else {
-        // Check strict chapter heading format
         let first_line = trimmed.lines().next().unwrap_or("");
         if !is_valid_chapter_heading(first_line) {
             errors.push(format!(
@@ -21,16 +18,65 @@ pub fn validate_translation(text: &str) -> ValidationResult {
         }
     }
 
-    // Check balanced code fences
     if !has_balanced_code_fences(text) {
         errors.push("Unbalanced code fences (```)".to_string());
     }
+
+    check_json_leakage(text, &mut errors);
 
     if errors.is_empty() {
         ValidationResult::Valid
     } else {
         ValidationResult::Invalid(errors)
     }
+}
+
+fn check_json_leakage(text: &str, errors: &mut Vec<String>) {
+    let schema_patterns = [
+        ("\"type\":", "Schema pattern detected: \"type\":"),
+        (
+            "\"properties\":",
+            "Schema pattern detected: \"properties\":",
+        ),
+        ("$ref", "Schema pattern detected: $ref"),
+        ("\"required\":", "Schema pattern detected: \"required\":"),
+    ];
+
+    let response_patterns = [
+        (
+            "\"translation\":",
+            "Response schema leaked: \"translation\":",
+        ),
+        (
+            "\"new_glossary_terms\":",
+            "Response schema leaked: \"new_glossary_terms\":",
+        ),
+    ];
+
+    for (pattern, msg) in schema_patterns {
+        if text.contains(pattern) {
+            errors.push(msg.to_string());
+        }
+    }
+
+    for (pattern, msg) in response_patterns {
+        if text.contains(pattern) {
+            errors.push(msg.to_string());
+        }
+    }
+
+    if looks_like_json_object(text) {
+        errors.push("Output appears to be raw JSON instead of markdown".to_string());
+    }
+}
+
+fn looks_like_json_object(text: &str) -> bool {
+    let trimmed = text.trim();
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+        return false;
+    }
+    let brace_count = trimmed.chars().filter(|&c| c == '{').count();
+    brace_count > 0 && trimmed.matches(':').count() >= brace_count
 }
 
 fn is_valid_chapter_heading(line: &str) -> bool {
@@ -107,5 +153,34 @@ mod tests {
         assert!(has_balanced_code_fences("No code fences"));
         assert!(!has_balanced_code_fences("```rust\ncode"));
         assert!(has_balanced_code_fences("```\n```\n```\n```"));
+    }
+
+    #[test]
+    fn test_json_leakage_detection() {
+        let result = validate_translation("{\"translation\": \"text\"}");
+        assert!(!result.is_valid());
+        assert!(result.errors().iter().any(|e| e.contains("raw JSON")));
+
+        let result = validate_translation("# Chapter 1\n\n\"type\": \"string\"");
+        assert!(!result.is_valid());
+        assert!(result.errors().iter().any(|e| e.contains("Schema pattern")));
+
+        let result = validate_translation("# Chapter 1\n\n\"new_glossary_terms\": []");
+        assert!(!result.is_valid());
+        assert!(
+            result
+                .errors()
+                .iter()
+                .any(|e| e.contains("Response schema leaked"))
+        );
+
+        let result = validate_translation("# Chapter 1\n\nNormal text without JSON.");
+        assert!(result.is_valid());
+    }
+
+    #[test]
+    fn test_valid_translation_passes() {
+        let text = "# Chapter 1\n\nThis is a valid translation.";
+        assert!(validate_translation(text).is_valid());
     }
 }

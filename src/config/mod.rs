@@ -75,6 +75,7 @@ impl GlobalConfig {
     }
 
     pub fn effective_profile_name<'a>(&'a self, book_profile: Option<&'a str>) -> Option<&'a str> {
+        let book_profile = book_profile.filter(|s| !s.is_empty());
         book_profile.or(self.default_profile.as_deref())
     }
 }
