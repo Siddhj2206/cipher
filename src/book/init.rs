@@ -30,7 +30,7 @@ pub struct BookConfig {
 impl Default for BookConfig {
     fn default() -> Self {
         Self {
-            profile: None,
+            profile: Some("default".to_string()),
             raw_dir: "raw".to_string(),
             out_dir: "tl".to_string(),
             glossary_path: "glossary.json".to_string(),
@@ -194,7 +194,6 @@ const STYLE_TEMPLATE: &str = r#"# Style Guide
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_book_config_default() {
@@ -204,7 +203,7 @@ mod tests {
         assert_eq!(config.glossary_path, "glossary.json");
         assert_eq!(config.style_path, "style.md");
         assert_eq!(config.glossary_injection, "smart");
-        assert!(config.profile.is_none());
+        assert_eq!(config.profile, Some("default".to_string()));
     }
 
     #[test]

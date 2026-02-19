@@ -130,8 +130,6 @@ impl Provider for OpenAiProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_provider_creation() {
         // This would need a real API key to test properly

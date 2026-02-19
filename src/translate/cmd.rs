@@ -167,93 +167,110 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 println!("- Using full glossary: {} terms", selection.total_count);
             }
         }
-        match translator
-            .translate_chapter(&chapter_text, &selection.terms)
-            .await
-        {
-            Ok(response) => {
-                let duration = start.elapsed();
 
-                // Validate translation
-                let validation = validate_translation(&response.translation);
-                if !validation.is_valid() {
-                    println!(
-                        "- Warning: validation failed: {}",
-                        validation.errors().join(", ")
-                    );
-                    run_state.set_chapter(
-                        &filename,
-                        ChapterStatus::Failed,
-                        Some(format!(
+        const MAX_RETRIES: usize = 3;
+        let mut last_error: Option<String> = None;
+        let mut response: Option<crate::translate::TranslationResponse> = None;
+
+        for attempt in 1..=MAX_RETRIES {
+            match translator
+                .translate_chapter(&chapter_text, &selection.terms)
+                .await
+            {
+                Ok(resp) => {
+                    let validation = validate_translation(&resp.translation);
+                    if validation.is_valid() {
+                        response = Some(resp);
+                        break;
+                    } else {
+                        last_error = Some(format!(
                             "Validation failed: {}",
                             validation.errors().join(", ")
-                        )),
-                        Some(duration.as_millis() as u64),
-                    );
-                    failed += 1;
-
-                    if options.fail_fast {
-                        println!("Stopping due to --fail-fast");
-                        break;
-                    }
-                    continue;
-                }
-
-                // Backup if needed
-                if options.backup && output_exists {
-                    let backup_path = create_backup(&out_path)?;
-                    println!("- Backed up to {}", backup_path.display());
-                }
-
-                // Write output
-                std::fs::write(&out_path, &response.translation)
-                    .with_context(|| format!("Failed to write {}", out_path.display()))?;
-
-                // Merge glossary terms
-                if !response.new_glossary_terms.is_empty() {
-                    let (merged, added, skipped) =
-                        merge_terms(glossary, response.new_glossary_terms);
-                    glossary = merged;
-                    new_glossary_terms += added;
-                    if added > 0 {
-                        if skipped > 0 {
+                        ));
+                        if attempt < MAX_RETRIES {
                             println!(
-                                "- Added {} new term/s to glossary ({} duplicate/s skipped)",
-                                added, skipped
+                                "- Attempt {}/{} failed: {}. Retrying...",
+                                attempt,
+                                MAX_RETRIES,
+                                last_error.as_ref().unwrap()
                             );
-                        } else {
-                            println!("- Added {} new term/s to glossary", added);
                         }
-                    } else if skipped > 0 {
-                        println!("- No new terms to add ({} duplicate/s skipped)", skipped);
                     }
                 }
-
-                println!("- Successfully translated {}", filename);
-                run_state.set_chapter(
-                    &filename,
-                    ChapterStatus::Success,
-                    None,
-                    Some(duration.as_millis() as u64),
-                );
-                translated += 1;
-            }
-            Err(e) => {
-                let err_msg = format!("{}", e);
-                println!("- Error: {}", err_msg);
-                let duration = start.elapsed();
-                run_state.set_chapter(
-                    &filename,
-                    ChapterStatus::Failed,
-                    Some(err_msg),
-                    Some(duration.as_millis() as u64),
-                );
-                failed += 1;
-
-                if options.fail_fast {
-                    println!("Stopping due to --fail-fast");
-                    break;
+                Err(e) => {
+                    last_error = Some(format!("{}", e));
+                    if attempt < MAX_RETRIES {
+                        println!(
+                            "- Attempt {}/{} failed: {}. Retrying...",
+                            attempt,
+                            MAX_RETRIES,
+                            last_error.as_ref().unwrap()
+                        );
+                    }
                 }
+            }
+        }
+
+        let duration = start.elapsed();
+
+        if let Some(resp) = response {
+            // Backup if needed
+            if options.backup && output_exists {
+                let backup_path = create_backup(&out_path)?;
+                println!("- Backed up to {}", backup_path.display());
+            }
+
+            // Write output
+            std::fs::write(&out_path, &resp.translation)
+                .with_context(|| format!("Failed to write {}", out_path.display()))?;
+
+            // Merge glossary terms
+            if !resp.new_glossary_terms.is_empty() {
+                let (merged, added, skipped) = merge_terms(glossary, resp.new_glossary_terms);
+                glossary = merged;
+                new_glossary_terms += added;
+                if added > 0 {
+                    if skipped > 0 {
+                        println!(
+                            "- Added {} new term/s to glossary ({} duplicate/s skipped)",
+                            added, skipped
+                        );
+                    } else {
+                        println!("- Added {} new term/s to glossary", added);
+                    }
+                } else if skipped > 0 {
+                    println!("- No new terms to add ({} duplicate/s skipped)", skipped);
+                }
+            }
+
+            println!("- Successfully translated {}", filename);
+            run_state.set_chapter(
+                &filename,
+                ChapterStatus::Success,
+                None,
+                Some(duration.as_millis() as u64),
+            );
+            translated += 1;
+        } else {
+            println!(
+                "- Failed to translate {} after {} attempts: {}",
+                filename,
+                MAX_RETRIES,
+                last_error
+                    .clone()
+                    .unwrap_or_else(|| "Unknown error".to_string())
+            );
+            run_state.set_chapter(
+                &filename,
+                ChapterStatus::Failed,
+                last_error,
+                Some(duration.as_millis() as u64),
+            );
+            failed += 1;
+
+            if options.fail_fast {
+                println!("Stopping due to --fail-fast");
+                break;
             }
         }
     }

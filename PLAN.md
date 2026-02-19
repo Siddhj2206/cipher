@@ -60,7 +60,7 @@ Suggested flags:
 - `--from <existingBook>` (copy style + glossary structure; optional)
 - `--import-glossary <path>` (accept canonical JSON; copies into the book if missing)
 
-### 3) Translate
+### 3) Translate ✓ DONE
 
 Primary command:
 
@@ -72,6 +72,8 @@ Behavior:
 - Writes translated markdown to output folder.
 - Skips already translated chapters by default.
 - Records per-chapter status and errors so the run is resumable.
+- **Retry logic**: Failed translations (API errors or validation failures) retry up to 3 times total.
+- **Summary output**: Prints final counts (translated, skipped, failed, new glossary terms) at end of run.
 
 CLI output should follow Book-Translator-Go style:
 
@@ -352,18 +354,19 @@ Scope
 Done when
 - `cipher doctor <bookDir>` reports the resolved paths and whether each exists.
 
-### Feature 3: `cipher init <bookDir>` scaffold
+### Feature 3: `cipher init <bookDir>` scaffold ✓ DONE
 
 Scope
 - Create directories and starter files:
   - `raw/`, `tl/`, `.cipher/`
-  - `config.json` (portable defaults)
+  - `config.json` (portable defaults, includes `"profile": "default"`)
   - `glossary.json` (empty but valid)
   - `style.md` (template)
 
 Done when
 - Running `cipher init ./MyBook` creates a ready-to-translate scaffold.
 - Re-running init is non-destructive (does not overwrite user-edited files by default).
+- New books have `"profile": "default"` in config.json.
 
 ### Feature 4: Canonical glossary format + basic commands
 
@@ -431,7 +434,7 @@ Done when
 - `Translator::translate_chapter()` returns `TranslationResponse` with translation and new glossary terms.
 - Provider can be constructed from global config and profile.
 
-### Feature 7: `cipher translate <bookDir>` (batch translation)
+### Feature 7: `cipher translate <bookDir>` (batch translation) ✓ DONE
 
 Scope
 - Chapter discovery:
@@ -440,12 +443,15 @@ Scope
 - Translation loop:
   - Load global config and resolve effective profile for the book
   - Skip if output exists (default)
-  - Translate each chapter using the provider
+  - Translate each chapter using the provider with retry logic:
+    - Max 3 attempts (initial + 2 retries)
+    - Retries on both API errors and validation failures
+    - Output shows retry progress: `- Attempt X/3 failed: <error>. Retrying...`
   - Validate output before accepting (current):
     - Non-empty
     - Strict heading: first line must be `# Chapter X: Title` or `# Chapter X`
     - Balanced code fences
-  - On validation failure: mark chapter as failed, continue (unless `--fail-fast`)
+  - On final failure (after 3 attempts): mark chapter as failed, continue (unless `--fail-fast`)
   - On validation success:
     - Write translation to `tl/<same-filename>.md`
     - Auto-merge `new_glossary_terms` into `glossary.json` (dedupe by og_term/term)
@@ -456,12 +462,18 @@ Scope
 - State tracking:
   - Store per-chapter status under `.cipher/`
   - Record success/failed/skipped counts
+- Final summary output:
+  - Translated: N
+  - Skipped: N
+  - Failed: N
+  - New glossary terms: N
 
 Done when
 - Translating a folder produces outputs in deterministic order.
 - Glossary is updated with new terms only from successfully translated chapters.
 - Overwrite-bad, skip, and fail-fast behaviors work correctly.
 - CLI output follows Book-Translator-Go style (profile header, per-chapter messages with `- ` sub-lines, glossary usage counts).
+- Failed chapters retry up to 3 times before giving up.
 
 ### Feature 8: `.cipher/` run state + resumability
 
@@ -497,17 +509,26 @@ Scope
 Done when
 - Overwrites never corrupt files (even on crash) and backups are created deterministically.
 
-### Feature 11: Smart glossary injection
+### Feature 11: Smart glossary injection ✓ DONE
 
 Scope
 - Implement `glossary_injection` in book config (`smart` default, `full` optional).
 - Smart mode selects relevant glossary terms per chapter using the Book-Translator-Go algorithm and constants:
   - min matches = 5
   - window sizes = 3..=6
-  - ngram bag sizes = 3 and 4
+  - ngram bag sizes = 2, 3, and 4
 - Keep it deterministic and explainable; fall back to `full` when uncertain.
 - Performance requirement: smart selection must be fast on large books.
-  - Build and cache a matcher/index over `og_term` strings (closest-match style) instead of brute-force scanning all terms per candidate.
+
+Implementation
+- Custom `ClosestMatch` struct in `src/glossary/closest_match.rs` using inverted index
+- Precomputes ngram-to-term-id mapping for O(1) lookups
+- Algorithm matches Go's `github.com/schollz/closestmatch`:
+  - Build inverted index: `ngram → Vec<term_index>`
+  - For each query ngram, look up matching terms (O(1))
+  - Aggregate intersection scores only for matching terms
+  - Return highest scoring term
+- Handles Chinese/short strings with bag size 2
 
 Done when
 - Smart mode is the default, reduces prompt size without causing term drift, and remains fast on large books.
