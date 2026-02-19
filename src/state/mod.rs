@@ -113,9 +113,7 @@ impl RunState {
         if let Some(prev) = previous {
             // Carry forward any chapters not in current run
             for (filename, state) in prev.chapters {
-                if !self.chapters.contains_key(&filename) {
-                    self.chapters.insert(filename, state);
-                }
+                self.chapters.entry(filename).or_insert(state);
             }
         }
     }

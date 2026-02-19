@@ -23,6 +23,8 @@ pub struct BookConfig {
     pub out_dir: String,
     pub glossary_path: String,
     pub style_path: String,
+    #[serde(default = "default_glossary_injection")]
+    pub glossary_injection: String,
 }
 
 impl Default for BookConfig {
@@ -33,8 +35,13 @@ impl Default for BookConfig {
             out_dir: "tl".to_string(),
             glossary_path: "glossary.json".to_string(),
             style_path: "style.md".to_string(),
+            glossary_injection: default_glossary_injection(),
         }
     }
+}
+
+fn default_glossary_injection() -> String {
+    "smart".to_string()
 }
 
 impl BookConfig {
@@ -196,6 +203,7 @@ mod tests {
         assert_eq!(config.out_dir, "tl");
         assert_eq!(config.glossary_path, "glossary.json");
         assert_eq!(config.style_path, "style.md");
+        assert_eq!(config.glossary_injection, "smart");
         assert!(config.profile.is_none());
     }
 

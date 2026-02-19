@@ -1,6 +1,8 @@
 use crate::book::{BookLayout, load_book_config};
 use crate::config::{GlobalConfig, validate_profile};
-use crate::glossary::{load_glossary, merge_terms, save_glossary};
+use crate::glossary::{
+    InjectionMode, load_glossary, merge_terms, save_glossary, select_terms_for_text,
+};
 use crate::state::{ChapterStatus, RunOptions, RunState};
 use crate::translate::Translator;
 use crate::validate::validate_translation;
@@ -31,6 +33,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     // Resolve effective profile
     let book_config = load_book_config(&layout.paths.config_json).unwrap_or_default();
+    let injection_mode = InjectionMode::from_str(&book_config.glossary_injection);
     let profile_name = global_config.effective_profile_name(book_config.profile.as_deref());
 
     let profile_name = profile_name.ok_or_else(|| {
@@ -51,11 +54,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .resolve_profile(profile_name)
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
 
-    println!("Using profile: {}", profile_name);
-    println!("  Provider: {}", profile.provider);
-    println!("  Model: {}", profile.model);
-    println!();
-
     // Create translator
     let translator = Translator::from_config(&global_config, profile_name)
         .context("Failed to create translator")?;
@@ -67,8 +65,12 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         return Ok(());
     }
 
-    println!("Found {} chapter(s)", chapters.len());
+    println!("Using profile {}", profile_name);
+    println!("- Provider: {}", profile.provider);
+    println!("- Model: {}", profile.model);
     println!();
+    println!("Translating chapters...");
+    println!("Found {} files to translate", chapters.len());
 
     // Load existing glossary
     let mut glossary = load_glossary(&layout.paths.glossary_json)?;
@@ -120,24 +122,24 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         };
 
         if !should_translate {
-            println!("[SKIP] {}", filename);
+            println!("Skipping {} (already translated)", filename);
             run_state.set_chapter(&filename, ChapterStatus::Skipped, None, None);
             skipped += 1;
             continue;
         }
 
-        println!("[TRANSLATE] {}", filename);
+        println!("Translating {}", filename);
 
         // Read chapter
         let chapter_text = std::fs::read_to_string(&raw_path)
             .with_context(|| format!("Failed to read {}", raw_path.display()))?;
 
         if chapter_text.trim().is_empty() {
-            println!("  Empty chapter, skipping");
+            println!("Skipping {}: Empty file", filename);
             run_state.set_chapter(
                 &filename,
                 ChapterStatus::Skipped,
-                Some("Empty chapter".to_string()),
+                Some("Empty file".to_string()),
                 None,
             );
             skipped += 1;
@@ -146,17 +148,39 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
         // Translate
         let start = Instant::now();
-        match translator.translate_chapter(&chapter_text, &glossary).await {
+        let selection = select_terms_for_text(&glossary, &chapter_text, injection_mode);
+        match injection_mode {
+            InjectionMode::Smart => {
+                if selection.used_fallback_to_full {
+                    println!(
+                        "- Using smart glossary (fallback): {}/{} terms",
+                        selection.selected_count, selection.total_count
+                    );
+                } else {
+                    println!(
+                        "- Using smart glossary: {}/{} terms",
+                        selection.selected_count, selection.total_count
+                    );
+                }
+            }
+            InjectionMode::Full => {
+                println!("- Using full glossary: {} terms", selection.total_count);
+            }
+        }
+        match translator
+            .translate_chapter(&chapter_text, &selection.terms)
+            .await
+        {
             Ok(response) => {
                 let duration = start.elapsed();
 
                 // Validate translation
                 let validation = validate_translation(&response.translation);
                 if !validation.is_valid() {
-                    println!("  Validation failed:");
-                    for error in validation.errors() {
-                        println!("    - {}", error);
-                    }
+                    println!(
+                        "- Warning: validation failed: {}",
+                        validation.errors().join(", ")
+                    );
                     run_state.set_chapter(
                         &filename,
                         ChapterStatus::Failed,
@@ -169,7 +193,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                     failed += 1;
 
                     if options.fail_fast {
-                        println!();
                         println!("Stopping due to --fail-fast");
                         break;
                     }
@@ -179,7 +202,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 // Backup if needed
                 if options.backup && output_exists {
                     let backup_path = create_backup(&out_path)?;
-                    println!("  Backed up to {}", backup_path.display());
+                    println!("- Backed up to {}", backup_path.display());
                 }
 
                 // Write output
@@ -188,15 +211,25 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
                 // Merge glossary terms
                 if !response.new_glossary_terms.is_empty() {
-                    let (merged, added, _) = merge_terms(glossary, response.new_glossary_terms);
+                    let (merged, added, skipped) =
+                        merge_terms(glossary, response.new_glossary_terms);
                     glossary = merged;
+                    new_glossary_terms += added;
                     if added > 0 {
-                        new_glossary_terms += added;
-                        println!("  Added {} glossary term(s)", added);
+                        if skipped > 0 {
+                            println!(
+                                "- Added {} new term/s to glossary ({} duplicate/s skipped)",
+                                added, skipped
+                            );
+                        } else {
+                            println!("- Added {} new term/s to glossary", added);
+                        }
+                    } else if skipped > 0 {
+                        println!("- No new terms to add ({} duplicate/s skipped)", skipped);
                     }
                 }
 
-                println!("  Done in {:.2}s", duration.as_secs_f64());
+                println!("- Successfully translated {}", filename);
                 run_state.set_chapter(
                     &filename,
                     ChapterStatus::Success,
@@ -207,7 +240,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             }
             Err(e) => {
                 let err_msg = format!("{}", e);
-                println!("  Error: {}", err_msg);
+                println!("- Error: {}", err_msg);
                 let duration = start.elapsed();
                 run_state.set_chapter(
                     &filename,
@@ -218,7 +251,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 failed += 1;
 
                 if options.fail_fast {
-                    println!();
                     println!("Stopping due to --fail-fast");
                     break;
                 }
@@ -230,8 +262,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     if glossary.len() > initial_glossary_count {
         let mut glossary_mut = glossary;
         save_glossary(&layout.paths.glossary_json, &mut glossary_mut)?;
-        println!();
-        println!("Updated glossary: {} new term(s)", new_glossary_terms);
     }
 
     // Merge previous state and mark finished
@@ -242,11 +272,11 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     run_state.save(book_dir)?;
 
     // Print summary
-    println!();
-    println!("Translation complete:");
-    println!("  Translated: {}", translated);
-    println!("  Skipped: {}", skipped);
-    println!("  Failed: {}", failed);
+    if translated == 0 {
+        println!("No chapters translated!");
+    } else {
+        println!("Successfully translated {} chapter/s!", translated);
+    }
 
     if failed > 0 {
         std::process::exit(1);

@@ -38,6 +38,7 @@ This document describes how the rebuilt tool (renamed from `btranslate` to `ciph
 Commands:
 
 - `cipher profile new` (interactive; adds providers/keys; creates a profile)
+- `cipher profile new` (interactive; can reuse existing providers/keys; creates a profile)
 - `cipher profile list`
 - `cipher profile show <name>`
 - `cipher profile set-default <name>`
@@ -71,6 +72,16 @@ Behavior:
 - Writes translated markdown to output folder.
 - Skips already translated chapters by default.
 - Records per-chapter status and errors so the run is resumable.
+
+CLI output should follow Book-Translator-Go style:
+
+- Sentence case, no bracket tags like `[SKIP]`.
+- Use `- ` for sub-messages under a chapter.
+- Print the effective profile before the run:
+  - `Using profile <name>`
+  - `- Provider: <provider>`
+  - `- Model: <model>`
+- Show glossary usage counts when translating a chapter (e.g. `- Using smart glossary: N/M terms`).
 
 Important rerun controls:
 
@@ -125,6 +136,7 @@ Profile includes:
 
 - provider id
 - primary model
+- optional key label to select which API key to use for that provider
 - fallback chain (models; optionally cross-provider)
 - stable generation knobs (to reduce chapter-to-chapter drift)
 - validation policy (strict/normal)
@@ -178,7 +190,15 @@ The tool should support modes (book-configurable):
 - `full`: inject all glossary terms
 - `smart`: inject a relevant, deterministic subset (with a clear fallback to `full` when uncertain)
 
-If `smart` is used, it must be predictable and tuneable (same inputs => same injected subset), with a clear fallback to `full` when uncertain.
+Default mode is `smart`.
+
+If `smart` is used, it must be predictable and tuneable (same inputs => same injected subset), with a clear fallback to `full` when uncertain. The algorithm should match Book-Translator-Go:
+
+- Sliding window candidates over the chapter text (window sizes 3..=6), skipping ASCII-only windows
+- Fuzzy match each candidate to the closest `og_term` (ngram bag sizes 3 and 4)
+- Accept a fuzzy match only if the matched `og_term` is present as an exact substring in the chapter
+- Always include entries with empty `og_term`
+- Fallback to full glossary when fewer than 5 glossary entries match
 
 ### Migration and import
 
@@ -301,6 +321,7 @@ This section is the step-by-step implementation plan for building `cipher` in Ru
 - Book config file: `config.json` (portable; no secrets).
 - Canonical glossary: JSON format with term/og_term/definition/notes.
 - Translation response: structured JSON with `translation` and `new_glossary_terms`.
+- Default glossary injection: `smart` (book config key `glossary_injection`).
 
 ### Feature 1: CLI skeleton + project structure
 
@@ -374,9 +395,10 @@ Scope
   - profiles (provider + model + generation knobs)
 - Book `config.json` references a profile name.
 - Add interactive `cipher profile new`:
-  - Select provider kind (OpenAI or OpenAI-compatible)
-  - Enter base URL (only for compatible)
-  - Enter API key
+  - Select an existing provider, or create a new one (OpenAI or OpenAI-compatible)
+  - Enter base URL when creating an OpenAI-compatible provider
+  - Select an existing API key for that provider, or add a new key
+  - Keys are selected by key label; the profile can pin a specific labeled key
   - Enter model name
   - Optionally set as default
 - Provider design is extensible for future provider kinds (rig.rs-native or custom).
@@ -439,6 +461,7 @@ Done when
 - Translating a folder produces outputs in deterministic order.
 - Glossary is updated with new terms only from successfully translated chapters.
 - Overwrite-bad, skip, and fail-fast behaviors work correctly.
+- CLI output follows Book-Translator-Go style (profile header, per-chapter messages with `- ` sub-lines, glossary usage counts).
 
 ### Feature 8: `.cipher/` run state + resumability
 
@@ -474,16 +497,30 @@ Scope
 Done when
 - Overwrites never corrupt files (even on crash) and backups are created deterministically.
 
-### Feature 11: Smart glossary injection (optional)
+### Feature 11: Smart glossary injection
 
 Scope
-- Add `smart` injection mode to include only relevant glossary terms for a chapter.
+- Implement `glossary_injection` in book config (`smart` default, `full` optional).
+- Smart mode selects relevant glossary terms per chapter using the Book-Translator-Go algorithm and constants:
+  - min matches = 5
+  - window sizes = 3..=6
+  - ngram bag sizes = 3 and 4
 - Keep it deterministic and explainable; fall back to `full` when uncertain.
+- Performance requirement: smart selection must be fast on large books.
+  - Build and cache a matcher/index over `og_term` strings (closest-match style) instead of brute-force scanning all terms per candidate.
 
 Done when
-- Smart mode reduces prompt size without causing term drift; falling back to full is explainable.
+- Smart mode is the default, reduces prompt size without causing term drift, and remains fast on large books.
 
+#### Fallback: Lazy matcher rebuild (if performance is still lacking)
 
+If the current approach (rebuilding ClosestMatch on every `select_terms_smart` call) proves slow in practice:
+
+- Add `needs_rebuild: bool` flag to glossary state (like Book-Translator-Go's `needsRebuild`)
+- Cache `matcher: Option<ClosestMatch>` in the glossary struct
+- `ensure_matcher()` rebuilds only when `needs_rebuild == true`
+- Set `needs_rebuild = true` whenever terms are added/modified
+- This avoids redundant inverted index construction across chapters in the same run
 
 ### Feature 12: Multiple keys + cooldown/rotation
 
@@ -508,5 +545,5 @@ Done when
 
 ## Open questions
 
-- Should `cipher init` default to `full` glossary injection or `smart`?
+- Where should the smart-glossary matcher/index live (per run cache vs persisted under `.cipher/`), and when should it rebuild (on glossary file change vs always)?
 - What is the minimum validation strictness that catches bad outputs without false positives?
