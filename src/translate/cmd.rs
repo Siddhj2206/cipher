@@ -272,11 +272,12 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     run_state.save(book_dir)?;
 
     // Print summary
-    if translated == 0 {
-        println!("No chapters translated!");
-    } else {
-        println!("Successfully translated {} chapter/s!", translated);
-    }
+    println!();
+    println!("Translation complete");
+    println!("- Translated: {}", translated);
+    println!("- Skipped: {}", skipped);
+    println!("- Failed: {}", failed);
+    println!("- New glossary terms: {}", new_glossary_terms);
 
     if failed > 0 {
         std::process::exit(1);

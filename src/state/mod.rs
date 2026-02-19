@@ -153,6 +153,7 @@ impl RunState {
             .collect()
     }
 
+    #[allow(dead_code)]
     pub fn format_duration(&self) -> String {
         match (&self.started_at, &self.finished_at) {
             (start, Some(end)) => {
@@ -183,9 +184,11 @@ impl RunState {
 
 #[derive(Debug, Clone)]
 pub struct RunSummary {
+    #[allow(dead_code)]
     pub total: usize,
     pub success: usize,
     pub failed: usize,
     pub skipped: usize,
+    #[allow(dead_code)]
     pub pending: usize,
 }

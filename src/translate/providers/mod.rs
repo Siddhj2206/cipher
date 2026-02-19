@@ -70,7 +70,7 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     }
 }
 
-/// Validate that a provider config is usable
+#[allow(dead_code)]
 pub fn validate_provider_config(config: &GlobalConfig, profile: &ProfileConfig) -> Result<()> {
     let provider = config
         .resolve_provider(&profile.provider)

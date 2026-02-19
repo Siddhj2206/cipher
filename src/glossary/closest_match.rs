@@ -14,10 +14,7 @@ impl ClosestMatch {
         for (idx, term) in owned.iter().enumerate() {
             let ngrams = build_ngrams(term, bag_sizes);
             for ngram in ngrams {
-                ngram_to_term_ids
-                    .entry(ngram)
-                    .or_insert_with(Vec::new)
-                    .push(idx);
+                ngram_to_term_ids.entry(ngram).or_default().push(idx);
             }
         }
 
@@ -53,10 +50,12 @@ impl ClosestMatch {
         Some(&self.terms[best.0])
     }
 
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.terms.len()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }

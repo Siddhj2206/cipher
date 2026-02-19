@@ -76,6 +76,7 @@ fn normalize_key(s: &str) -> String {
         .to_lowercase()
 }
 
+#[allow(dead_code)]
 pub fn render_for_prompt(terms: &[GlossaryTerm]) -> String {
     if terms.is_empty() {
         return "No glossary terms.".to_string();
@@ -97,6 +98,7 @@ pub struct SelectionResult {
     pub terms: Vec<GlossaryTerm>,
     pub total_count: usize,
     pub selected_count: usize,
+    #[allow(dead_code)]
     pub is_subset: bool,
     pub used_fallback_to_full: bool,
 }
@@ -161,13 +163,12 @@ fn select_terms_smart(all_terms: &[GlossaryTerm], text: &str) -> SelectionResult
     let candidates = extract_candidates(text);
 
     for candidate in candidates {
-        if let Some(match_term) = matcher.closest(&candidate) {
-            if text.contains(match_term) {
-                if let Some(indices) = og_term_to_indices.get(match_term) {
-                    for &idx in indices {
-                        matched_indices.insert(idx);
-                    }
-                }
+        if let Some(match_term) = matcher.closest(&candidate)
+            && text.contains(match_term)
+            && let Some(indices) = og_term_to_indices.get(match_term)
+        {
+            for &idx in indices {
+                matched_indices.insert(idx);
             }
         }
     }
