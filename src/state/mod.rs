@@ -21,8 +21,6 @@ pub struct RunState {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RunOptions {
     pub overwrite: bool,
-    pub overwrite_bad: bool,
-    pub backup: bool,
     pub fail_fast: bool,
 }
 

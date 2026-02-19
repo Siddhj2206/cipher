@@ -12,8 +12,6 @@ use std::time::Instant;
 
 pub struct TranslateOptions {
     pub overwrite: bool,
-    pub overwrite_bad: bool,
-    pub backup: bool,
     pub fail_fast: bool,
 }
 
@@ -82,8 +80,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Create run state with options
     let run_options = RunOptions {
         overwrite: options.overwrite,
-        overwrite_bad: options.overwrite_bad,
-        backup: options.backup,
         fail_fast: options.fail_fast,
     };
 
@@ -111,17 +107,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
         // Check if output exists
         let output_exists = out_path.exists();
-        let should_translate = if options.overwrite {
-            true
-        } else if options.overwrite_bad && output_exists {
-            // Check if existing output is bad
-            let existing = std::fs::read_to_string(&out_path)?;
-            !validate_translation(&existing).is_valid()
-        } else {
-            !output_exists
-        };
-
-        if !should_translate {
+        if !options.overwrite && output_exists {
             println!("Skipping {} (already translated)", filename);
             run_state.set_chapter(&filename, ChapterStatus::Skipped, None, None);
             skipped += 1;
@@ -243,14 +229,14 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         let duration = start.elapsed();
 
         if let Some(resp) = response {
-            // Backup if needed
-            if options.backup && output_exists {
-                let backup_path = create_backup(&out_path)?;
+            // Backup if overwriting existing file
+            if output_exists {
+                let backup_path = create_backup(book_dir, &out_path)?;
                 println!("- Backed up to {}", backup_path.display());
             }
 
-            // Write output
-            std::fs::write(&out_path, &resp.translation)
+            // Write output atomically
+            atomic_write(&out_path, &resp.translation)
                 .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
             // Merge glossary terms
@@ -382,16 +368,26 @@ fn extract_number(filename: &str) -> Option<u32> {
     }
 }
 
-fn create_backup(path: &Path) -> Result<PathBuf> {
+fn create_backup(book_dir: &Path, path: &Path) -> Result<PathBuf> {
     use chrono::Local;
 
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let filename = path.file_stem().unwrap().to_string_lossy();
-    let backup_name = format!("{}_{}.md.bak", filename, timestamp);
-    let backup_path = path.with_file_name(&backup_name);
+    let backup_name = format!("{}_{}.md", filename, timestamp);
 
+    let backup_dir = book_dir.join(".cipher").join("backups");
+    std::fs::create_dir_all(&backup_dir)?;
+
+    let backup_path = backup_dir.join(&backup_name);
     std::fs::copy(path, &backup_path)?;
     Ok(backup_path)
+}
+
+fn atomic_write(path: &Path, content: &str) -> Result<()> {
+    let temp_path = path.with_extension("tmp");
+    std::fs::write(&temp_path, content)?;
+    std::fs::rename(&temp_path, path)?;
+    Ok(())
 }
 
 #[cfg(test)]

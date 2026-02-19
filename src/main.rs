@@ -35,17 +35,12 @@ enum Commands {
     },
     /// Translate a book
     Translate {
-        /// Directory containing the book
+        /// Directory containing the book (defaults to current directory)
+        #[arg(default_value = ".")]
         book_dir: PathBuf,
-        /// Overwrite existing translations
+        /// Overwrite existing translations (creates backups automatically)
         #[arg(long)]
         overwrite: bool,
-        /// Overwrite only failed/bad translations
-        #[arg(long)]
-        overwrite_bad: bool,
-        /// Create backups on overwrite
-        #[arg(long, default_value = "true")]
-        backup: bool,
         /// Stop on first error
         #[arg(long)]
         fail_fast: bool,
@@ -303,14 +298,10 @@ async fn main() {
         Commands::Translate {
             book_dir,
             overwrite,
-            overwrite_bad,
-            backup,
             fail_fast,
         } => {
             let options = translate::TranslateOptions {
                 overwrite,
-                overwrite_bad,
-                backup,
                 fail_fast,
             };
 

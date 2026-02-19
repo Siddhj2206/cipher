@@ -87,10 +87,13 @@ CLI output should follow Book-Translator-Go style:
 
 Important rerun controls:
 
-- `--overwrite` overwrite outputs even if present
-- `--overwrite-bad` overwrite only chapters whose existing output fails the full validator
-- `--backup` (default on overwrite): keep timestamped backups of replaced outputs
-- `--fail-fast` stop on first error (default should continue and report failures)
+- `--overwrite` overwrite outputs even if present (automatically creates timestamped backup)
+- `--fail-fast` stop on first error (default continues and reports failures at end)
+
+File safety:
+
+- **Atomic writes**: All writes use temp file + rename to prevent partial writes on crash
+- **Auto-backup**: When `--overwrite` is used, existing files are backed up to `.cipher/backups/` with timestamp (e.g., `chapter_01_20260219_143022.md.bak`)
 
 Companion commands:
 
