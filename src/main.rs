@@ -4,6 +4,7 @@ use std::path::PathBuf;
 mod book;
 mod config;
 mod glossary;
+mod import;
 mod state;
 mod translate;
 mod validate;
@@ -19,6 +20,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Import an EPUB file and create a new book project
+    Import {
+        /// Path to the EPUB file
+        epub_path: PathBuf,
+        /// Force re-import even if chapters exist (will prompt for confirmation)
+        #[arg(long)]
+        force: bool,
+    },
     /// Initialize a new book project
     Init {
         /// Directory to initialize
@@ -252,6 +261,13 @@ async fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Commands::Import { epub_path, force } => match import::import_epub(&epub_path, force) {
+            Ok(_report) => {}
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        },
         Commands::Init {
             book_dir,
             profile,

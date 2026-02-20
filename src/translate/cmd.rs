@@ -72,7 +72,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     // Load existing glossary
     let mut glossary = load_glossary(&layout.paths.glossary_json)?;
-    let initial_glossary_count = glossary.len();
 
     // Load previous run state for merging
     let previous_state = RunState::load(book_dir)?;
@@ -253,6 +252,8 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                     } else {
                         println!("- Added {} new term/s to glossary", added);
                     }
+                    let mut glossary_mut = glossary.clone();
+                    save_glossary(&layout.paths.glossary_json, &mut glossary_mut)?;
                 } else if skipped > 0 {
                     println!("- No new terms to add ({} duplicate/s skipped)", skipped);
                 }
@@ -288,12 +289,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 break;
             }
         }
-    }
-
-    // Save updated glossary
-    if glossary.len() > initial_glossary_count {
-        let mut glossary_mut = glossary;
-        save_glossary(&layout.paths.glossary_json, &mut glossary_mut)?;
     }
 
     // Merge previous state and mark finished
