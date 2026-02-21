@@ -39,8 +39,8 @@ fn print_run_state(state: &RunState) {
         println!("Failed chapters:");
         for (filename, chapter) in failed {
             if let Some(ref error) = chapter.error {
-                let error_preview = if error.len() > 60 {
-                    format!("{}...", &error[..60])
+                let error_preview = if error.chars().count() > 60 {
+                    format!("{}...", error.chars().take(60).collect::<String>())
                 } else {
                     error.clone()
                 };

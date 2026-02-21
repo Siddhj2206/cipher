@@ -1,6 +1,6 @@
 mod closest_match;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
@@ -26,10 +26,19 @@ pub enum InjectionMode {
 
 impl InjectionMode {
     pub fn from_str(value: &str) -> Self {
-        match value.trim().to_lowercase().as_str() {
+        let normalized = value.trim().to_lowercase();
+        match normalized.as_str() {
             "full" => InjectionMode::Full,
             "smart" => InjectionMode::Smart,
-            _ => InjectionMode::Smart,
+            _ => {
+                if !normalized.is_empty() {
+                    eprintln!(
+                        "Warning: Unknown glossary_injection '{}', using 'smart'",
+                        value
+                    );
+                }
+                InjectionMode::Smart
+            }
         }
     }
 }
@@ -40,33 +49,40 @@ pub fn load_glossary<P: AsRef<Path>>(path: P) -> Result<Vec<GlossaryTerm>> {
         return Ok(Vec::new());
     }
 
-    let content = fs::read_to_string(path)?;
-    let terms: Vec<GlossaryTerm> = serde_json::from_str(&content)?;
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read glossary file {}", path.display()))?;
+    let terms: Vec<GlossaryTerm> = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse glossary JSON in {}", path.display()))?;
     Ok(terms)
 }
 
 pub fn save_glossary<P: AsRef<Path>>(path: P, terms: &mut Vec<GlossaryTerm>) -> Result<()> {
-    dedupe_and_sort_terms(terms);
+    let sorted = {
+        let mut sorted = terms.clone();
+        dedupe_and_sort_terms(&mut sorted);
+        sorted
+    };
 
     let path = path.as_ref();
-    let json = serde_json::to_string_pretty(terms)?;
+    let json = serde_json::to_string_pretty(&sorted)?;
     fs::write(path, json + "\n")?;
+    *terms = sorted;
     Ok(())
 }
 
 fn dedupe_and_sort_terms(terms: &mut Vec<GlossaryTerm>) {
-    fn dedupe_key(term: &GlossaryTerm) -> String {
-        normalize_key(term.og_term.as_deref().unwrap_or(&term.term))
-    }
-
     let mut seen = std::collections::HashSet::new();
-    terms.retain(|t| seen.insert(dedupe_key(t)));
+    terms.retain(|t| seen.insert(term_dedupe_key(t)));
 
     terms.sort_by(|a, b| {
-        let key_a = dedupe_key(a);
-        let key_b = dedupe_key(b);
+        let key_a = term_dedupe_key(a);
+        let key_b = term_dedupe_key(b);
         key_a.cmp(&key_b).then_with(|| a.term.cmp(&b.term))
     });
+}
+
+fn term_dedupe_key(term: &GlossaryTerm) -> String {
+    normalize_key(term.og_term.as_deref().unwrap_or(&term.term))
 }
 
 fn normalize_key(s: &str) -> String {
@@ -74,24 +90,6 @@ fn normalize_key(s: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
         .to_lowercase()
-}
-
-#[allow(dead_code)]
-pub fn render_for_prompt(terms: &[GlossaryTerm]) -> String {
-    if terms.is_empty() {
-        return "No glossary terms.".to_string();
-    }
-
-    let mut lines = Vec::new();
-    for term in terms {
-        let line = if let Some(ref og) = term.og_term {
-            format!("{} [{}]: {}", term.term, og, term.definition)
-        } else {
-            format!("{}: {}", term.term, term.definition)
-        };
-        lines.push(line);
-    }
-    lines.join("\n")
 }
 
 pub struct SelectionResult {
@@ -227,18 +225,14 @@ pub fn merge_terms(
     existing: Vec<GlossaryTerm>,
     incoming: Vec<GlossaryTerm>,
 ) -> (Vec<GlossaryTerm>, usize, usize) {
-    fn dedupe_key(term: &GlossaryTerm) -> String {
-        normalize_key(term.og_term.as_deref().unwrap_or(&term.term))
-    }
-
     let mut result = existing;
-    let existing_keys: std::collections::HashSet<_> = result.iter().map(dedupe_key).collect();
+    let existing_keys: std::collections::HashSet<_> = result.iter().map(term_dedupe_key).collect();
 
     let mut added = 0;
     let mut skipped = 0;
 
     for term in incoming {
-        let key = dedupe_key(&term);
+        let key = term_dedupe_key(&term);
         if existing_keys.contains(&key) {
             skipped += 1;
         } else {
@@ -283,17 +277,6 @@ mod tests {
         assert_eq!(terms.len(), 3);
         assert_eq!(terms[0].term, "Apple"); // by og_term (empty comes first)
         assert_eq!(terms[2].term, "Banana");
-    }
-
-    #[test]
-    fn test_render_prompt() {
-        let terms = vec![
-            term("Hello", Some("你好"), "Greeting"),
-            term("World", None, "The Earth"),
-        ];
-        let prompt = render_for_prompt(&terms);
-        assert!(prompt.contains("Hello [你好]: Greeting"));
-        assert!(prompt.contains("World: The Earth"));
     }
 
     #[test]

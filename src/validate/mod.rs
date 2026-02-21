@@ -12,7 +12,7 @@ pub fn validate_translation(text: &str) -> ValidationResult {
         let first_line = trimmed.lines().next().unwrap_or("");
         if !is_valid_chapter_heading(first_line) {
             errors.push(format!(
-                "Chapter heading must be in format '# Chapter X: Title' or '# Chapter X', got: {}",
+                "Chapter heading must start with '# ' and have content, got: {}",
                 first_line
             ));
         }
@@ -38,7 +38,7 @@ fn check_json_leakage(text: &str, errors: &mut Vec<String>) {
             "\"properties\":",
             "Schema pattern detected: \"properties\":",
         ),
-        ("$ref", "Schema pattern detected: $ref"),
+        ("\"$ref\"", "Schema pattern detected: \"$ref\""),
         ("\"required\":", "Schema pattern detected: \"required\":"),
     ];
 
@@ -54,13 +54,13 @@ fn check_json_leakage(text: &str, errors: &mut Vec<String>) {
     ];
 
     for (pattern, msg) in schema_patterns {
-        if text.contains(pattern) {
+        if is_pattern_in_json_context(text, pattern) {
             errors.push(msg.to_string());
         }
     }
 
     for (pattern, msg) in response_patterns {
-        if text.contains(pattern) {
+        if is_pattern_in_json_context(text, pattern) {
             errors.push(msg.to_string());
         }
     }
@@ -68,6 +68,25 @@ fn check_json_leakage(text: &str, errors: &mut Vec<String>) {
     if looks_like_json_object(text) {
         errors.push("Output appears to be raw JSON instead of markdown".to_string());
     }
+}
+
+fn is_pattern_in_json_context(text: &str, pattern: &str) -> bool {
+    if let Some(pos) = text.find(pattern) {
+        if pos == 0 {
+            return true;
+        }
+        let before = &text[..pos];
+        let last_char = before.chars().last().unwrap_or(' ');
+        if matches!(last_char, '{' | ',' | '\n') {
+            return true;
+        }
+        let before_trimmed = before.trim_end();
+        if before_trimmed.is_empty() {
+            return true;
+        }
+        return false;
+    }
+    false
 }
 
 fn looks_like_json_object(text: &str) -> bool {
@@ -80,32 +99,32 @@ fn looks_like_json_object(text: &str) -> bool {
 }
 
 fn is_valid_chapter_heading(line: &str) -> bool {
-    // Must start with "# Chapter " followed by a number
-    // Optionally followed by ": Title"
     let line = line.trim();
-    if !line.starts_with("# Chapter ") {
+    if !line.starts_with("# ") {
         return false;
     }
-
-    let rest = &line[10..]; // After "# Chapter "
-
-    // Check for "X" or "X: ..." where X is a number
-    let parts: Vec<&str> = rest.splitn(2, ':').collect();
-    let num_part = parts[0].trim();
-
-    // Check if the first part is a valid number
-    num_part.parse::<u32>().is_ok()
+    let rest = &line[2..];
+    !rest.trim().is_empty()
 }
 
 fn has_balanced_code_fences(text: &str) -> bool {
-    let mut count = 0;
+    let mut fence_stack: Vec<usize> = Vec::new();
     for line in text.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("```") && !trimmed.starts_with("````") {
-            count += 1;
+        let backtick_count = trimmed.chars().take_while(|&c| c == '`').count();
+        if backtick_count >= 3 {
+            if let Some(&open_len) = fence_stack.last() {
+                if backtick_count >= open_len {
+                    fence_stack.pop();
+                } else {
+                    fence_stack.push(backtick_count);
+                }
+            } else {
+                fence_stack.push(backtick_count);
+            }
         }
     }
-    count % 2 == 0
+    fence_stack.is_empty()
 }
 
 #[derive(Debug, Clone)]
@@ -135,16 +154,18 @@ mod tests {
     fn test_valid_chapter_headings() {
         assert!(is_valid_chapter_heading("# Chapter 1"));
         assert!(is_valid_chapter_heading("# Chapter 1: The Beginning"));
-        assert!(is_valid_chapter_heading("# Chapter 10: Title Here"));
-        assert!(is_valid_chapter_heading("# Chapter 42"));
+        assert!(is_valid_chapter_heading("# Prologue"));
+        assert!(is_valid_chapter_heading("# Epilogue"));
+        assert!(is_valid_chapter_heading("# Chapter One"));
+        assert!(is_valid_chapter_heading("# Title Here"));
     }
 
     #[test]
     fn test_invalid_chapter_headings() {
-        assert!(!is_valid_chapter_heading("# Chapter One"));
-        assert!(!is_valid_chapter_heading("# Chapter"));
-        assert!(!is_valid_chapter_heading("# Title"));
+        assert!(!is_valid_chapter_heading("#"));
+        assert!(!is_valid_chapter_heading("# "));
         assert!(!is_valid_chapter_heading("Some text"));
+        assert!(!is_valid_chapter_heading("## Heading 2"));
     }
 
     #[test]
@@ -161,9 +182,12 @@ mod tests {
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("raw JSON")));
 
-        let result = validate_translation("# Chapter 1\n\n\"type\": \"string\"");
+        let result = validate_translation("# Prologue\n\n{\n\"type\": \"string\"\n}");
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("Schema pattern")));
+
+        let result = validate_translation("# Chapter\n\nThe character said \"type\": in dialogue.");
+        assert!(result.is_valid());
 
         let result = validate_translation("# Chapter 1\n\n\"new_glossary_terms\": []");
         assert!(!result.is_valid());
@@ -174,7 +198,7 @@ mod tests {
                 .any(|e| e.contains("Response schema leaked"))
         );
 
-        let result = validate_translation("# Chapter 1\n\nNormal text without JSON.");
+        let result = validate_translation("# Prologue\n\nNormal text without JSON.");
         assert!(result.is_valid());
     }
 
@@ -182,5 +206,11 @@ mod tests {
     fn test_valid_translation_passes() {
         let text = "# Chapter 1\n\nThis is a valid translation.";
         assert!(validate_translation(text).is_valid());
+    }
+
+    #[test]
+    fn test_prologue_epilogue_passes() {
+        assert!(validate_translation("# Prologue\n\nSome text").is_valid());
+        assert!(validate_translation("# Epilogue\n\nSome text").is_valid());
     }
 }

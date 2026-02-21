@@ -47,6 +47,9 @@ enum Commands {
         /// Directory containing the book (defaults to current directory)
         #[arg(default_value = ".")]
         book_dir: PathBuf,
+        /// Profile to use (overrides book config and global default)
+        #[arg(long)]
+        profile: Option<String>,
         /// Overwrite existing translations (creates backups automatically)
         #[arg(long)]
         overwrite: bool,
@@ -262,7 +265,13 @@ async fn main() {
 
     match cli.command {
         Commands::Import { epub_path, force } => match import::import_epub(&epub_path, force) {
-            Ok(_report) => {}
+            Ok(report) => {
+                println!(
+                    "Imported {} chapters to {}",
+                    report.chapters_imported,
+                    report.book_dir.display()
+                );
+            }
             Err(e) => {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
@@ -313,10 +322,12 @@ async fn main() {
         }
         Commands::Translate {
             book_dir,
+            profile,
             overwrite,
             fail_fast,
         } => {
             let options = translate::TranslateOptions {
+                profile,
                 overwrite,
                 fail_fast,
             };
@@ -383,8 +394,11 @@ fn run_glossary_command(command: GlossaryCommands) -> Result<(), anyhow::Error> 
             } else {
                 println!("Glossary entries ({}):\n", terms.len());
                 for (i, term) in terms.iter().enumerate() {
-                    let def_preview = if term.definition.len() > 60 {
-                        format!("{}...", &term.definition[..60])
+                    let def_preview = if term.definition.chars().count() > 60 {
+                        format!(
+                            "{}...",
+                            term.definition.chars().take(60).collect::<String>()
+                        )
                     } else {
                         term.definition.clone()
                     };

@@ -22,7 +22,10 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
         .and_then(|s| s.to_str())
         .context("Failed to extract book name from epub filename")?;
 
-    let book_dir = epub_path.parent().unwrap_or(Path::new(".")).join(book_name);
+    let parent_dir = epub_path
+        .parent()
+        .context("Cannot determine parent directory for EPUB file (is it at filesystem root?)")?;
+    let book_dir = parent_dir.join(book_name);
 
     let layout = BookLayout::discover(&book_dir);
 
@@ -51,7 +54,7 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
             io::stdout().flush()?;
 
             let stdin = io::stdin();
-            let line = stdin.lock().lines().next().unwrap_or(Ok(String::new()))?;
+            let line = stdin.lock().lines().next().transpose()?.unwrap_or_default();
             let answer = line.trim().to_lowercase();
             if answer != "y" && answer != "yes" {
                 println!("Aborted");
@@ -87,7 +90,16 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
             continue;
         };
 
-        let html = String::from_utf8_lossy(&content);
+        let html = match std::str::from_utf8(&content) {
+            Ok(s) => s.to_string(),
+            Err(_) => {
+                eprintln!(
+                    "- Warning: Chapter {} contains invalid UTF-8 sequences (some characters may be corrupted)",
+                    idx + 1
+                );
+                String::from_utf8_lossy(&content).into_owned()
+            }
+        };
 
         if is_empty_chapter(&html) {
             continue;

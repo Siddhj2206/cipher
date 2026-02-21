@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 pub struct TranslateOptions {
+    pub profile: Option<String>,
     pub overwrite: bool,
     pub fail_fast: bool,
 }
@@ -29,10 +30,13 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Load global config
     let global_config = GlobalConfig::load().context("Failed to load global config")?;
 
-    // Resolve effective profile
+    // Resolve effective profile (CLI override takes precedence)
     let book_config = load_book_config(&layout.paths.config_json).unwrap_or_default();
     let injection_mode = InjectionMode::from_str(&book_config.glossary_injection);
-    let profile_name = global_config.effective_profile_name(book_config.profile.as_deref());
+    let profile_name = options
+        .profile
+        .as_deref()
+        .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()));
 
     let profile_name = profile_name.ok_or_else(|| {
         anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
@@ -214,12 +218,15 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 Err(e) => {
                     last_error = Some(format!("API error: {}", e));
                     if api_attempt < MAX_API_RETRIES {
+                        let delay_secs = 2u64.pow(api_attempt as u32);
                         println!(
-                            "- Attempt {}/{} failed: {}. Retrying...",
+                            "- Attempt {}/{} failed: {}. Retrying in {}s...",
                             api_attempt,
                             MAX_API_RETRIES,
-                            last_error.as_ref().unwrap()
+                            last_error.as_ref().unwrap(),
+                            delay_secs
                         );
+                        tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
                     }
                 }
             }
@@ -252,8 +259,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                     } else {
                         println!("- Added {} new term/s to glossary", added);
                     }
-                    let mut glossary_mut = glossary.clone();
-                    save_glossary(&layout.paths.glossary_json, &mut glossary_mut)?;
+                    save_glossary(&layout.paths.glossary_json, &mut glossary)?;
                 } else if skipped > 0 {
                     println!("- No new terms to add ({} duplicate/s skipped)", skipped);
                 }
@@ -266,6 +272,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 None,
                 Some(duration.as_millis() as u64),
             );
+            run_state.save(book_dir)?;
             translated += 1;
         } else {
             println!(
@@ -279,9 +286,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             run_state.set_chapter(
                 &filename,
                 ChapterStatus::Failed,
-                last_error,
+                last_error.clone(),
                 Some(duration.as_millis() as u64),
             );
+            run_state.save(book_dir)?;
             failed += 1;
 
             if options.fail_fast {
@@ -331,8 +339,14 @@ fn discover_chapters(raw_dir: &Path) -> Result<Vec<std::path::PathBuf>> {
 
     // Sort by numeric-first, then alphabetically
     chapters.sort_by(|a, b| {
-        let a_name = a.file_stem().unwrap().to_string_lossy();
-        let b_name = b.file_stem().unwrap().to_string_lossy();
+        let a_name = a
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+        let b_name = b
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
 
         let a_num = extract_number(&a_name);
         let b_num = extract_number(&b_name);
@@ -381,7 +395,10 @@ fn create_backup(book_dir: &Path, path: &Path) -> Result<PathBuf> {
 fn atomic_write(path: &Path, content: &str) -> Result<()> {
     let temp_path = path.with_extension("tmp");
     std::fs::write(&temp_path, content)?;
-    std::fs::rename(&temp_path, path)?;
+    if let Err(e) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(e).with_context(|| format!("Failed to write to {}", path.display()));
+    }
     Ok(())
 }
 

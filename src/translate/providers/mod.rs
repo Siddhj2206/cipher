@@ -4,7 +4,7 @@
 
 pub mod openai;
 
-use crate::config::{GlobalConfig, ProfileConfig};
+use crate::config::GlobalConfig;
 use crate::translate::{TranslationRequest, TranslationResponse};
 use anyhow::Result;
 
@@ -68,34 +68,4 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
         }
         _ => anyhow::bail!("Unknown provider kind: {}", provider_config.kind),
     }
-}
-
-#[allow(dead_code)]
-pub fn validate_provider_config(config: &GlobalConfig, profile: &ProfileConfig) -> Result<()> {
-    let provider = config
-        .resolve_provider(&profile.provider)
-        .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", profile.provider))?;
-
-    config
-        .get_provider_key_by_label(&profile.provider, profile.key.as_deref())
-        .ok_or_else(|| {
-            if let Some(label) = profile.key.as_deref() {
-                anyhow::anyhow!(
-                    "No API key labeled '{}' for provider '{}'",
-                    label,
-                    profile.provider
-                )
-            } else {
-                anyhow::anyhow!("No API key for provider '{}'", profile.provider)
-            }
-        })?;
-
-    if provider.kind == "openai_compatible" && provider.base_url.is_none() {
-        anyhow::bail!(
-            "OpenAI-compatible provider '{}' requires base_url",
-            profile.provider
-        );
-    }
-
-    Ok(())
 }

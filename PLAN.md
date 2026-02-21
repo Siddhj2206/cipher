@@ -14,7 +14,7 @@ This document describes how the rebuilt tool (renamed from `btranslate` to `ciph
 
 ## Non-goals
 
-- Not a full ebook pipeline (no PDF/EPUB parsing, no layout conversion) beyond markdown in/out.
+- Not a full ebook pipeline (no PDF parsing, no layout conversion) beyond markdown in/out. Note: EPUB import is supported for extracting text chapters.
 - Not a translation memory system. (We focus on book-level consistency via glossary + style guides.)
 - Not an auto-formatter/linter for prose; validation is for structural correctness and safety.
 
@@ -60,6 +60,26 @@ Suggested flags:
 - `--from <existingBook>` (copy style + glossary structure; optional)
 - `--import-glossary <path>` (accept canonical JSON; copies into the book if missing)
 
+### 2.5) Import from EPUB ✓ DONE
+
+`cipher import /path/to/book.epub` extracts chapters from an EPUB file:
+
+- Creates a book directory alongside the EPUB file (e.g., `/path/to/book/` for `/path/to/book.epub`)
+- Extracts chapters from EPUB spine to `raw/001.md`, `raw/002.md`, etc.
+- Converts HTML to markdown using htmd
+- Skips empty chapters (<50 non-whitespace characters)
+- Initializes book scaffold (config, glossary, style.md)
+
+Flags:
+
+- `--force` re-import and overwrite existing `raw/*.md` files (with confirmation prompt)
+
+Error handling:
+
+- UTF-8 decoding issues are logged as warnings (with replacement character count) but don't fail the import
+- Missing parent directory returns explicit error instead of silent fallback
+- Improved error context for all file operations
+
 ### 3) Translate ✓ DONE
 
 Primary command:
@@ -72,7 +92,8 @@ Behavior:
 - Writes translated markdown to output folder.
 - Skips already translated chapters by default.
 - Records per-chapter status and errors so the run is resumable.
-- **Retry logic**: Failed translations (API errors or validation failures) retry up to 3 times total.
+- **Retry logic**: Failed translations (API errors or validation failures) retry up to 3 times total with exponential backoff (2s, 4s delays).
+- **Incremental saves**: Run state and glossary are saved after each successful chapter for crash recovery.
 - **Summary output**: Prints final counts (translated, skipped, failed, new glossary terms) at end of run.
 
 CLI output should follow Book-Translator-Go style:
@@ -87,6 +108,7 @@ CLI output should follow Book-Translator-Go style:
 
 Important rerun controls:
 
+- `--profile <name>` override the book's profile for this run only ✓ DONE
 - `--overwrite` overwrite outputs even if present (automatically creates timestamped backup)
 - `--fail-fast` stop on first error (default continues and reports failures at end)
 
@@ -244,9 +266,11 @@ Validation is required before accepting output.
 Current checks:
 
 - output is not empty
-- output starts with a top-level heading and the first line matches `# Chapter X` or `# Chapter X: Title`
-- code fences are balanced
-- no JSON/schema leakage: detects `{...}`, `[...]`, `"type":`, `"properties":`, `"$ref"`
+- output starts with a top-level heading (accepts any `# Something` format)
+- code fences are balanced (tracks fence lengths with stack for proper 4+ backtick nesting)
+- no JSON/schema leakage: context-aware detection for `"type":`, `"properties":`, `"$ref"` (requires line-start or brace context to reduce false positives)
+- no raw JSON objects or arrays at line start
+- quoted patterns: `"translation":` or `"new_glossary_terms":` in middle of text also flagged
 
 On validation failure:
 
@@ -275,14 +299,15 @@ When overwriting an existing translated chapter (target behavior):
 
 ## CLI surface (proposed)
 
-- `cipher init <bookDir>`
-- `cipher translate <bookDir>`
+- `cipher import <epubFile>` ✓ DONE
+- `cipher init <bookDir>` ✓ DONE
+- `cipher translate <bookDir> [--profile <name>]` ✓ DONE
 - `cipher status <bookDir>`
-- `cipher glossary list <bookDir>`
-- `cipher glossary import <bookDir> <path>`
-- `cipher glossary export <bookDir> <path>`
-- `cipher profile new|list|show|set-default|test`
-- `cipher doctor [bookDir]` (validate config, paths, glossary parse, provider reachability)
+- `cipher glossary list <bookDir>` ✓ DONE
+- `cipher glossary import <bookDir> <path>` ✓ DONE
+- `cipher glossary export <bookDir> <path>` ✓ DONE
+- `cipher profile new|list|show|set-default|test` ✓ DONE
+- `cipher doctor [bookDir]` (validate config, paths, glossary parse, provider reachability) ✓ DONE
 
 ## Implementation milestones
 
@@ -366,6 +391,24 @@ Done when
 - Running `cipher init ./MyBook` creates a ready-to-translate scaffold.
 - Re-running init is non-destructive (does not overwrite user-edited files by default).
 - New books have `"profile": ""` in config.json (empty string falls back to global default_profile).
+
+### Feature 3.5: EPUB import ✓ DONE
+
+Scope
+- Extract chapters from EPUB files and create book scaffold
+- Convert HTML content to markdown
+
+Implementation notes
+- Uses `epub` crate for EPUB parsing
+- Uses `htmd` crate for HTML to markdown conversion
+- Creates book directory alongside EPUB file
+- Chapter files named sequentially: `001.md`, `002.md`, etc.
+- Skips empty chapters (<50 non-whitespace chars)
+- Logs warnings for UTF-8 decoding issues
+
+Done when
+- `cipher import /path/to/book.epub` creates a ready-to-translate book directory
+- `--force` flag allows re-import with confirmation prompt
 
 ### Feature 4: Canonical glossary format + basic commands
 
@@ -491,23 +534,28 @@ Done when
 Scope
 - Extended validation with JSON/schema leakage detection
 - Repair retry on validation failure
+- Context-aware leakage detection to reduce false positives
 
 Implementation
 - `src/validate/mod.rs`:
-  - `check_json_leakage()`: Detects raw JSON patterns (`{...}`, `[...]`)
-  - `check_schema_leakage()`: Detects schema artifacts (`"type":`, `"properties":`, `"$ref"`)
+  - `check_json_leakage()`: Context-aware detection for schema patterns
+  - Requires line-start or brace context before flagging `"type":`, `"properties":`, etc.
+  - Checks for raw JSON objects/arrays at line start
+  - Code fence tracking uses a stack to properly handle 4+ backtick fences (nested code blocks)
 - `src/translate/types.rs`:
   - Added `repair_instruction: Option<String>` and `failed_translation: Option<String>` to `TranslationRequest`
   - Builder methods for repair context
 - `src/translate/prompt.rs`:
   - When repair_instruction is set, prompt includes: previous errors, failed translation, original text
 - `src/translate/cmd.rs`:
-  - API errors: retry same prompt up to 3 times
+  - API errors: retry same prompt up to 3 times with exponential backoff (2^attempt seconds)
   - Validation failure on 1st attempt: 1 repair retry with error context
   - Validation failure on retries 2-3: fail immediately (no repair)
 
 Done when
 - Bad outputs are detected and either repaired or marked failed with a clear reason.
+- Nested code blocks with 4+ backticks are validated correctly.
+- Legitimate novel text discussing JSON doesn't trigger false positives.
 
 ### Feature 10: Overwrite, overwrite-bad, atomic writes, backups
 
@@ -575,6 +623,23 @@ Scope
 
 Done when
 - A configured fallback chain is exercised only when needed, and decisions are visible in logs/state.
+
+### Code Quality Review (2026-02-21)
+
+Bugs fixed:
+
+1. **Code fence validation for 4+ backticks** - Now uses a stack to track fence lengths, properly handling nested code blocks with 4+ backticks
+2. **Missing `--profile` flag** - Added `--profile <name>` flag to translate command for per-run profile override
+3. **Wild card error handling** - Improved error messages in OpenAI provider with explicit variant matching and actionable suggestions
+4. **EPUB parent directory edge case** - Returns explicit error instead of silent fallback to current directory
+
+Code quality improvements:
+
+1. **Dead code removal** - Removed unused `format_duration()` from state module
+2. **Dead code removal** - Removed unused `validate_provider_config()`, added missing `base_url` check to `validate_profile()` instead
+3. **UTF-8 warning** - EPUB import now warns with replacement character count when invalid UTF-8 is detected
+4. **JSON leakage detection** - Improved context-awareness with quoted patterns and better false-positive reduction
+5. **Error context** - All error handling paths now have consistent context
 
 ## Open questions
 

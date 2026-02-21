@@ -150,34 +150,6 @@ impl RunState {
             .filter(|(_, state)| state.status == ChapterStatus::Failed)
             .collect()
     }
-
-    #[allow(dead_code)]
-    pub fn format_duration(&self) -> String {
-        match (&self.started_at, &self.finished_at) {
-            (start, Some(end)) => {
-                if let (Ok(start_dt), Ok(end_dt)) = (
-                    chrono::DateTime::parse_from_rfc3339(start),
-                    chrono::DateTime::parse_from_rfc3339(end),
-                ) {
-                    let duration = end_dt.signed_duration_since(start_dt);
-                    if duration.num_hours() > 0 {
-                        format!("{}h {}m", duration.num_hours(), duration.num_minutes() % 60)
-                    } else if duration.num_minutes() > 0 {
-                        format!(
-                            "{}m {}s",
-                            duration.num_minutes(),
-                            duration.num_seconds() % 60
-                        )
-                    } else {
-                        format!("{}s", duration.num_seconds())
-                    }
-                } else {
-                    "unknown".to_string()
-                }
-            }
-            _ => "in progress".to_string(),
-        }
-    }
 }
 
 #[derive(Debug, Clone)]

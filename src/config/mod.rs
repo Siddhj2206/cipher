@@ -49,8 +49,10 @@ impl GlobalConfig {
         let content = serde_json::to_string_pretty(self)?;
         let temp_path = path.with_extension("tmp");
         fs::write(&temp_path, content)?;
-        fs::rename(&temp_path, &path)
-            .with_context(|| format!("Failed to write config to {}", path.display()))?;
+        if let Err(e) = fs::rename(&temp_path, &path) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(e).with_context(|| format!("Failed to write config to {}", path.display()));
+        }
         Ok(())
     }
 
@@ -136,10 +138,16 @@ pub fn validate_profile(config: &GlobalConfig, profile_name: &str) -> ConfigVali
     };
     validation.profile_exists = true;
 
-    if config.resolve_provider(&profile.provider).is_none() {
-        errors.push(format!("Provider '{}' not found", profile.provider));
-    } else {
+    if let Some(provider) = config.resolve_provider(&profile.provider) {
         validation.provider_exists = true;
+        if provider.kind == "openai_compatible" && provider.base_url.is_none() {
+            errors.push(format!(
+                "OpenAI-compatible provider '{}' requires base_url",
+                profile.provider
+            ));
+        }
+    } else {
+        errors.push(format!("Provider '{}' not found", profile.provider));
     }
 
     let selected_key = config.get_provider_key_by_label(&profile.provider, profile.key.as_deref());

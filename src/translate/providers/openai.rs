@@ -77,8 +77,11 @@ fn format_completion_error(err: &CompletionError) -> String {
         CompletionError::ProviderError(msg) => {
             format!("Provider error: {}", msg)
         }
-        _ => {
-            format!("Unknown error: {:?}", err)
+        other => {
+            format!(
+                "API error: {} (if this persists, please report as a bug)",
+                other
+            )
         }
     }
 }
@@ -125,14 +128,5 @@ impl Provider for OpenAiProvider {
                 Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn test_provider_creation() {
-        // This would need a real API key to test properly
-        // For now, just verify the types compile
     }
 }
