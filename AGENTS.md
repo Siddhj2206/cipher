@@ -125,6 +125,14 @@ src/
 - Do not push to remote
 - Never commit secrets or API keys
 
+### Versioning
+- Follow [Semantic Versioning](https://semver.org/): `MAJOR.MINOR.PATCH`
+- Bump `PATCH` for bug fixes and minor internal changes
+- Bump `MINOR` for new features, CLI flags, or backward-compatible behavior changes
+- Bump `MAJOR` for breaking changes (config format, CLI interface, glossary schema)
+- Update the version in `Cargo.toml` when making a release-worthy change
+- Keep the version in sync between `Cargo.toml` and any other references
+
 ### Configuration
 - Global config: `~/.config/cipher/config.json` (XDG)
 - Per-book config: `config.json` in book directory
