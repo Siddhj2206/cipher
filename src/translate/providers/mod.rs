@@ -19,8 +19,6 @@ pub trait Provider: Send + Sync {
 pub struct ProviderParams {
     pub api_key: String,
     pub model: String,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u64>,
 }
 
 /// Build a provider from global config and profile name
@@ -50,8 +48,6 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     let params = ProviderParams {
         api_key: api_key.to_string(),
         model: profile.model.clone(),
-        temperature: profile.temperature,
-        max_tokens: None, // Can add to profile later
     };
 
     match provider_config.kind {

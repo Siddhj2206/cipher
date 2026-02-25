@@ -15,9 +15,6 @@ use rig::providers::openai;
 pub struct OpenAiProvider {
     client: openai::Client,
     model: String,
-    // TODO: Pass temperature and max_tokens to rig extractor when API supports it
-    _temperature: Option<f32>,
-    _max_tokens: Option<u64>,
     use_completions_api: bool,
 }
 
@@ -40,8 +37,6 @@ impl OpenAiProvider {
         Ok(Self {
             client,
             model: params.model,
-            _temperature: params.temperature,
-            _max_tokens: params.max_tokens,
             use_completions_api,
         })
     }

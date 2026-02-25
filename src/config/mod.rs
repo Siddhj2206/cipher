@@ -120,8 +120,6 @@ pub struct ProfileConfig {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
 }
 
 #[derive(Debug)]

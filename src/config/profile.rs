@@ -80,13 +80,12 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
 
     let selected_key_label = select_or_create_api_key(&mut config, &provider_name)?;
 
-    let (model, temperature) = prompt_model_and_temperature()?;
+    let model = prompt_model()?;
 
     let profile = ProfileConfig {
         provider: provider_name,
         model,
         key: selected_key_label,
-        temperature,
     };
 
     config.profiles.insert(profile_name.clone(), profile);
@@ -301,38 +300,14 @@ fn add_new_api_key(provider_keys: &mut Vec<ApiKey>) -> anyhow::Result<Option<Str
     Ok(label)
 }
 
-fn prompt_model_and_temperature() -> anyhow::Result<(String, Option<f32>)> {
+fn prompt_model() -> anyhow::Result<String> {
     let model: String = Input::new()
         .with_prompt("Model name")
         .default("gpt-4o-mini".to_string())
         .interact_text()
         .context("Failed to get model name")?;
 
-    let use_temperature = Confirm::new()
-        .with_prompt("Set temperature?")
-        .default(false)
-        .interact()
-        .context("Failed to get temperature preference")?;
-
-    let temperature = if use_temperature {
-        let temp: f32 = loop {
-            let input: String = Input::new()
-                .with_prompt("Temperature (0.0 - 2.0)")
-                .default("0.2".to_string())
-                .interact_text()
-                .context("Failed to get temperature")?;
-            match input.parse::<f32>() {
-                Ok(v) if (0.0..=2.0).contains(&v) => break v,
-                Ok(_) => eprintln!("Temperature must be between 0.0 and 2.0. Please try again."),
-                Err(_) => eprintln!("Please enter a valid number."),
-            }
-        };
-        Some(temp)
-    } else {
-        None
-    };
-
-    Ok((model, temperature))
+    Ok(model)
 }
 
 fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> anyhow::Result<()> {
@@ -367,9 +342,6 @@ pub fn list_profiles(config: &GlobalConfig) {
         println!("{}{}", name, marker);
         println!("  Provider: {}", profile.provider);
         println!("  Model: {}", profile.model);
-        if let Some(temp) = profile.temperature {
-            println!("  Temperature: {}", temp);
-        }
         println!();
     }
 }
@@ -397,9 +369,6 @@ pub fn show_profile(config: &GlobalConfig, name: &str) {
 
     if let Some(key) = &profile.key {
         println!("  Key label: {}", key);
-    }
-    if let Some(temp) = profile.temperature {
-        println!("  Temperature: {}", temp);
     }
 }
 
