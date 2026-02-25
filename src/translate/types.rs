@@ -11,6 +11,7 @@ pub struct TranslationResponse {
 pub struct TranslationRequest {
     pub chapter_markdown: String,
     pub glossary_terms: Vec<GlossaryTerm>,
+    pub style_guide: Option<String>,
     pub failed_translation: Option<String>,
     pub validation_errors: Vec<String>,
 }
@@ -20,6 +21,7 @@ impl TranslationRequest {
         Self {
             chapter_markdown,
             glossary_terms: Vec::new(),
+            style_guide: None,
             failed_translation: None,
             validation_errors: Vec::new(),
         }
@@ -27,6 +29,11 @@ impl TranslationRequest {
 
     pub fn with_glossary_terms(mut self, terms: Vec<GlossaryTerm>) -> Self {
         self.glossary_terms = terms;
+        self
+    }
+
+    pub fn with_style_guide(mut self, style_guide: Option<String>) -> Self {
+        self.style_guide = style_guide;
         self
     }
 

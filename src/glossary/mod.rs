@@ -1,3 +1,4 @@
+pub mod cli;
 mod closest_match;
 
 use anyhow::{Context, Result};
@@ -24,10 +25,12 @@ pub enum InjectionMode {
     Smart,
 }
 
-impl InjectionMode {
-    pub fn from_str(value: &str) -> Self {
+impl std::str::FromStr for InjectionMode {
+    type Err = std::convert::Infallible;
+
+    fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
         let normalized = value.trim().to_lowercase();
-        match normalized.as_str() {
+        Ok(match normalized.as_str() {
             "full" => InjectionMode::Full,
             "smart" => InjectionMode::Smart,
             _ => {
@@ -39,7 +42,13 @@ impl InjectionMode {
                 }
                 InjectionMode::Smart
             }
-        }
+        })
+    }
+}
+
+impl InjectionMode {
+    pub fn from_str(value: &str) -> Self {
+        value.parse().unwrap()
     }
 }
 
@@ -56,17 +65,13 @@ pub fn load_glossary<P: AsRef<Path>>(path: P) -> Result<Vec<GlossaryTerm>> {
     Ok(terms)
 }
 
-pub fn save_glossary<P: AsRef<Path>>(path: P, terms: &mut Vec<GlossaryTerm>) -> Result<()> {
-    let sorted = {
-        let mut sorted = terms.clone();
-        dedupe_and_sort_terms(&mut sorted);
-        sorted
-    };
+pub fn save_glossary<P: AsRef<Path>>(path: P, terms: &[GlossaryTerm]) -> Result<()> {
+    let mut sorted = terms.to_vec();
+    dedupe_and_sort_terms(&mut sorted);
 
     let path = path.as_ref();
     let json = serde_json::to_string_pretty(&sorted)?;
     fs::write(path, json + "\n")?;
-    *terms = sorted;
     Ok(())
 }
 
@@ -96,8 +101,6 @@ pub struct SelectionResult {
     pub terms: Vec<GlossaryTerm>,
     pub total_count: usize,
     pub selected_count: usize,
-    #[allow(dead_code)]
-    pub is_subset: bool,
     pub used_fallback_to_full: bool,
 }
 
@@ -111,7 +114,6 @@ pub fn select_terms_for_text(
             terms: all_terms.to_vec(),
             total_count: all_terms.len(),
             selected_count: all_terms.len(),
-            is_subset: false,
             used_fallback_to_full: false,
         },
         InjectionMode::Smart => select_terms_smart(all_terms, text),
@@ -150,7 +152,6 @@ fn select_terms_smart(all_terms: &[GlossaryTerm], text: &str) -> SelectionResult
             terms: all_terms.to_vec(),
             total_count: all_terms.len(),
             selected_count: all_terms.len(),
-            is_subset: false,
             used_fallback_to_full: true,
         };
     }
@@ -176,7 +177,6 @@ fn select_terms_smart(all_terms: &[GlossaryTerm], text: &str) -> SelectionResult
             terms: all_terms.to_vec(),
             total_count: all_terms.len(),
             selected_count: all_terms.len(),
-            is_subset: false,
             used_fallback_to_full: true,
         };
     }
@@ -193,7 +193,6 @@ fn select_terms_smart(all_terms: &[GlossaryTerm], text: &str) -> SelectionResult
         terms,
         total_count: all_terms.len(),
         selected_count,
-        is_subset: selected_count < all_terms.len(),
         used_fallback_to_full: false,
     }
 }
@@ -323,5 +322,114 @@ mod tests {
         assert!(result.terms.iter().any(|t| t.term == "Always"));
         assert!(!result.terms.iter().any(|t| t.term == "Shadow"));
         assert!(!result.used_fallback_to_full);
+    }
+
+    #[test]
+    fn test_merge_terms_adds_new() {
+        let existing = vec![term("Apple", Some("苹果"), "A fruit")];
+        let incoming = vec![term("Banana", Some("香蕉"), "Yellow fruit")];
+
+        let (merged, added, skipped) = merge_terms(existing, incoming);
+        assert_eq!(added, 1);
+        assert_eq!(skipped, 0);
+        assert_eq!(merged.len(), 2);
+    }
+
+    #[test]
+    fn test_merge_terms_skips_duplicates() {
+        let existing = vec![term("Apple", Some("苹果"), "A fruit")];
+        let incoming = vec![term("Apple", Some("苹果"), "Same fruit")];
+
+        let (merged, added, skipped) = merge_terms(existing, incoming);
+        assert_eq!(added, 0);
+        assert_eq!(skipped, 1);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_terms_mixed() {
+        let existing = vec![
+            term("Apple", Some("苹果"), "A fruit"),
+            term("Cherry", Some("樱桃"), "Red fruit"),
+        ];
+        let incoming = vec![
+            term("Apple", Some("苹果"), "Dup"),
+            term("Banana", Some("香蕉"), "New"),
+            term("Date", Some("枣"), "Also new"),
+        ];
+
+        let (merged, added, skipped) = merge_terms(existing, incoming);
+        assert_eq!(added, 2);
+        assert_eq!(skipped, 1);
+        assert_eq!(merged.len(), 4);
+    }
+
+    #[test]
+    fn test_merge_terms_empty_incoming() {
+        let existing = vec![term("Apple", Some("苹果"), "A fruit")];
+        let (merged, added, skipped) = merge_terms(existing, vec![]);
+        assert_eq!(added, 0);
+        assert_eq!(skipped, 0);
+        assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn test_save_and_load_glossary_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("glossary.json");
+
+        let terms = vec![
+            term("Banana", Some("香蕉"), "Yellow fruit"),
+            term("Apple", Some("苹果"), "A fruit"),
+        ];
+
+        save_glossary(&path, &terms).unwrap();
+        let loaded = load_glossary(&path).unwrap();
+
+        assert_eq!(loaded.len(), 2);
+        // save_glossary sorts, so Apple should be first
+        assert_eq!(loaded[0].term, "Apple");
+        assert_eq!(loaded[1].term, "Banana");
+    }
+
+    #[test]
+    fn test_load_glossary_nonexistent_returns_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("no_such_file.json");
+        let terms = load_glossary(&path).unwrap();
+        assert!(terms.is_empty());
+    }
+
+    #[test]
+    fn test_save_glossary_deduplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("glossary.json");
+
+        let terms = vec![
+            term("Apple", Some("苹果"), "First"),
+            term("apple", Some("苹果"), "Duplicate"),
+        ];
+
+        save_glossary(&path, &terms).unwrap();
+        let loaded = load_glossary(&path).unwrap();
+        assert_eq!(loaded.len(), 1);
+    }
+
+    #[test]
+    fn test_injection_mode_from_str() {
+        assert!(matches!(InjectionMode::from_str("full"), InjectionMode::Full));
+        assert!(matches!(InjectionMode::from_str("smart"), InjectionMode::Smart));
+        assert!(matches!(InjectionMode::from_str("SMART"), InjectionMode::Smart));
+        assert!(matches!(InjectionMode::from_str("Full"), InjectionMode::Full));
+        assert!(matches!(InjectionMode::from_str("unknown"), InjectionMode::Smart));
+        assert!(matches!(InjectionMode::from_str(""), InjectionMode::Smart));
+    }
+
+    #[test]
+    fn test_injection_mode_parse_trait() {
+        let mode: InjectionMode = "full".parse().unwrap();
+        assert!(matches!(mode, InjectionMode::Full));
+        let mode: InjectionMode = "smart".parse().unwrap();
+        assert!(matches!(mode, InjectionMode::Smart));
     }
 }

@@ -71,7 +71,9 @@ fn check_json_leakage(text: &str, errors: &mut Vec<String>) {
 }
 
 fn is_pattern_in_json_context(text: &str, pattern: &str) -> bool {
-    if let Some(pos) = text.find(pattern) {
+    let mut search_start = 0;
+    while let Some(offset) = text[search_start..].find(pattern) {
+        let pos = search_start + offset;
         if pos == 0 {
             return true;
         }
@@ -84,7 +86,12 @@ fn is_pattern_in_json_context(text: &str, pattern: &str) -> bool {
         if before_trimmed.is_empty() {
             return true;
         }
-        return false;
+        // Also check last non-whitespace char (handles ", \"key\":" patterns)
+        let last_trimmed = before_trimmed.chars().last().unwrap_or(' ');
+        if matches!(last_trimmed, '{' | ',' | '\n') {
+            return true;
+        }
+        search_start = pos + pattern.len();
     }
     false
 }
@@ -191,12 +198,10 @@ mod tests {
 
         let result = validate_translation("# Chapter 1\n\n\"new_glossary_terms\": []");
         assert!(!result.is_valid());
-        assert!(
-            result
-                .errors()
-                .iter()
-                .any(|e| e.contains("Response schema leaked"))
-        );
+        assert!(result
+            .errors()
+            .iter()
+            .any(|e| e.contains("Response schema leaked")));
 
         let result = validate_translation("# Prologue\n\nNormal text without JSON.");
         assert!(result.is_valid());
@@ -212,5 +217,93 @@ mod tests {
     fn test_prologue_epilogue_passes() {
         assert!(validate_translation("# Prologue\n\nSome text").is_valid());
         assert!(validate_translation("# Epilogue\n\nSome text").is_valid());
+    }
+
+    #[test]
+    fn test_is_pattern_in_json_context_at_start() {
+        assert!(is_pattern_in_json_context("\"type\":", "\"type\":"));
+    }
+
+    #[test]
+    fn test_is_pattern_in_json_context_after_brace() {
+        assert!(is_pattern_in_json_context(
+            "{\"type\": \"string\"}",
+            "\"type\":"
+        ));
+    }
+
+    #[test]
+    fn test_is_pattern_in_json_context_after_comma() {
+        assert!(is_pattern_in_json_context(
+            "{\"a\": 1, \"type\": \"string\"}",
+            "\"type\":"
+        ));
+    }
+
+    #[test]
+    fn test_is_pattern_in_json_context_after_newline() {
+        assert!(is_pattern_in_json_context(
+            "{\n\"type\": \"string\"}",
+            "\"type\":"
+        ));
+    }
+
+    #[test]
+    fn test_is_pattern_in_json_context_in_prose_not_detected() {
+        // Pattern appears in normal prose context (after a letter)
+        assert!(!is_pattern_in_json_context(
+            "The character said \"type\": something",
+            "\"type\":"
+        ));
+    }
+
+    #[test]
+    fn test_is_pattern_in_json_context_checks_all_occurrences() {
+        // First occurrence is in prose, second is in JSON context
+        assert!(is_pattern_in_json_context(
+            "He said \"type\": foo, then\n\"type\": \"string\"",
+            "\"type\":"
+        ));
+    }
+
+    #[test]
+    fn test_is_pattern_not_found() {
+        assert!(!is_pattern_in_json_context("no match here", "\"type\":"));
+    }
+
+    #[test]
+    fn test_looks_like_json_object_valid() {
+        assert!(looks_like_json_object("{\"key\": \"value\"}"));
+        assert!(looks_like_json_object(
+            "  { \"a\": 1, \"b\": { \"c\": 2 } }  "
+        ));
+    }
+
+    #[test]
+    fn test_looks_like_json_object_invalid() {
+        assert!(!looks_like_json_object("not json"));
+        assert!(!looks_like_json_object("{no colon here}"));
+        assert!(!looks_like_json_object("[\"array\"]"));
+    }
+
+    #[test]
+    fn test_empty_translation() {
+        let result = validate_translation("");
+        assert!(!result.is_valid());
+        assert!(result.errors().iter().any(|e| e.contains("empty")));
+    }
+
+    #[test]
+    fn test_missing_heading() {
+        let result = validate_translation("Just some text without heading.");
+        assert!(!result.is_valid());
+        assert!(result.errors().iter().any(|e| e.contains("heading")));
+    }
+
+    #[test]
+    fn test_unbalanced_code_fences() {
+        let result = validate_translation("# Chapter 1\n\n```rust\nlet x = 1;");
+        assert!(!result.is_valid());
+        assert!(result.errors().iter().any(|e| e.contains("code fences")));
     }
 }

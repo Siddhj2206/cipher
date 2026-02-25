@@ -25,11 +25,17 @@ pub fn show_status(book_dir: &Path) -> Result<()> {
 }
 
 fn print_run_state(state: &RunState) {
+    // Profile and model info
+    println!("- Profile: {}", state.profile);
+    println!("- Provider: {}", state.provider);
+    println!("- Model: {}", state.model);
+    println!();
+
     // Summary line
     let summary = state.get_summary();
     println!(
-        "Last run: {} chapters translated, {} skipped, {} failed",
-        summary.success, summary.skipped, summary.failed
+        "Chapters: {} total, {} translated, {} skipped, {} failed, {} pending",
+        summary.total, summary.success, summary.skipped, summary.failed, summary.pending
     );
     println!();
 

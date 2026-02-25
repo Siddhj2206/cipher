@@ -18,23 +18,57 @@ const BASE_PROMPT: &str = r#"You are an expert translator working on a serialize
 **Primary Goal:**
 Produce a translation that is both accurate to the source and captivating to read, ensuring the reader experiences the story as the author intended."#;
 
-/// Build the full translation prompt for a chapter
-pub fn build_prompt(req: &TranslationRequest) -> String {
-    let glossary_section = build_glossary_section(&req.glossary_terms);
+const FORMATTING_REQUIREMENTS: &str = r#"**Formatting Requirements: [IMPORTANT]**
 
-    if req.is_repair() {
-        build_repair_prompt(req, &glossary_section)
-    } else {
-        build_initial_prompt(req, &glossary_section)
+  * The final output must be in proper Markdown.
+  * Start with a top-level heading ('#') for the chapter.
+      * If the original has a chapter number and title like 'X: [Chapter Title]', format it as: '# Chapter X: [Chapter Title]'. Even if the original may not have '# Chapter', use it in the translation
+      * If only a number is present, use: '# Chapter X'
+  * Preserve the original paragraph structure and line breaks. Do **not** merge paragraphs into a single block of text.
+  * Maintain proper spacing between paragraphs.
+  * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker)."#;
+
+fn build_style_section(style_guide: &Option<String>) -> String {
+    match style_guide {
+        Some(guide) if !guide.trim().is_empty() => {
+            format!(
+                r#"
+
+**Style Guide:**
+
+Follow these additional style and tone instructions carefully:
+
+{}
+"#,
+                guide.trim()
+            )
+        }
+        _ => String::new(),
     }
 }
 
-fn build_initial_prompt(req: &TranslationRequest, glossary_section: &str) -> String {
+/// Build the full translation prompt for a chapter
+pub fn build_prompt(req: &TranslationRequest) -> String {
+    let glossary_section = build_glossary_section(&req.glossary_terms);
+    let style_section = build_style_section(&req.style_guide);
+
+    if req.is_repair() {
+        build_repair_prompt(req, &glossary_section, &style_section)
+    } else {
+        build_initial_prompt(req, &glossary_section, &style_section)
+    }
+}
+
+fn build_initial_prompt(
+    req: &TranslationRequest,
+    glossary_section: &str,
+    style_section: &str,
+) -> String {
     format!(
         r#"**Project Overview & Core Task:**
 
 {}
-
+{}
 **Glossary and New Terms:**
 
 Adhere strictly to the established glossary below for consistency.
@@ -50,15 +84,7 @@ Following the translation, you are to identify any *new*, absolutely essential t
 
 When in doubt, **do not** add the term. Format new terms as an array of objects with "term", "og_term", and "definition" fields. The "og_term" field should contain the original language term (e.g., Korean characters), while "term" contains the English name.
 
-**Formatting Requirements: [IMPORTANT]**
-
-  * The final output must be in proper Markdown.
-  * Start with a top-level heading ('#') for the chapter.
-      * If the original has a chapter number and title like 'X: [Chapter Title]', format it as: '# Chapter X: [Chapter Title]'. Even if the original may not have '# Chapter', use it in the translation
-      * If only a number is present, use: '# Chapter X'
-  * Preserve the original paragraph structure and line breaks. Do **not** merge paragraphs into a single block of text.
-  * Maintain proper spacing between paragraphs.
-  * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker).
+{}
 
 **Text to Translate:**
 {}
@@ -66,11 +92,15 @@ When in doubt, **do not** add the term. Format new terms as an array of objects 
 Return your response as a JSON object with exactly two fields:
 - "translation": string containing the translated markdown
 - "new_glossary_terms": array of glossary term objects"#,
-        BASE_PROMPT, glossary_section, req.chapter_markdown
+        BASE_PROMPT, style_section, glossary_section, FORMATTING_REQUIREMENTS, req.chapter_markdown
     )
 }
 
-fn build_repair_prompt(req: &TranslationRequest, glossary_section: &str) -> String {
+fn build_repair_prompt(
+    req: &TranslationRequest,
+    glossary_section: &str,
+    style_section: &str,
+) -> String {
     let errors_list = req
         .validation_errors
         .iter()
@@ -84,7 +114,7 @@ fn build_repair_prompt(req: &TranslationRequest, glossary_section: &str) -> Stri
         r#"**Project Overview & Core Task:**
 
 {}
-
+{}
 **Glossary and New Terms:**
 
 Adhere strictly to the established glossary below for consistency.
@@ -105,20 +135,18 @@ Your previous translation had the following validation errors:
 
 Please fix the issues above and provide a corrected translation. Pay special attention to the validation errors listed.
 
-**Formatting Requirements: [IMPORTANT]**
-
-  * The final output must be in proper Markdown.
-  * Start with a top-level heading ('#') for the chapter.
-      * If the original has a chapter number and title like 'X: [Chapter Title]', format it as: '# Chapter X: [Chapter Title]'. Even if the original may not have '# Chapter', use it in the translation
-      * If only a number is present, use: '# Chapter X'
-  * Preserve the original paragraph structure and line breaks. Do **not** merge paragraphs into a single block of text.
-  * Maintain proper spacing between paragraphs.
-  * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker).
+{}
 
 Return your response as a JSON object with exactly two fields:
 - "translation": string containing the translated markdown
 - "new_glossary_terms": array of glossary term objects"#,
-        BASE_PROMPT, glossary_section, errors_list, req.chapter_markdown, failed
+        BASE_PROMPT,
+        style_section,
+        glossary_section,
+        errors_list,
+        req.chapter_markdown,
+        failed,
+        FORMATTING_REQUIREMENTS
     )
 }
 
