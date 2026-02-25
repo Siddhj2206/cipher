@@ -4,7 +4,7 @@
 
 pub mod openai;
 
-use crate::config::GlobalConfig;
+use crate::config::{GlobalConfig, ProviderKind};
 use crate::translate::{TranslationRequest, TranslationResponse};
 use anyhow::Result;
 
@@ -19,8 +19,6 @@ pub trait Provider: Send + Sync {
 pub struct ProviderParams {
     pub api_key: String,
     pub model: String,
-    pub temperature: Option<f32>,
-    pub max_tokens: Option<u64>,
 }
 
 /// Build a provider from global config and profile name
@@ -50,13 +48,11 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     let params = ProviderParams {
         api_key: api_key.to_string(),
         model: profile.model.clone(),
-        temperature: profile.temperature,
-        max_tokens: None, // Can add to profile later
     };
 
-    match provider_config.kind.as_str() {
-        "openai" => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
-        "openai_compatible" => {
+    match provider_config.kind {
+        ProviderKind::Openai => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
+        ProviderKind::OpenaiCompatible => {
             let base_url = provider_config
                 .base_url
                 .as_deref()
@@ -66,6 +62,5 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
                 Some(base_url),
             )?))
         }
-        _ => anyhow::bail!("Unknown provider kind: {}", provider_config.kind),
     }
 }

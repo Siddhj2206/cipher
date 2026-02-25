@@ -82,9 +82,25 @@ impl GlobalConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderKind {
+    Openai,
+    OpenaiCompatible,
+}
+
+impl std::fmt::Display for ProviderKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProviderKind::Openai => write!(f, "OpenAI"),
+            ProviderKind::OpenaiCompatible => write!(f, "OpenAI-compatible"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
-    pub kind: String,
+    pub kind: ProviderKind,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -104,8 +120,6 @@ pub struct ProfileConfig {
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<f32>,
 }
 
 #[derive(Debug)]
@@ -140,7 +154,7 @@ pub fn validate_profile(config: &GlobalConfig, profile_name: &str) -> ConfigVali
 
     if let Some(provider) = config.resolve_provider(&profile.provider) {
         validation.provider_exists = true;
-        if provider.kind == "openai_compatible" && provider.base_url.is_none() {
+        if provider.kind == ProviderKind::OpenaiCompatible && provider.base_url.is_none() {
             errors.push(format!(
                 "OpenAI-compatible provider '{}' requires base_url",
                 profile.provider

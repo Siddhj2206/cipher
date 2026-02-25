@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 
 pub struct ClosestMatch {
-    terms: Vec<String>,
+    lowered_terms: Vec<String>,
+    original_terms: Vec<String>,
     ngram_to_term_ids: HashMap<String, Vec<usize>>,
     bag_sizes: Vec<usize>,
 }
 
 impl ClosestMatch {
     pub fn new(terms: &[&str], bag_sizes: &[usize]) -> Self {
-        let owned: Vec<String> = terms.iter().map(|s| s.to_lowercase()).collect();
+        let original: Vec<String> = terms.iter().map(|s| s.to_string()).collect();
+        let lowered: Vec<String> = terms.iter().map(|s| s.to_lowercase()).collect();
         let mut ngram_to_term_ids: HashMap<String, Vec<usize>> = HashMap::new();
 
-        for (idx, term) in owned.iter().enumerate() {
+        for (idx, term) in lowered.iter().enumerate() {
             let ngrams = build_ngrams(term, bag_sizes);
             for ngram in ngrams {
                 ngram_to_term_ids.entry(ngram).or_default().push(idx);
@@ -19,14 +21,17 @@ impl ClosestMatch {
         }
 
         Self {
-            terms: owned,
+            lowered_terms: lowered,
+            original_terms: original,
             ngram_to_term_ids,
             bag_sizes: bag_sizes.to_vec(),
         }
     }
 
+    /// Returns the original-case term that best matches the query.
+    /// Matching is performed case-insensitively via ngrams.
     pub fn closest(&self, query: &str) -> Option<&str> {
-        if self.terms.is_empty() {
+        if self.lowered_terms.is_empty() {
             return None;
         }
 
@@ -47,17 +52,17 @@ impl ClosestMatch {
             return None;
         }
 
-        Some(&self.terms[best.0])
+        Some(&self.original_terms[best.0])
     }
 
     #[allow(dead_code)]
     pub fn len(&self) -> usize {
-        self.terms.len()
+        self.original_terms.len()
     }
 
     #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
-        self.terms.is_empty()
+        self.original_terms.is_empty()
     }
 }
 
@@ -123,7 +128,7 @@ mod tests {
         let terms = vec!["Hello", "World"];
         let matcher = ClosestMatch::new(&terms, &[2, 3, 4]);
 
-        assert_eq!(matcher.closest("hello"), Some("hello"));
-        assert_eq!(matcher.closest("WORLD"), Some("world"));
+        assert_eq!(matcher.closest("hello"), Some("Hello"));
+        assert_eq!(matcher.closest("WORLD"), Some("World"));
     }
 }

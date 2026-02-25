@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct BookPaths {
@@ -28,7 +28,7 @@ impl BookPaths {
         }
     }
 
-    pub fn effective_out_dir(&self) -> &PathBuf {
+    pub fn effective_out_dir(&self) -> &Path {
         if self.out_dir.exists() {
             &self.out_dir
         } else if self.legacy_out_dir.exists() {
@@ -88,7 +88,7 @@ impl BookLayout {
         self.exists.root_dir && self.exists.raw_dir
     }
 
-    pub fn effective_out_dir(&self) -> &PathBuf {
+    pub fn effective_out_dir(&self) -> &Path {
         self.paths.effective_out_dir()
     }
 

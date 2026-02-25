@@ -26,9 +26,11 @@ impl Translator {
         &self,
         chapter_text: &str,
         glossary_terms: &[GlossaryTerm],
+        style_guide: Option<String>,
     ) -> Result<TranslationResponse> {
         let request = TranslationRequest::new(chapter_text.to_string())
-            .with_glossary_terms(glossary_terms.to_vec());
+            .with_glossary_terms(glossary_terms.to_vec())
+            .with_style_guide(style_guide);
 
         self.provider.translate(request).await
     }

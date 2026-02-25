@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use epub::doc::EpubDoc;
 use htmd::HtmlToMarkdown;
 
-use crate::book::{BookLayout, init_book};
+use crate::book::{init_book, BookLayout};
 
 pub struct ImportReport {
     pub book_dir: std::path::PathBuf,
@@ -49,16 +49,15 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
                 "Translations in {}/ may become orphaned if chapter order changed",
                 layout.paths.out_dir.display()
             );
-            print!("Continue? [y/N] ");
-            use std::io::{self, BufRead, Write};
-            io::stdout().flush()?;
 
-            let stdin = io::stdin();
-            let line = stdin.lock().lines().next().transpose()?.unwrap_or_default();
-            let answer = line.trim().to_lowercase();
-            if answer != "y" && answer != "yes" {
-                println!("Aborted");
-                std::process::exit(0);
+            let confirmed = dialoguer::Confirm::new()
+                .with_prompt("Continue?")
+                .default(false)
+                .interact()
+                .unwrap_or(false);
+
+            if !confirmed {
+                bail!("Aborted");
             }
 
             for entry in fs::read_dir(&layout.paths.raw_dir)? {
@@ -170,4 +169,75 @@ fn strip_html_tags(html: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_html_tags_basic() {
+        assert_eq!(strip_html_tags("<p>Hello</p>"), "Hello");
+        assert_eq!(strip_html_tags("<b>bold</b> text"), "bold text");
+        assert_eq!(strip_html_tags("no tags"), "no tags");
+    }
+
+    #[test]
+    fn test_strip_html_tags_nested() {
+        assert_eq!(strip_html_tags("<div><p>nested</p></div>"), "nested");
+    }
+
+    #[test]
+    fn test_strip_html_tags_with_attributes() {
+        assert_eq!(strip_html_tags("<a href=\"url\">link</a>"), "link");
+        assert_eq!(
+            strip_html_tags("<div class=\"foo\">content</div>"),
+            "content"
+        );
+    }
+
+    #[test]
+    fn test_strip_html_tags_empty() {
+        assert_eq!(strip_html_tags(""), "");
+        assert_eq!(strip_html_tags("<br/>"), "");
+    }
+
+    #[test]
+    fn test_is_empty_chapter_short_content() {
+        assert!(is_empty_chapter("<p></p>"));
+        assert!(is_empty_chapter("<br/><br/>"));
+        assert!(is_empty_chapter("   "));
+        assert!(is_empty_chapter(""));
+    }
+
+    #[test]
+    fn test_is_empty_chapter_with_real_content() {
+        assert!(!is_empty_chapter(
+            "<p>This is a chapter with enough content to be considered non-empty by our threshold.</p>"
+        ));
+    }
+
+    #[test]
+    fn test_is_empty_chapter_br_replacement() {
+        // <br/> tags are replaced with spaces before stripping
+        let html = "a<br/>b<br />c<br>d";
+        // After br replacement: "a b c d", stripped: "a b c d", no-whitespace: "abcd" = 4 chars < 50
+        assert!(is_empty_chapter(html));
+    }
+
+    #[test]
+    fn test_count_md_files() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("ch01.md"), "content").unwrap();
+        std::fs::write(dir.path().join("ch02.md"), "content").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "content").unwrap();
+
+        assert_eq!(count_md_files(dir.path()).unwrap(), 2);
+    }
+
+    #[test]
+    fn test_count_md_files_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(count_md_files(dir.path()).unwrap(), 0);
+    }
 }

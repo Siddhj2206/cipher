@@ -15,10 +15,6 @@ use rig::providers::openai;
 pub struct OpenAiProvider {
     client: openai::Client,
     model: String,
-    #[allow(dead_code)]
-    temperature: Option<f32>,
-    #[allow(dead_code)]
-    max_tokens: Option<u64>,
     use_completions_api: bool,
 }
 
@@ -41,8 +37,6 @@ impl OpenAiProvider {
         Ok(Self {
             client,
             model: params.model,
-            temperature: params.temperature,
-            max_tokens: params.max_tokens,
             use_completions_api,
         })
     }

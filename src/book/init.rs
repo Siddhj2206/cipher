@@ -30,7 +30,7 @@ pub struct BookConfig {
 impl Default for BookConfig {
     fn default() -> Self {
         Self {
-            profile: Some(String::new()),
+            profile: None,
             raw_dir: "raw".to_string(),
             out_dir: "tl".to_string(),
             glossary_path: "glossary.json".to_string(),
@@ -46,9 +46,10 @@ fn default_glossary_injection() -> String {
 
 impl BookConfig {
     pub fn with_profile(profile: impl Into<String>) -> Self {
-        let mut config = Self::default();
-        config.profile = Some(profile.into());
-        config
+        Self {
+            profile: Some(profile.into()),
+            ..Self::default()
+        }
     }
 }
 
@@ -84,14 +85,12 @@ pub fn init_book(
     write_json_if_missing(&paths.config_json, &config, &mut report)?;
 
     // Create glossary.json
-    if import_glossary.is_some() {
+    if let Some(src) = import_glossary {
         // Copy from provided path
-        let src = import_glossary.unwrap();
         copy_file_if_missing(src, &paths.glossary_json, &mut report)?;
         report.imported_glossary = Some(src.to_path_buf());
-    } else if from.is_some() {
+    } else if let Some(from_dir) = from {
         // Try to copy from existing book
-        let from_dir = from.unwrap();
         let from_glossary = from_dir.join("glossary.json");
         if from_glossary.exists() {
             copy_file_if_missing(&from_glossary, &paths.glossary_json, &mut report)?;
@@ -203,7 +202,7 @@ mod tests {
         assert_eq!(config.glossary_path, "glossary.json");
         assert_eq!(config.style_path, "style.md");
         assert_eq!(config.glossary_injection, "smart");
-        assert_eq!(config.profile, Some(String::new()));
+        assert_eq!(config.profile, None);
     }
 
     #[test]
