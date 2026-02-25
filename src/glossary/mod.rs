@@ -66,24 +66,18 @@ pub fn load_glossary<P: AsRef<Path>>(path: P) -> Result<Vec<GlossaryTerm>> {
 }
 
 pub fn save_glossary<P: AsRef<Path>>(path: P, terms: &[GlossaryTerm]) -> Result<()> {
-    let mut sorted = terms.to_vec();
-    dedupe_and_sort_terms(&mut sorted);
+    let mut deduped = terms.to_vec();
+    dedupe_terms(&mut deduped);
 
     let path = path.as_ref();
-    let json = serde_json::to_string_pretty(&sorted)?;
+    let json = serde_json::to_string_pretty(&deduped)?;
     fs::write(path, json + "\n")?;
     Ok(())
 }
 
-fn dedupe_and_sort_terms(terms: &mut Vec<GlossaryTerm>) {
+fn dedupe_terms(terms: &mut Vec<GlossaryTerm>) {
     let mut seen = std::collections::HashSet::new();
     terms.retain(|t| seen.insert(term_dedupe_key(t)));
-
-    terms.sort_by(|a, b| {
-        let key_a = term_dedupe_key(a);
-        let key_b = term_dedupe_key(b);
-        key_a.cmp(&key_b).then_with(|| a.term.cmp(&b.term))
-    });
 }
 
 fn term_dedupe_key(term: &GlossaryTerm) -> String {
@@ -240,7 +234,7 @@ pub fn merge_terms(
         }
     }
 
-    dedupe_and_sort_terms(&mut result);
+    dedupe_terms(&mut result);
     (result, added, skipped)
 }
 
@@ -264,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn test_dedupe_and_sort() {
+    fn test_dedupe_preserves_order() {
         let mut terms = vec![
             term("Apple", None, "A fruit"),
             term("apple", None, "Another fruit"), // dup
@@ -272,10 +266,13 @@ mod tests {
             term("Apple", Some("苹果"), "Different key"), // different key
         ];
 
-        dedupe_and_sort_terms(&mut terms);
+        dedupe_terms(&mut terms);
         assert_eq!(terms.len(), 3);
-        assert_eq!(terms[0].term, "Apple"); // by og_term (empty comes first)
-        assert_eq!(terms[2].term, "Banana");
+        // Order preserved: Apple (no og), Banana, Apple (苹果)
+        assert_eq!(terms[0].term, "Apple");
+        assert_eq!(terms[0].og_term, None);
+        assert_eq!(terms[1].term, "Banana");
+        assert_eq!(terms[2].og_term.as_deref(), Some("苹果"));
     }
 
     #[test]
@@ -387,9 +384,9 @@ mod tests {
         let loaded = load_glossary(&path).unwrap();
 
         assert_eq!(loaded.len(), 2);
-        // save_glossary sorts, so Apple should be first
-        assert_eq!(loaded[0].term, "Apple");
-        assert_eq!(loaded[1].term, "Banana");
+        // Order is preserved (no sorting)
+        assert_eq!(loaded[0].term, "Banana");
+        assert_eq!(loaded[1].term, "Apple");
     }
 
     #[test]
