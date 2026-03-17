@@ -48,6 +48,19 @@ struct GlossaryRerunPlan {
     approximate_smart_checks: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GlossaryBaselineAdvance {
+    KeepExisting,
+    InitializeFromRunStart,
+    CommitRunEnd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GlossaryBaselineOutcome {
+    advance: GlossaryBaselineAdvance,
+    remaining_forced_chapters: usize,
+}
+
 impl GlossaryRerunPlan {
     fn decision_for(&self, filename: &str) -> Option<&GlossaryRerunDecision> {
         self.forced_chapters.get(filename)
@@ -108,6 +121,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     // Load existing glossary
     let mut glossary = load_glossary(&layout.paths.glossary_json)?;
+    let run_start_glossary_state = build_glossary_state(&glossary, injection_mode);
 
     // Determine output directory
     let out_dir = layout.effective_out_dir();
@@ -182,7 +196,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut new_glossary_terms = 0;
 
     // Process each chapter
-    for chapter_file in chapters {
+    for chapter_file in &chapters {
         let chapter_path = chapter_state_key(&layout.paths.raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
@@ -204,13 +218,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         )
         .await?;
 
-        checkpoint_state(
-            book_dir,
-            &mut run_metadata,
-            &result.chapter_state,
-            &glossary,
-            injection_mode,
-        )?;
+        checkpoint_chapter_progress(book_dir, &mut run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path, result.chapter_state.clone());
 
         if result.translated {
@@ -227,6 +235,27 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             }
         }
         new_glossary_terms += result.new_terms_added;
+    }
+
+    let baseline_outcome = finalize_glossary_baseline(
+        book_dir,
+        &options,
+        previous_glossary_state.as_ref(),
+        &run_start_glossary_state,
+        &chapters,
+        &layout.paths.raw_dir,
+        out_dir,
+        &previous_chapter_states,
+        &glossary,
+        injection_mode,
+        failed,
+    )?;
+
+    if baseline_outcome.remaining_forced_chapters > 0 {
+        warn(format!(
+            "Glossary baseline not updated; {} affected chapter(s) still need reruns.",
+            baseline_outcome.remaining_forced_chapters
+        ));
     }
 
     run_metadata.mark_finished();
@@ -376,17 +405,90 @@ async fn translate_single_chapter(
     })
 }
 
-fn checkpoint_state(
+fn checkpoint_chapter_progress(
     book_dir: &Path,
     run_metadata: &mut RunMetadata,
     chapter_state: &ChapterState,
-    glossary: &[GlossaryTerm],
-    injection_mode: InjectionMode,
 ) -> Result<()> {
     save_chapter_state(book_dir, chapter_state)?;
-    save_glossary_state(book_dir, &build_glossary_state(glossary, injection_mode))?;
     run_metadata.touch();
     save_run_metadata(book_dir, run_metadata)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_glossary_baseline(
+    book_dir: &Path,
+    options: &TranslateOptions,
+    previous_glossary_state: Option<&GlossaryState>,
+    run_start_glossary_state: &GlossaryState,
+    chapters: &[PathBuf],
+    raw_dir: &Path,
+    out_dir: &Path,
+    chapter_states: &BTreeMap<String, ChapterState>,
+    glossary: &[GlossaryTerm],
+    injection_mode: InjectionMode,
+    failed: usize,
+) -> Result<GlossaryBaselineOutcome> {
+    if failed > 0 {
+        return Ok(GlossaryBaselineOutcome {
+            advance: GlossaryBaselineAdvance::KeepExisting,
+            remaining_forced_chapters: 0,
+        });
+    }
+
+    if previous_glossary_state.is_none() {
+        save_glossary_state(book_dir, run_start_glossary_state)?;
+        return Ok(GlossaryBaselineOutcome {
+            advance: GlossaryBaselineAdvance::InitializeFromRunStart,
+            remaining_forced_chapters: 0,
+        });
+    }
+
+    if !options.rerun_affected_glossary {
+        return Ok(GlossaryBaselineOutcome {
+            advance: GlossaryBaselineAdvance::KeepExisting,
+            remaining_forced_chapters: 0,
+        });
+    }
+
+    let current_glossary_state = build_glossary_state(glossary, injection_mode);
+    let previous_glossary_state = previous_glossary_state.expect("checked above");
+
+    if previous_glossary_state.injection_mode == current_glossary_state.injection_mode
+        && changed_prompt_relevant_keys(
+            &previous_glossary_state.terms,
+            &current_glossary_state.terms,
+        )
+        .is_empty()
+    {
+        return Ok(GlossaryBaselineOutcome {
+            advance: GlossaryBaselineAdvance::KeepExisting,
+            remaining_forced_chapters: 0,
+        });
+    }
+
+    let remaining_plan = build_glossary_rerun_plan(
+        chapters,
+        raw_dir,
+        out_dir,
+        Some(previous_glossary_state),
+        chapter_states,
+        glossary,
+        injection_mode,
+    )?;
+
+    if remaining_plan.forced_chapters.is_empty() {
+        save_glossary_state(book_dir, &current_glossary_state)?;
+        Ok(GlossaryBaselineOutcome {
+            advance: GlossaryBaselineAdvance::CommitRunEnd,
+            remaining_forced_chapters: 0,
+        })
+    } else {
+        Ok(GlossaryBaselineOutcome {
+            advance: GlossaryBaselineAdvance::KeepExisting,
+            remaining_forced_chapters: remaining_plan.forced_chapters.len(),
+        })
+    }
 }
 
 fn build_glossary_state(glossary: &[GlossaryTerm], injection_mode: InjectionMode) -> GlossaryState {
@@ -989,6 +1091,28 @@ mod tests {
         build_glossary_state(glossary, mode)
     }
 
+    fn translate_options(rerun_affected_glossary: bool) -> TranslateOptions {
+        TranslateOptions {
+            profile: None,
+            overwrite: false,
+            fail_fast: false,
+            rerun_affected_glossary,
+        }
+    }
+
+    fn assert_glossary_state_matches(
+        actual: &GlossaryState,
+        glossary: &[GlossaryTerm],
+        injection_mode: InjectionMode,
+    ) {
+        let expected = build_glossary_state(glossary, injection_mode);
+        assert_eq!(actual.injection_mode, expected.injection_mode);
+        assert_eq!(
+            snapshot_fingerprints(&actual.terms),
+            snapshot_fingerprints(&expected.terms)
+        );
+    }
+
     fn smart_glossary(hero_definition: &str) -> Vec<GlossaryTerm> {
         vec![
             glossary_term("Hero", Some("勇者"), hero_definition),
@@ -1107,6 +1231,259 @@ mod tests {
 
         create_backup(dir.path(), &source).unwrap();
         assert!(backup_dir.exists());
+    }
+
+    #[test]
+    fn test_checkpoint_chapter_progress_does_not_advance_glossary_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let previous_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
+        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Smart);
+        save_glossary_state(dir.path(), &previous_state).unwrap();
+
+        let chapter_state = ChapterState::new(
+            "chapter1.md".to_string(),
+            ChapterStatus::Skipped,
+            None,
+            None,
+            None,
+        );
+        let mut run_metadata = RunMetadata::new(
+            "default".to_string(),
+            "openai".to_string(),
+            "gpt-test".to_string(),
+            None,
+        );
+
+        checkpoint_chapter_progress(dir.path(), &mut run_metadata, &chapter_state).unwrap();
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &previous_glossary, InjectionMode::Smart);
+    }
+
+    #[test]
+    fn test_finalize_glossary_baseline_initializes_from_run_start_when_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let run_start_glossary = vec![glossary_term("Hero", Some("hero"), "Definition")];
+        let current_glossary = vec![
+            glossary_term("Hero", Some("hero"), "Definition"),
+            glossary_term("Mage", Some("mage"), "Added later"),
+        ];
+        let run_start_state = build_glossary_state(&run_start_glossary, InjectionMode::Smart);
+
+        let outcome = finalize_glossary_baseline(
+            dir.path(),
+            &translate_options(false),
+            None,
+            &run_start_state,
+            &[],
+            &raw_dir,
+            &out_dir,
+            &BTreeMap::new(),
+            &current_glossary,
+            InjectionMode::Smart,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            GlossaryBaselineOutcome {
+                advance: GlossaryBaselineAdvance::InitializeFromRunStart,
+                remaining_forced_chapters: 0,
+            }
+        );
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &run_start_glossary, InjectionMode::Smart);
+    }
+
+    #[test]
+    fn test_finalize_glossary_baseline_keeps_existing_when_reruns_remain() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        std::fs::write(&chapter, "hero appears here").unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let previous_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
+        let current_glossary = vec![glossary_term("Hero", Some("hero"), "New definition")];
+        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Full);
+        save_glossary_state(dir.path(), &previous_state).unwrap();
+
+        let outcome = finalize_glossary_baseline(
+            dir.path(),
+            &translate_options(true),
+            Some(&previous_state),
+            &build_glossary_state(&current_glossary, InjectionMode::Full),
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            &BTreeMap::new(),
+            &current_glossary,
+            InjectionMode::Full,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            GlossaryBaselineOutcome {
+                advance: GlossaryBaselineAdvance::KeepExisting,
+                remaining_forced_chapters: 1,
+            }
+        );
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &previous_glossary, InjectionMode::Full);
+    }
+
+    #[test]
+    fn test_finalize_glossary_baseline_commits_run_end_when_reruns_resolved() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        std::fs::write(&chapter, smart_text()).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let previous_glossary = smart_glossary("Old hero definition");
+        let current_glossary = smart_glossary("New hero definition");
+        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Smart);
+        save_glossary_state(dir.path(), &previous_state).unwrap();
+
+        let selection =
+            select_terms_for_text(&current_glossary, smart_text(), InjectionMode::Smart);
+        assert!(!selection.used_fallback_to_full);
+
+        let chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
+            ),
+        )]);
+
+        let outcome = finalize_glossary_baseline(
+            dir.path(),
+            &translate_options(true),
+            Some(&previous_state),
+            &build_glossary_state(&current_glossary, InjectionMode::Smart),
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            &chapter_states,
+            &current_glossary,
+            InjectionMode::Smart,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            GlossaryBaselineOutcome {
+                advance: GlossaryBaselineAdvance::CommitRunEnd,
+                remaining_forced_chapters: 0,
+            }
+        );
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &current_glossary, InjectionMode::Smart);
+    }
+
+    #[test]
+    fn test_finalize_glossary_baseline_keeps_existing_after_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let previous_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
+        let current_glossary = vec![glossary_term("Hero", Some("hero"), "New definition")];
+        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Smart);
+        save_glossary_state(dir.path(), &previous_state).unwrap();
+
+        let outcome = finalize_glossary_baseline(
+            dir.path(),
+            &translate_options(true),
+            Some(&previous_state),
+            &build_glossary_state(&current_glossary, InjectionMode::Smart),
+            &[],
+            &raw_dir,
+            &out_dir,
+            &BTreeMap::new(),
+            &current_glossary,
+            InjectionMode::Smart,
+            1,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            GlossaryBaselineOutcome {
+                advance: GlossaryBaselineAdvance::KeepExisting,
+                remaining_forced_chapters: 0,
+            }
+        );
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &previous_glossary, InjectionMode::Smart);
+    }
+
+    #[test]
+    fn test_finalize_glossary_baseline_keeps_existing_for_normal_translate_runs() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let previous_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
+        let current_glossary = vec![glossary_term("Hero", Some("hero"), "New definition")];
+        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Smart);
+        save_glossary_state(dir.path(), &previous_state).unwrap();
+
+        let outcome = finalize_glossary_baseline(
+            dir.path(),
+            &translate_options(false),
+            Some(&previous_state),
+            &build_glossary_state(&current_glossary, InjectionMode::Smart),
+            &[],
+            &raw_dir,
+            &out_dir,
+            &BTreeMap::new(),
+            &current_glossary,
+            InjectionMode::Smart,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            GlossaryBaselineOutcome {
+                advance: GlossaryBaselineAdvance::KeepExisting,
+                remaining_forced_chapters: 0,
+            }
+        );
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &previous_glossary, InjectionMode::Smart);
     }
 
     #[test]
