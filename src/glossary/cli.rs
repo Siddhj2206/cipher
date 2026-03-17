@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::book::BookLayout;
 use crate::glossary::{load_glossary, merge_terms, save_glossary};
+use crate::output::{detail, detail_kv};
 
 pub fn list_glossary(book_dir: &Path) -> Result<()> {
     let layout = BookLayout::discover(book_dir);
@@ -12,8 +13,9 @@ pub fn list_glossary(book_dir: &Path) -> Result<()> {
     if terms.is_empty() {
         println!("No glossary entries found.");
     } else {
-        println!("Glossary entries ({}):\n", terms.len());
-        for (i, term) in terms.iter().enumerate() {
+        println!("Glossary entries");
+        detail_kv("Count", terms.len());
+        for term in &terms {
             let def_preview = if term.definition.chars().count() > 60 {
                 format!(
                     "{}...",
@@ -23,9 +25,9 @@ pub fn list_glossary(book_dir: &Path) -> Result<()> {
                 term.definition.clone()
             };
             if let Some(ref og) = term.og_term {
-                println!("{}: {} [{}] - {}", i + 1, term.term, og, def_preview);
+                detail(format!("{} [{}]: {}", term.term, og, def_preview));
             } else {
-                println!("{}: {} - {}", i + 1, term.term, def_preview);
+                detail(format!("{}: {}", term.term, def_preview));
             }
         }
     }
@@ -44,18 +46,12 @@ pub fn import_glossary(book_dir: &Path, import_path: &Path) -> Result<()> {
     let existing = load_glossary(&layout.paths.glossary_json)?;
     let (merged, added, skipped) = merge_terms(existing, incoming);
 
+    println!("Glossary import complete");
     if added > 0 {
         save_glossary(&layout.paths.glossary_json, &merged)?;
-        println!(
-            "Import complete: {} added, {} skipped (duplicates)",
-            added, skipped
-        );
-    } else {
-        println!(
-            "Import complete: {} added, {} skipped (all duplicates)",
-            added, skipped
-        );
     }
+    detail_kv("Added", added);
+    detail_kv("Skipped duplicates", skipped);
     Ok(())
 }
 
@@ -64,10 +60,8 @@ pub fn export_glossary(book_dir: &Path, export_path: &Path) -> Result<()> {
     let terms = load_glossary(&layout.paths.glossary_json)?;
 
     save_glossary(export_path, &terms)?;
-    println!(
-        "Exported {} glossary entries to {}",
-        terms.len(),
-        export_path.display()
-    );
+    println!("Glossary export complete");
+    detail_kv("Entries", terms.len());
+    detail_kv("Path", export_path.display());
     Ok(())
 }

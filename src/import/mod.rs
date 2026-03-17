@@ -41,12 +41,13 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
         }
 
         if force && existing_chapters > 0 {
+            println!("Re-import confirmation");
             println!(
-                "Warning: Re-importing will delete {} existing raw chapters",
+                "- This will delete {} existing raw chapters.",
                 existing_chapters
             );
             println!(
-                "Translations in {}/ may become orphaned if chapter order changed",
+                "- Translations in {} may become orphaned if chapter order changed.",
                 layout.paths.out_dir.display()
             );
 
@@ -119,14 +120,6 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
         fs::write(&chapter_path, markdown.trim())
             .with_context(|| format!("Failed to write {}", chapter_path.display()))?;
     }
-
-    println!(
-        "Imported {} of {} chapters from {}",
-        chapter_count,
-        num_chapters,
-        epub_path.display()
-    );
-    println!("Book initialized at: {}", book_dir.display());
 
     Ok(ImportReport {
         book_dir,

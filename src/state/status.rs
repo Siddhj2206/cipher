@@ -1,4 +1,5 @@
 use crate::book::BookLayout;
+use crate::output::{detail, detail_kv};
 use crate::state::{
     failed_chapters, load_all_chapter_states, load_run_metadata, summarize_chapters,
 };
@@ -8,21 +9,19 @@ use std::path::Path;
 pub fn show_status(book_dir: &Path) -> Result<()> {
     let layout = BookLayout::discover(book_dir);
 
-    println!("Book: {}", layout.paths.root.display());
-
     let metadata = load_run_metadata(book_dir)?;
     let chapters = load_all_chapter_states(book_dir)?;
 
     match metadata {
         Some(metadata) => {
+            println!("Book status");
+            detail_kv("Book", layout.paths.root.display());
             print_run_state(&metadata, &chapters);
         }
         None => {
-            println!();
             println!("No translation runs recorded yet.");
-            println!();
-            println!("To translate this book, run:");
-            println!("  cipher translate {}", book_dir.display());
+            detail_kv("Book", layout.paths.root.display());
+            detail(format!("Run: cipher translate {}", book_dir.display()));
         }
     }
 
@@ -33,17 +32,22 @@ fn print_run_state(
     metadata: &crate::state::RunMetadata,
     chapters: &std::collections::BTreeMap<String, crate::state::ChapterState>,
 ) {
-    println!("- Profile: {}", metadata.profile);
-    println!("- Provider: {}", metadata.provider);
-    println!("- Model: {}", metadata.model);
-    println!();
+    detail_kv("Profile", &metadata.profile);
+    detail_kv("Provider", &metadata.provider);
+    detail_kv("Model", &metadata.model);
+    detail_kv("Started", &metadata.started_at);
+    detail_kv("Last updated", &metadata.updated_at);
+    if let Some(finished_at) = &metadata.finished_at {
+        detail_kv("Finished", finished_at);
+    }
 
     let summary = summarize_chapters(chapters);
-    println!(
-        "Chapters: {} total, {} translated, {} skipped, {} failed, {} pending",
-        summary.total, summary.success, summary.skipped, summary.failed, summary.pending
-    );
-    println!();
+    println!("Chapter summary");
+    detail_kv("Total", summary.total);
+    detail_kv("Translated", summary.success);
+    detail_kv("Skipped", summary.skipped);
+    detail_kv("Failed", summary.failed);
+    detail_kv("Pending", summary.pending);
 
     let failed = failed_chapters(chapters);
     if !failed.is_empty() {
@@ -55,11 +59,10 @@ fn print_run_state(
                 } else {
                     error.clone()
                 };
-                println!("  {}: {}", filename, error_preview);
+                detail(format!("{}: {}", filename, error_preview));
             } else {
-                println!("  {}", filename);
+                detail(filename);
             }
         }
-        println!();
     }
 }

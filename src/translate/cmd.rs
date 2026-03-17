@@ -5,6 +5,7 @@ use crate::glossary::{
     glossary_term_prompt_fingerprint, load_glossary, merge_terms, save_glossary,
     select_terms_for_text,
 };
+use crate::output::{detail, detail_kv, stderr_detail};
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryInjectionMode,
     GlossaryState, GlossaryStateTerm, RunMetadata, RunOptions, load_all_chapter_states,
@@ -44,6 +45,7 @@ struct GlossaryRerunPlan {
     forced_chapters: BTreeMap<String, GlossaryRerunDecision>,
     warnings: Vec<String>,
     changed_term_count: usize,
+    approximate_smart_checks: usize,
 }
 
 impl GlossaryRerunPlan {
@@ -83,7 +85,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     if !validation.is_valid() {
         eprintln!("Profile validation failed:");
         for error in &validation.errors {
-            eprintln!("  - {}", error);
+            stderr_detail(error);
         }
         anyhow::bail!("Cannot translate with invalid profile");
     }
@@ -109,32 +111,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Determine output directory
     let out_dir = layout.effective_out_dir();
 
-    // Load previous checkpointed state for glossary diffing
-    let previous_glossary_state = load_glossary_state(book_dir)?;
-    let mut previous_chapter_states = load_all_chapter_states(book_dir)?;
-
-    let rerun_plan = if options.rerun_affected_glossary {
-        println!("Planning glossary-affected chapter reruns...");
-        build_glossary_rerun_plan(
-            &chapters,
-            &layout.paths.raw_dir,
-            out_dir,
-            previous_glossary_state.as_ref(),
-            &previous_chapter_states,
-            &glossary,
-            injection_mode,
-        )?
-    } else {
-        GlossaryRerunPlan::default()
-    };
-
     // Load style guide if it exists
     let style_guide = if layout.exists.style_md {
         match std::fs::read_to_string(&layout.paths.style_md) {
-            Ok(content) if !content.trim().is_empty() => {
-                println!("- Using style guide: {}", layout.paths.style_md.display());
-                Some(content)
-            }
+            Ok(content) if !content.trim().is_empty() => Some(content),
             _ => None,
         }
     } else {
@@ -142,24 +122,43 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     println!("Using profile {}", profile_name);
-    println!("- Provider: {}", profile.provider);
-    println!("- Model: {}", profile.model);
-    if options.rerun_affected_glossary {
-        println!(
-            "- Changed glossary terms since last recorded run: {}",
-            rerun_plan.changed_term_count
-        );
-        println!(
-            "- Re-translating affected chapters: {}",
-            rerun_plan.forced_chapters.len()
-        );
-        for warning in &rerun_plan.warnings {
-            println!("- {}", warning);
-        }
+    detail_kv("Provider", &profile.provider);
+    detail_kv("Model", &profile.model);
+    if style_guide.is_some() {
+        detail_kv("Style guide", layout.paths.style_md.display());
     }
+
+    // Load previous checkpointed state for glossary diffing
+    let previous_glossary_state = load_glossary_state(book_dir)?;
+    let mut previous_chapter_states = load_all_chapter_states(book_dir)?;
+
+    let rerun_plan = if options.rerun_affected_glossary {
+        println!("Planning glossary-affected chapter reruns...");
+        let plan = build_glossary_rerun_plan(
+            &chapters,
+            &layout.paths.raw_dir,
+            out_dir,
+            previous_glossary_state.as_ref(),
+            &previous_chapter_states,
+            &glossary,
+            injection_mode,
+        )?;
+        detail_kv("Changed glossary terms", plan.changed_term_count);
+        detail_kv("Affected chapters", plan.forced_chapters.len());
+        if plan.approximate_smart_checks > 0 {
+            detail_kv("Approximate smart checks", plan.approximate_smart_checks);
+        }
+        for warning in &plan.warnings {
+            detail(format!("Warning: {}", warning));
+        }
+        plan
+    } else {
+        GlossaryRerunPlan::default()
+    };
+
     println!();
-    println!("Translating chapters...");
-    println!("Found {} files to translate", chapters.len());
+    println!("Translating chapters");
+    detail_kv("Chapters found", chapters.len());
 
     // Create run state with options
     let run_options = RunOptions {
@@ -222,7 +221,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         if result.failed {
             failed += 1;
             if options.fail_fast {
-                println!("Stopping due to --fail-fast");
+                detail("Stopping due to --fail-fast");
                 break;
             }
         }
@@ -269,7 +268,6 @@ async fn translate_single_chapter(
     // Check if output exists
     let output_exists = out_path.exists();
     if !options.overwrite && output_exists && rerun_decision.is_none() {
-        println!("Skipping {} (already translated)", chapter_path);
         return Ok(ChapterResult {
             translated: false,
             failed: false,
@@ -286,10 +284,8 @@ async fn translate_single_chapter(
     }
 
     if let Some(decision) = rerun_decision {
-        println!(
-            "Translating {} (glossary changed: {})",
-            chapter_path, decision.reason
-        );
+        println!("Retranslating {}", chapter_path);
+        detail_kv("Reason", &decision.reason);
     } else {
         println!("Translating {}", chapter_path);
     }
@@ -299,7 +295,6 @@ async fn translate_single_chapter(
         .with_context(|| format!("Failed to read {}", raw_path.display()))?;
 
     if chapter_text.trim().is_empty() {
-        println!("Skipping {}: Empty file", chapter_path);
         return Ok(ChapterResult {
             translated: false,
             failed: false,
@@ -330,7 +325,7 @@ async fn translate_single_chapter(
         // Backup if overwriting existing file
         if output_exists {
             let backup_path = create_backup(book_dir, out_path)?;
-            println!("- Backed up to {}", backup_path.display());
+            detail_kv("Backup", backup_path.display());
         }
 
         // Write output atomically
@@ -341,7 +336,7 @@ async fn translate_single_chapter(
         let new_terms_added =
             merge_new_glossary_terms(glossary, resp.new_glossary_terms, glossary_path)?;
 
-        println!("- Successfully translated {}", chapter_path);
+        detail_kv("Result", "translated");
         return Ok(ChapterResult {
             translated: true,
             failed: false,
@@ -361,9 +356,9 @@ async fn translate_single_chapter(
     }
 
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
-    println!(
-        "- Failed to translate {} after {} attempts: {}",
-        chapter_path, MAX_API_RETRIES, error_msg
+    detail_kv(
+        "Result",
+        format!("failed after {} attempts: {}", MAX_API_RETRIES, error_msg),
     );
     Ok(ChapterResult {
         translated: false,
@@ -527,12 +522,7 @@ fn build_glossary_rerun_plan(
         }
     }
 
-    if approximate_smart_checks > 0 {
-        plan.warnings.push(format!(
-            "Used approximate smart glossary detection for {} untracked chapter(s).",
-            approximate_smart_checks
-        ));
-    }
+    plan.approximate_smart_checks = approximate_smart_checks;
 
     Ok(plan)
 }
@@ -739,19 +729,25 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
     match injection_mode {
         InjectionMode::Smart => {
             if selection.used_fallback_to_full {
-                println!(
-                    "- Using full glossary (fallback from smart): {}/{} terms",
-                    selection.selected_count, selection.total_count
+                detail_kv(
+                    "Glossary",
+                    format!(
+                        "full (fallback from smart), {}/{} terms",
+                        selection.selected_count, selection.total_count
+                    ),
                 );
             } else {
-                println!(
-                    "- Using smart glossary: {}/{} terms",
-                    selection.selected_count, selection.total_count
+                detail_kv(
+                    "Glossary",
+                    format!(
+                        "smart, {}/{} terms",
+                        selection.selected_count, selection.total_count
+                    ),
                 );
             }
         }
         InjectionMode::Full => {
-            println!("- Using full glossary: {} terms", selection.total_count);
+            detail_kv("Glossary", format!("full, {} terms", selection.total_count));
         }
     }
 }
@@ -787,9 +783,12 @@ async fn attempt_translation(
                 ));
 
                 if api_attempt == 1 {
-                    println!(
-                        "- Validation failed: {}. Attempting repair...",
-                        validation_errors.join(", ")
+                    detail_kv(
+                        "Validation",
+                        format!(
+                            "failed: {}. Attempting repair.",
+                            validation_errors.join(", ")
+                        ),
                     );
 
                     let repair_req =
@@ -803,18 +802,18 @@ async fn attempt_translation(
                         Ok(repair_resp) => {
                             let repair_validation = validate_translation(&repair_resp.translation);
                             if repair_validation.is_valid() {
-                                println!("- Repair succeeded");
+                                detail_kv("Repair", "succeeded");
                                 return (Some(repair_resp), None);
                             }
                             last_error = Some(format!(
                                 "Repair validation failed: {}",
                                 repair_validation.errors().join(", ")
                             ));
-                            println!("- {}", last_error.as_ref().unwrap());
+                            detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                         Err(e) => {
                             last_error = Some(format!("Repair API error: {}", e));
-                            println!("- {}", last_error.as_ref().unwrap());
+                            detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                     }
                 }
@@ -825,12 +824,15 @@ async fn attempt_translation(
                 last_error = Some(format!("API error: {}", e));
                 if api_attempt < MAX_API_RETRIES {
                     let delay_secs = 2u64.pow(api_attempt as u32);
-                    println!(
-                        "- Attempt {}/{} failed: {}. Retrying in {}s...",
-                        api_attempt,
-                        MAX_API_RETRIES,
-                        last_error.as_ref().unwrap(),
-                        delay_secs
+                    detail_kv(
+                        "Attempt",
+                        format!(
+                            "{}/{} failed: {}. Retrying in {}s.",
+                            api_attempt,
+                            MAX_API_RETRIES,
+                            last_error.as_ref().unwrap(),
+                            delay_secs
+                        ),
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
                 }
@@ -855,19 +857,34 @@ fn merge_new_glossary_terms(
 
     if added > 0 {
         if dupes > 0 {
-            println!(
-                "- Added {} new term/s to glossary ({} duplicate/s skipped)",
-                added, dupes
-            );
+            detail(format!(
+                "Added {} new glossary {} and skipped {} duplicate{}.",
+                added,
+                pluralize(added, "term", "terms"),
+                dupes,
+                pluralize(dupes, "", "s")
+            ));
         } else {
-            println!("- Added {} new term/s to glossary", added);
+            detail(format!(
+                "Added {} new glossary {}.",
+                added,
+                pluralize(added, "term", "terms")
+            ));
         }
         save_glossary(glossary_path, glossary)?;
     } else if dupes > 0 {
-        println!("- No new terms to add ({} duplicate/s skipped)", dupes);
+        detail(format!(
+            "No new glossary terms added. Skipped {} duplicate{}.",
+            dupes,
+            pluralize(dupes, "", "s")
+        ));
     }
 
     Ok(added)
+}
+
+fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
+    if count == 1 { singular } else { plural }
 }
 
 fn discover_chapters(raw_dir: &Path) -> Result<Vec<std::path::PathBuf>> {
@@ -1222,8 +1239,8 @@ mod tests {
                 .reason
                 .contains("approximate smart glossary change")
         );
-        assert_eq!(plan.warnings.len(), 1);
-        assert!(plan.warnings[0].contains("approximate smart glossary detection"));
+        assert!(plan.warnings.is_empty());
+        assert_eq!(plan.approximate_smart_checks, 1);
     }
 
     #[test]

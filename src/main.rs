@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use output::{detail, detail_kv};
 
 mod book;
 mod config;
 mod glossary;
 mod import;
+mod output;
 mod state;
 mod translate;
 mod validate;
@@ -143,11 +145,9 @@ async fn main() {
     match cli.command {
         Commands::Import { epub_path, force } => match import::import_epub(&epub_path, force) {
             Ok(report) => {
-                println!(
-                    "Imported {} chapters to {}",
-                    report.chapters_imported,
-                    report.book_dir.display()
-                );
+                println!("Import complete");
+                detail_kv("Book", report.book_dir.display());
+                detail_kv("Chapters imported", report.chapters_imported);
             }
             Err(e) => {
                 eprintln!("Error: {}", e);
@@ -167,28 +167,28 @@ async fn main() {
                 import_glossary.as_deref(),
             ) {
                 Ok(report) => {
-                    println!("Initialized book: {}", report.book_dir.display());
-                    println!();
+                    println!("Book initialized");
+                    detail_kv("Directory", report.book_dir.display());
                     if !report.created_dirs.is_empty() {
                         println!("Created directories:");
                         for dir in &report.created_dirs {
-                            println!("  - {}/", dir);
+                            detail(format!("{}/", dir));
                         }
                     }
                     if !report.created_files.is_empty() {
                         println!("Created files:");
                         for file in &report.created_files {
-                            println!("  - {}", file);
+                            detail(file);
                         }
                     }
                     if !report.skipped_files.is_empty() {
-                        println!("Skipped (already exist):");
+                        println!("Already present:");
                         for file in &report.skipped_files {
-                            println!("  - {}", file);
+                            detail(file);
                         }
                     }
                     if let Some(src) = report.imported_glossary {
-                        println!("Imported glossary from: {}", src.display());
+                        detail_kv("Imported glossary", src.display());
                     }
                 }
                 Err(e) => {
@@ -249,7 +249,10 @@ async fn main() {
             if let Some(dir) = book_dir {
                 book::doctor::run_book_doctor(&dir, &config);
             } else {
-                config::profile::run_global_doctor(&config);
+                if let Err(e) = config::profile::run_global_doctor(&config) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
             }
         }
         Commands::Profile { command } => {

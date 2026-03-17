@@ -1,7 +1,8 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
+use crate::output::{detail, detail_kv};
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
@@ -71,7 +72,7 @@ fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Op
     }
 }
 
-pub fn create_profile_interactive() -> anyhow::Result<()> {
+pub fn create_profile_interactive() -> Result<()> {
     let mut config = GlobalConfig::load()?;
 
     let profile_name = prompt_profile_name(&config)?;
@@ -94,9 +95,12 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
 
     config.save()?;
 
-    println!("Profile '{}' created successfully.", profile_name);
-    println!("\nYou can now use it with:");
-    println!("  cipher translate <bookDir> --profile {}", profile_name);
+    println!("Profile created");
+    detail_kv("Name", &profile_name);
+    detail(format!(
+        "Use it with: cipher translate <bookDir> --profile {}",
+        profile_name
+    ));
 
     Ok(())
 }
@@ -310,10 +314,10 @@ fn prompt_model() -> anyhow::Result<String> {
     Ok(model)
 }
 
-fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> anyhow::Result<()> {
+fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> Result<()> {
     if config.default_profile.is_none() {
         config.default_profile = Some(profile_name.to_string());
-        println!("Set '{}' as the default profile.", profile_name);
+        detail(format!("Set '{}' as the default profile.", profile_name));
     } else {
         let set_default = Confirm::new()
             .with_prompt("Set as default profile?")
@@ -322,7 +326,7 @@ fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> anyh
             .context("Failed to get default preference")?;
         if set_default {
             config.default_profile = Some(profile_name.to_string());
-            println!("Set '{}' as the default profile.", profile_name);
+            detail(format!("Set '{}' as the default profile.", profile_name));
         }
     }
     Ok(())
@@ -331,45 +335,45 @@ fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> anyh
 pub fn list_profiles(config: &GlobalConfig) {
     if config.profiles.is_empty() {
         println!("No profiles configured.");
-        println!("Run 'cipher profile new' to create one.");
+        detail("Run: cipher profile new");
         return;
     }
 
-    println!("Configured profiles:\n");
+    println!("Profiles");
     for (name, profile) in &config.profiles {
-        let is_default = config.default_profile.as_deref() == Some(name);
-        let marker = if is_default { " (default)" } else { "" };
-        println!("{}{}", name, marker);
-        println!("  Provider: {}", profile.provider);
-        println!("  Model: {}", profile.model);
-        println!();
+        println!("{}", name);
+        if config.default_profile.as_deref() == Some(name) {
+            detail("Default profile");
+        }
+        detail_kv("Provider", &profile.provider);
+        detail_kv("Model", &profile.model);
     }
 }
 
-pub fn show_profile(config: &GlobalConfig, name: &str) {
+pub fn show_profile(config: &GlobalConfig, name: &str) -> Result<()> {
     let Some(profile) = config.resolve_profile(name) else {
-        eprintln!("Error: Profile '{}' not found", name);
-        return;
+        anyhow::bail!("Profile '{}' not found", name);
     };
 
-    let is_default = config.default_profile.as_deref() == Some(name);
-    println!("Profile: {}", name);
-    if is_default {
-        println!("  [default profile]");
+    println!("Profile {}", name);
+    if config.default_profile.as_deref() == Some(name) {
+        detail("Default profile");
     }
-    println!("  Provider: {}", profile.provider);
-    println!("  Model: {}", profile.model);
+    detail_kv("Provider", &profile.provider);
+    detail_kv("Model", &profile.model);
 
     if let Some(provider) = config.resolve_provider(&profile.provider) {
-        println!("  Kind: {}", provider.kind);
+        detail_kv("Provider kind", &provider.kind);
         if let Some(url) = &provider.base_url {
-            println!("  Base URL: {}", url);
+            detail_kv("Base URL", url);
         }
     }
 
     if let Some(key) = &profile.key {
-        println!("  Key label: {}", key);
+        detail_kv("Key label", key);
     }
+
+    Ok(())
 }
 
 pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Result<()> {
@@ -385,76 +389,83 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
 pub fn test_profile(config: &GlobalConfig, name: &str) {
     use crate::config::validate_profile;
 
-    println!("Testing profile '{}'...\n", name);
+    println!("Testing profile {}", name);
 
     let validation = validate_profile(config, name);
 
-    if validation.profile_exists {
-        println!("✓ Profile exists");
-    } else {
-        println!("✗ Profile not found");
-    }
-
-    if validation.provider_exists {
-        println!("✓ Provider configured");
-    } else {
-        println!("✗ Provider not found or not configured");
-    }
-
-    if validation.has_key {
-        println!("✓ API key configured");
-    } else {
-        println!("✗ No API key configured for provider");
-    }
+    detail_kv(
+        "Profile",
+        if validation.profile_exists {
+            "found"
+        } else {
+            "missing"
+        },
+    );
+    detail_kv(
+        "Provider",
+        if validation.provider_exists {
+            "configured"
+        } else {
+            "missing"
+        },
+    );
+    detail_kv(
+        "API key",
+        if validation.has_key {
+            "configured"
+        } else {
+            "missing"
+        },
+    );
 
     if !validation.errors.is_empty() {
-        println!("\nErrors:");
+        println!("Errors");
         for err in &validation.errors {
-            println!("  - {}", err);
+            detail(err);
         }
     }
 
     if validation.is_valid() {
-        println!("\n✓ Profile configuration is valid");
+        detail("Profile configuration is valid");
     } else {
-        println!("\n✗ Profile configuration has errors");
+        detail("Profile configuration has errors");
     }
 }
 
-pub fn run_global_doctor(config: &GlobalConfig) {
+pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
     use crate::config::validate_profile;
 
-    let config_path = match GlobalConfig::config_path() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error determining config path: {}", e);
-            return;
-        }
-    };
+    let config_path = GlobalConfig::config_path()?;
 
-    println!("Global configuration:");
-    println!("  Config path: {}", config_path.display());
-    println!(
-        "  Config exists: {}",
-        if config_path.exists() { "yes" } else { "no" }
+    println!("Global configuration");
+    detail_kv("Config path", config_path.display());
+    detail_kv(
+        "Config exists",
+        if config_path.exists() { "yes" } else { "no" },
     );
-    println!();
 
     if config_path.exists() {
-        println!("  Providers: {}", config.providers.len());
-        println!("  Profiles: {}", config.profiles.len());
+        detail_kv("Providers", config.providers.len());
+        detail_kv("Profiles", config.profiles.len());
         if let Some(default) = &config.default_profile {
-            println!("  Default profile: {}", default);
+            detail_kv("Default profile", default);
         }
-        println!();
 
         if !config.profiles.is_empty() {
-            println!("  Profile validation:");
+            println!("Profile validation");
             for name in config.profiles.keys() {
                 let validation = validate_profile(config, name);
-                let status = if validation.is_valid() { "✓" } else { "✗" };
-                println!("    {} {}", status, name);
+                detail_kv(
+                    name,
+                    if validation.is_valid() {
+                        "valid"
+                    } else {
+                        "has errors"
+                    },
+                );
             }
         }
     }
+
+    Ok(())
 }

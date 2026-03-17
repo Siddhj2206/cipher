@@ -36,7 +36,7 @@ impl std::str::FromStr for InjectionMode {
             _ => {
                 if !normalized.is_empty() {
                     eprintln!(
-                        "Warning: Unknown glossary_injection '{}', using 'smart'",
+                        "- Warning: Unknown glossary_injection '{}', using 'smart'",
                         value
                     );
                 }
