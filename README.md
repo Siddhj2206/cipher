@@ -2,7 +2,7 @@
 
 A CLI tool for translating book chapters using LLMs. Feed it raw chapters in any language, point it at an LLM provider, and it produces translated markdown files with glossary management built in.
 
-cipher is designed for serialized web novels (Korean, Chinese, etc. to English) but works for any long-form text that benefits from consistent terminology across chapters.
+cipher is designed for serialized web novels but works for any long-form text that benefits from consistent terminology across chapters.
 
 ## How It Works
 
@@ -167,7 +167,7 @@ cipher profile test myprofile         # validate profile configuration
 Stored at `~/.config/cipher/cipher/config.json`. Managed through `cipher profile` commands. Contains:
 
 - **Providers** -- named LLM provider configs (OpenAI or OpenAI-compatible with a base URL)
-- **API keys** -- stored per provider, with optional labels for managing multiple keys
+- **API keys** -- stored per provider, with optional labels for managing multiple keys (Note: keys are stored as plain text as of now. Suggestions would be appreciated.)
 - **Profiles** -- named combinations of provider + model
 - **Default profile** -- used when no profile is specified
 

@@ -1,5 +1,7 @@
 use crate::book::BookLayout;
-use crate::state::RunState;
+use crate::state::{
+    failed_chapters, load_all_chapter_states, load_run_metadata, summarize_chapters,
+};
 use anyhow::Result;
 use std::path::Path;
 
@@ -8,9 +10,12 @@ pub fn show_status(book_dir: &Path) -> Result<()> {
 
     println!("Book: {}", layout.paths.root.display());
 
-    match RunState::load(book_dir)? {
-        Some(state) => {
-            print_run_state(&state);
+    let metadata = load_run_metadata(book_dir)?;
+    let chapters = load_all_chapter_states(book_dir)?;
+
+    match metadata {
+        Some(metadata) => {
+            print_run_state(&metadata, &chapters);
         }
         None => {
             println!();
@@ -24,23 +29,23 @@ pub fn show_status(book_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-fn print_run_state(state: &RunState) {
-    // Profile and model info
-    println!("- Profile: {}", state.profile);
-    println!("- Provider: {}", state.provider);
-    println!("- Model: {}", state.model);
+fn print_run_state(
+    metadata: &crate::state::RunMetadata,
+    chapters: &std::collections::BTreeMap<String, crate::state::ChapterState>,
+) {
+    println!("- Profile: {}", metadata.profile);
+    println!("- Provider: {}", metadata.provider);
+    println!("- Model: {}", metadata.model);
     println!();
 
-    // Summary line
-    let summary = state.get_summary();
+    let summary = summarize_chapters(chapters);
     println!(
         "Chapters: {} total, {} translated, {} skipped, {} failed, {} pending",
         summary.total, summary.success, summary.skipped, summary.failed, summary.pending
     );
     println!();
 
-    // Failed chapters
-    let failed = state.get_failed_chapters();
+    let failed = failed_chapters(chapters);
     if !failed.is_empty() {
         println!("Failed chapters:");
         for (filename, chapter) in failed {

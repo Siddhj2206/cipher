@@ -57,6 +57,9 @@ enum Commands {
         /// Stop on first error
         #[arg(long)]
         fail_fast: bool,
+        /// Re-translate chapters affected by glossary changes since the last run
+        #[arg(long)]
+        rerun_affected_glossary: bool,
     },
     /// Show book translation status
     Status {
@@ -199,11 +202,13 @@ async fn main() {
             profile,
             overwrite,
             fail_fast,
+            rerun_affected_glossary,
         } => {
             let options = translate::TranslateOptions {
                 profile,
                 overwrite,
                 fail_fast,
+                rerun_affected_glossary,
             };
 
             if let Err(e) = translate::translate_book(&book_dir, options).await {

@@ -1,11 +1,11 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use epub::doc::EpubDoc;
 use htmd::HtmlToMarkdown;
 
-use crate::book::{init_book, BookLayout};
+use crate::book::{BookLayout, init_book};
 
 pub struct ImportReport {
     pub book_dir: std::path::PathBuf,

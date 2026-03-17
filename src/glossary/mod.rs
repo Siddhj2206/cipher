@@ -77,11 +77,28 @@ pub fn save_glossary<P: AsRef<Path>>(path: P, terms: &[GlossaryTerm]) -> Result<
 
 fn dedupe_terms(terms: &mut Vec<GlossaryTerm>) {
     let mut seen = std::collections::HashSet::new();
-    terms.retain(|t| seen.insert(term_dedupe_key(t)));
+    terms.retain(|t| seen.insert(glossary_term_key(t)));
 }
 
-fn term_dedupe_key(term: &GlossaryTerm) -> String {
+pub fn glossary_term_key(term: &GlossaryTerm) -> String {
     normalize_key(term.og_term.as_deref().unwrap_or(&term.term))
+}
+
+pub fn glossary_term_prompt_fingerprint(term: &GlossaryTerm) -> String {
+    #[derive(Serialize)]
+    struct PromptFingerprint<'a> {
+        term: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        og_term: Option<&'a str>,
+        definition: &'a str,
+    }
+
+    serde_json::to_string(&PromptFingerprint {
+        term: &term.term,
+        og_term: term.og_term.as_deref(),
+        definition: &term.definition,
+    })
+    .expect("prompt fingerprint should serialize")
 }
 
 fn normalize_key(s: &str) -> String {
@@ -219,13 +236,14 @@ pub fn merge_terms(
     incoming: Vec<GlossaryTerm>,
 ) -> (Vec<GlossaryTerm>, usize, usize) {
     let mut result = existing;
-    let existing_keys: std::collections::HashSet<_> = result.iter().map(term_dedupe_key).collect();
+    let existing_keys: std::collections::HashSet<_> =
+        result.iter().map(glossary_term_key).collect();
 
     let mut added = 0;
     let mut skipped = 0;
 
     for term in incoming {
-        let key = term_dedupe_key(&term);
+        let key = glossary_term_key(&term);
         if existing_keys.contains(&key) {
             skipped += 1;
         } else {
@@ -414,11 +432,26 @@ mod tests {
 
     #[test]
     fn test_injection_mode_from_str() {
-        assert!(matches!(InjectionMode::from_str("full"), InjectionMode::Full));
-        assert!(matches!(InjectionMode::from_str("smart"), InjectionMode::Smart));
-        assert!(matches!(InjectionMode::from_str("SMART"), InjectionMode::Smart));
-        assert!(matches!(InjectionMode::from_str("Full"), InjectionMode::Full));
-        assert!(matches!(InjectionMode::from_str("unknown"), InjectionMode::Smart));
+        assert!(matches!(
+            InjectionMode::from_str("full"),
+            InjectionMode::Full
+        ));
+        assert!(matches!(
+            InjectionMode::from_str("smart"),
+            InjectionMode::Smart
+        ));
+        assert!(matches!(
+            InjectionMode::from_str("SMART"),
+            InjectionMode::Smart
+        ));
+        assert!(matches!(
+            InjectionMode::from_str("Full"),
+            InjectionMode::Full
+        ));
+        assert!(matches!(
+            InjectionMode::from_str("unknown"),
+            InjectionMode::Smart
+        ));
         assert!(matches!(InjectionMode::from_str(""), InjectionMode::Smart));
     }
 
@@ -428,5 +461,19 @@ mod tests {
         assert!(matches!(mode, InjectionMode::Full));
         let mode: InjectionMode = "smart".parse().unwrap();
         assert!(matches!(mode, InjectionMode::Smart));
+    }
+
+    #[test]
+    fn test_prompt_fingerprint_ignores_notes() {
+        let mut first = term("Hero", Some("勇者"), "Main hero");
+        first.notes = Some("first note".into());
+
+        let mut second = term("Hero", Some("勇者"), "Main hero");
+        second.notes = Some("second note".into());
+
+        assert_eq!(
+            glossary_term_prompt_fingerprint(&first),
+            glossary_term_prompt_fingerprint(&second)
+        );
     }
 }
