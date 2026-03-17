@@ -11,7 +11,8 @@ pub fn list_glossary(book_dir: &Path) -> Result<()> {
     let terms = load_glossary(&layout.paths.glossary_json)?;
 
     if terms.is_empty() {
-        println!("No glossary entries found.");
+        println!("No glossary entries found");
+        detail_kv("Path", layout.paths.glossary_json.display());
     } else {
         println!("Glossary entries");
         detail_kv("Count", terms.len());
@@ -39,7 +40,8 @@ pub fn import_glossary(book_dir: &Path, import_path: &Path) -> Result<()> {
     let incoming = load_glossary(import_path)?;
 
     if incoming.is_empty() {
-        println!("Import file is empty. Nothing to import.");
+        println!("Glossary import skipped");
+        detail("Import file is empty");
         return Ok(());
     }
 

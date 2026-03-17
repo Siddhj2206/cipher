@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 
+use anyhow::Context;
 use clap::{Parser, Subcommand};
-use output::{detail, detail_kv};
+use output::{detail, detail_kv, stderr_error};
 
 mod book;
 mod config;
@@ -138,6 +139,11 @@ fn run_profile_command(
     config::cli::run_profile_command(config, command)
 }
 
+fn exit_with_error(message: impl std::fmt::Display) -> ! {
+    stderr_error(message);
+    std::process::exit(1);
+}
+
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
@@ -149,54 +155,48 @@ async fn main() {
                 detail_kv("Book", report.book_dir.display());
                 detail_kv("Chapters imported", report.chapters_imported);
             }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
-            }
+            Err(e) => exit_with_error(e),
         },
         Commands::Init {
             book_dir,
             profile,
             from,
             import_glossary,
-        } => {
-            match book::init_book(
-                &book_dir,
-                profile.as_deref(),
-                from.as_deref(),
-                import_glossary.as_deref(),
-            ) {
-                Ok(report) => {
-                    println!("Book initialized");
-                    detail_kv("Directory", report.book_dir.display());
-                    if !report.created_dirs.is_empty() {
-                        println!("Created directories:");
-                        for dir in &report.created_dirs {
-                            detail(format!("{}/", dir));
-                        }
-                    }
-                    if !report.created_files.is_empty() {
-                        println!("Created files:");
-                        for file in &report.created_files {
-                            detail(file);
-                        }
-                    }
-                    if !report.skipped_files.is_empty() {
-                        println!("Already present:");
-                        for file in &report.skipped_files {
-                            detail(file);
-                        }
-                    }
-                    if let Some(src) = report.imported_glossary {
-                        detail_kv("Imported glossary", src.display());
+        } => match book::init_book(
+            &book_dir,
+            profile.as_deref(),
+            from.as_deref(),
+            import_glossary.as_deref(),
+        )
+        .with_context(|| format!("Failed to initialize book at {}", book_dir.display()))
+        {
+            Ok(report) => {
+                println!("Book initialized");
+                detail_kv("Directory", report.book_dir.display());
+                if !report.created_dirs.is_empty() {
+                    println!("Created directories:");
+                    for dir in &report.created_dirs {
+                        detail(format!("{}/", dir));
                     }
                 }
-                Err(e) => {
-                    eprintln!("Error initializing book: {}", e);
-                    std::process::exit(1);
+                if !report.created_files.is_empty() {
+                    println!("Created files:");
+                    for file in &report.created_files {
+                        detail(file);
+                    }
+                }
+                if !report.skipped_files.is_empty() {
+                    println!("Already present:");
+                    for file in &report.skipped_files {
+                        detail(file);
+                    }
+                }
+                if let Some(src) = report.imported_glossary {
+                    detail_kv("Imported glossary", src.display());
                 }
             }
-        }
+            Err(e) => exit_with_error(e),
+        },
         Commands::Translate {
             book_dir,
             profile,
@@ -212,14 +212,12 @@ async fn main() {
             };
 
             if let Err(e) = translate::translate_book(&book_dir, options).await {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
+                exit_with_error(e);
             }
         }
         Commands::Status { book_dir } => {
             if let Err(e) = state::status::show_status(&book_dir) {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
+                exit_with_error(e);
             }
         }
         Commands::Glossary { command } => {
@@ -233,40 +231,33 @@ async fn main() {
                 }
             };
             if let Err(e) = result {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
+                exit_with_error(e);
             }
         }
         Commands::Doctor { book_dir } => {
-            let config = match config::GlobalConfig::load() {
+            let config = match config::GlobalConfig::load().context("Failed to load global config")
+            {
                 Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error loading global config: {}", e);
-                    std::process::exit(1);
-                }
+                Err(e) => exit_with_error(e),
             };
 
             if let Some(dir) = book_dir {
                 book::doctor::run_book_doctor(&dir, &config);
             } else {
                 if let Err(e) = config::profile::run_global_doctor(&config) {
-                    eprintln!("Error: {}", e);
-                    std::process::exit(1);
+                    exit_with_error(e);
                 }
             }
         }
         Commands::Profile { command } => {
-            let mut config = match config::GlobalConfig::load() {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error loading global config: {}", e);
-                    std::process::exit(1);
-                }
-            };
+            let mut config =
+                match config::GlobalConfig::load().context("Failed to load global config") {
+                    Ok(c) => c,
+                    Err(e) => exit_with_error(e),
+                };
 
             if let Err(e) = run_profile_command(&mut config, command) {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
+                exit_with_error(e);
             }
         }
     }

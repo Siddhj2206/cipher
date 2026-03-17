@@ -9,6 +9,8 @@ use std::path::Path;
 
 use closest_match::ClosestMatch;
 
+use crate::output::stderr_warn;
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 pub struct GlossaryTerm {
     pub term: String,
@@ -35,10 +37,10 @@ impl std::str::FromStr for InjectionMode {
             "smart" => InjectionMode::Smart,
             _ => {
                 if !normalized.is_empty() {
-                    eprintln!(
-                        "- Warning: Unknown glossary_injection '{}', using 'smart'",
+                    stderr_warn(format!(
+                        "Unknown glossary_injection '{}', using 'smart'.",
                         value
-                    );
+                    ));
                 }
                 InjectionMode::Smart
             }

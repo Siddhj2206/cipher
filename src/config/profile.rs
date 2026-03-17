@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
-use crate::output::{detail, detail_kv};
+use crate::output::{detail, detail_kv, stderr_detail};
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
@@ -24,9 +24,9 @@ fn prompt_provider_name() -> anyhow::Result<String> {
             .interact_text()
             .context("Failed to get provider name")?;
         if name.trim().is_empty() {
-            eprintln!("Provider name cannot be empty. Please try again.");
+            stderr_detail("Provider name cannot be empty. Please try again.");
         } else if name.contains(' ') {
-            eprintln!("Provider name cannot contain spaces. Please try again.");
+            stderr_detail("Provider name cannot contain spaces. Please try again.");
         } else {
             return Ok(name.trim().to_string());
         }
@@ -64,7 +64,9 @@ fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Op
             .iter()
             .any(|k| k.name.as_deref() == Some(label.as_str()))
         {
-            eprintln!("That key label is already used for this provider. Please choose another.");
+            stderr_detail(
+                "That key label is already used for this provider. Please choose another.",
+            );
             continue;
         }
 
@@ -262,15 +264,15 @@ fn select_existing_key(provider_keys: &mut [ApiKey]) -> anyhow::Result<Option<St
                 .context("Failed to get key label")?;
             let label = label.trim().to_string();
             if label.is_empty() {
-                eprintln!("Key label cannot be empty. Please try again.");
+                stderr_detail("Key label cannot be empty. Please try again.");
                 continue;
             }
             if provider_keys
                 .iter()
                 .any(|k| k.name.as_deref() == Some(label.as_str()))
             {
-                eprintln!(
-                    "That key label is already used for this provider. Please choose another."
+                stderr_detail(
+                    "That key label is already used for this provider. Please choose another.",
                 );
                 continue;
             }
@@ -293,7 +295,7 @@ fn add_new_api_key(provider_keys: &mut Vec<ApiKey>) -> anyhow::Result<Option<Str
         .or_else(|| Some(generate_unique_key_label(provider_keys)));
 
     if label.is_some() {
-        println!("Assigned key label: {}", label.as_deref().unwrap_or(""));
+        detail_kv("Assigned key label", label.as_deref().unwrap_or(""));
     }
 
     provider_keys.push(ApiKey {
@@ -317,7 +319,7 @@ fn prompt_model() -> anyhow::Result<String> {
 fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> Result<()> {
     if config.default_profile.is_none() {
         config.default_profile = Some(profile_name.to_string());
-        detail(format!("Set '{}' as the default profile.", profile_name));
+        detail_kv("Default profile", profile_name);
     } else {
         let set_default = Confirm::new()
             .with_prompt("Set as default profile?")
@@ -326,7 +328,7 @@ fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> Resu
             .context("Failed to get default preference")?;
         if set_default {
             config.default_profile = Some(profile_name.to_string());
-            detail(format!("Set '{}' as the default profile.", profile_name));
+            detail_kv("Default profile", profile_name);
         }
     }
     Ok(())
@@ -341,7 +343,7 @@ pub fn list_profiles(config: &GlobalConfig) {
 
     println!("Profiles");
     for (name, profile) in &config.profiles {
-        println!("{}", name);
+        println!("Profile {}", name);
         if config.default_profile.as_deref() == Some(name) {
             detail("Default profile");
         }
@@ -382,14 +384,16 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
     }
     config.default_profile = Some(name.to_string());
     config.save()?;
-    println!("Set '{}' as the default profile.", name);
+    println!("Default profile updated");
+    detail_kv("Profile", name);
     Ok(())
 }
 
 pub fn test_profile(config: &GlobalConfig, name: &str) {
     use crate::config::validate_profile;
 
-    println!("Testing profile {}", name);
+    println!("Profile test");
+    detail_kv("Name", name);
 
     let validation = validate_profile(config, name);
 
@@ -419,7 +423,7 @@ pub fn test_profile(config: &GlobalConfig, name: &str) {
     );
 
     if !validation.errors.is_empty() {
-        println!("Errors");
+        println!("Validation errors");
         for err in &validation.errors {
             detail(err);
         }

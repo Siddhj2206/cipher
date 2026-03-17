@@ -5,7 +5,7 @@ use crate::glossary::{
     glossary_term_prompt_fingerprint, load_glossary, merge_terms, save_glossary,
     select_terms_for_text,
 };
-use crate::output::{detail, detail_kv, stderr_detail};
+use crate::output::{detail, detail_kv, stderr_detail, warn};
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryInjectionMode,
     GlossaryState, GlossaryStateTerm, RunMetadata, RunOptions, load_all_chapter_states,
@@ -83,7 +83,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Validate profile
     let validation = validate_profile(&global_config, profile_name);
     if !validation.is_valid() {
-        eprintln!("Profile validation failed:");
+        eprintln!("Profile validation failed");
         for error in &validation.errors {
             stderr_detail(error);
         }
@@ -101,7 +101,8 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Discover chapters
     let chapters = discover_chapters(&layout.paths.raw_dir)?;
     if chapters.is_empty() {
-        println!("No chapters found in raw/");
+        println!("No chapters found");
+        detail_kv("Directory", layout.paths.raw_dir.display());
         return Ok(());
     }
 
@@ -133,7 +134,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut previous_chapter_states = load_all_chapter_states(book_dir)?;
 
     let rerun_plan = if options.rerun_affected_glossary {
-        println!("Planning glossary-affected chapter reruns...");
+        println!("Planning glossary-affected chapter reruns");
         let plan = build_glossary_rerun_plan(
             &chapters,
             &layout.paths.raw_dir,
@@ -149,7 +150,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             detail_kv("Approximate smart checks", plan.approximate_smart_checks);
         }
         for warning in &plan.warnings {
-            detail(format!("Warning: {}", warning));
+            warn(warning);
         }
         plan
     } else {
@@ -234,10 +235,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Print summary
     println!();
     println!("Translation complete");
-    println!("- Translated: {}", translated);
-    println!("- Skipped: {}", skipped);
-    println!("- Failed: {}", failed);
-    println!("- New glossary terms: {}", new_glossary_terms);
+    detail_kv("Translated", translated);
+    detail_kv("Skipped", skipped);
+    detail_kv("Failed", failed);
+    detail_kv("New glossary terms", new_glossary_terms);
 
     if failed > 0 {
         anyhow::bail!("{} chapter(s) failed to translate", failed);
