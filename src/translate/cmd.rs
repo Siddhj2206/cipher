@@ -559,11 +559,6 @@ fn build_glossary_rerun_plan(
             "No glossary tracking state found; changed-term counts start after this run."
                 .to_string(),
         );
-        return Ok(plan);
-    }
-
-    if changed_term_keys.is_empty() {
-        return Ok(plan);
     }
 
     let mut approximate_smart_checks = 0;

@@ -647,8 +647,9 @@ Code quality improvements:
 - What is the minimum validation strictness that catches bad outputs without false positives?
 
 ## Todo
-- [ ] Update the chapter state feature to check for differences everytime, even if glossary state has not changed
+- [x] Update the chapter state feature to check for differences everytime, even if glossary state has not changed
 - [ ] Work on a better way to store api keys
 - [ ] Better "profile new" styling and layout
 - [ ] See if we can do smart checks chapter by chapter instead of wasting time doing it all at once in the beginning
 - [ ] See how we can evolve cipher to be more than just a novel transltor. so work towards documentation translation, etc
+- [ ] Retranslating chapters with new conten
