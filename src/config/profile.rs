@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
-use crate::output::{detail, detail_kv, stderr_detail};
+use crate::output::{detail, detail_kv, section, stderr_detail};
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
@@ -97,7 +97,7 @@ pub fn create_profile_interactive() -> Result<()> {
 
     config.save()?;
 
-    println!("Profile created");
+    section("Profile created");
     detail_kv("Name", &profile_name);
     detail(format!(
         "Use it with: cipher translate <bookDir> --profile {}",
@@ -336,14 +336,14 @@ fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> Resu
 
 pub fn list_profiles(config: &GlobalConfig) {
     if config.profiles.is_empty() {
-        println!("No profiles configured.");
+        section("No profiles configured");
         detail("Run: cipher profile new");
         return;
     }
 
-    println!("Profiles");
+    section("Profiles");
     for (name, profile) in &config.profiles {
-        println!("Profile {}", name);
+        println!("{}", name);
         if config.default_profile.as_deref() == Some(name) {
             detail("Default profile");
         }
@@ -357,7 +357,7 @@ pub fn show_profile(config: &GlobalConfig, name: &str) -> Result<()> {
         anyhow::bail!("Profile '{}' not found", name);
     };
 
-    println!("Profile {}", name);
+    section(format!("Profile {}", name));
     if config.default_profile.as_deref() == Some(name) {
         detail("Default profile");
     }
@@ -384,7 +384,7 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
     }
     config.default_profile = Some(name.to_string());
     config.save()?;
-    println!("Default profile updated");
+    section("Default profile updated");
     detail_kv("Profile", name);
     Ok(())
 }
@@ -392,7 +392,7 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
 pub fn test_profile(config: &GlobalConfig, name: &str) {
     use crate::config::validate_profile;
 
-    println!("Profile test");
+    section("Profile test");
     detail_kv("Name", name);
 
     let validation = validate_profile(config, name);
@@ -423,7 +423,7 @@ pub fn test_profile(config: &GlobalConfig, name: &str) {
     );
 
     if !validation.errors.is_empty() {
-        println!("Validation errors");
+        section("Validation errors");
         for err in &validation.errors {
             detail(err);
         }
@@ -441,7 +441,7 @@ pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
 
     let config_path = GlobalConfig::config_path()?;
 
-    println!("Global configuration");
+    section("Global configuration");
     detail_kv("Config path", config_path.display());
     detail_kv(
         "Config exists",
@@ -456,7 +456,7 @@ pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
         }
 
         if !config.profiles.is_empty() {
-            println!("Profile validation");
+            section("Profile validation");
             for name in config.profiles.keys() {
                 let validation = validate_profile(config, name);
                 detail_kv(

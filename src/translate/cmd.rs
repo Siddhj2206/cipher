@@ -5,7 +5,7 @@ use crate::glossary::{
     glossary_term_prompt_fingerprint, load_glossary, merge_terms, save_glossary,
     select_terms_for_text,
 };
-use crate::output::{detail, detail_kv, stderr_detail, warn};
+use crate::output::{detail, detail_kv, section, stderr_detail, warn};
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryInjectionMode,
     GlossaryState, GlossaryStateTerm, RunMetadata, RunOptions, load_all_chapter_states,
@@ -114,7 +114,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Discover chapters
     let chapters = discover_chapters(&layout.paths.raw_dir)?;
     if chapters.is_empty() {
-        println!("No chapters found");
+        section("No chapters found");
         detail_kv("Directory", layout.paths.raw_dir.display());
         return Ok(());
     }
@@ -136,7 +136,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         None
     };
 
-    println!("Using profile {}", profile_name);
+    section(format!("Using profile {}", profile_name));
     detail_kv("Provider", &profile.provider);
     detail_kv("Model", &profile.model);
     if style_guide.is_some() {
@@ -148,7 +148,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut previous_chapter_states = load_all_chapter_states(book_dir)?;
 
     let rerun_plan = if options.rerun_affected_glossary {
-        println!("Planning glossary-affected chapter reruns");
+        section("Planning glossary-affected chapter reruns");
         let plan = build_glossary_rerun_plan(
             &chapters,
             &layout.paths.raw_dir,
@@ -171,8 +171,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         GlossaryRerunPlan::default()
     };
 
-    println!();
-    println!("Translating chapters");
+    section("Translating chapters");
     detail_kv("Chapters found", chapters.len());
 
     // Create run state with options
@@ -262,8 +261,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     save_run_metadata(book_dir, &run_metadata)?;
 
     // Print summary
-    println!();
-    println!("Translation complete");
+    section("Translation complete");
     detail_kv("Translated", translated);
     detail_kv("Skipped", skipped);
     detail_kv("Failed", failed);
