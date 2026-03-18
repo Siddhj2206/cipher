@@ -59,6 +59,8 @@ pub struct ChapterState {
     pub last_attempted: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glossary_usage: Option<ChapterGlossaryUsage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exported_terms: Vec<ChapterGlossaryTerm>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -153,6 +155,7 @@ impl ChapterState {
         error: Option<String>,
         translation_time_ms: Option<u64>,
         glossary_usage: Option<ChapterGlossaryUsage>,
+        exported_terms: Vec<ChapterGlossaryTerm>,
     ) -> Self {
         Self {
             chapter_path,
@@ -161,6 +164,7 @@ impl ChapterState {
             translation_time_ms,
             last_attempted: Some(now_rfc3339()),
             glossary_usage,
+            exported_terms,
         }
     }
 }
@@ -355,6 +359,7 @@ mod tests {
             None,
             Some(1234),
             Some(sample_glossary_usage()),
+            vec![],
         )
     }
 

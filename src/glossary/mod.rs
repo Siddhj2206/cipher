@@ -236,26 +236,30 @@ fn extract_candidates(text: &str) -> Vec<String> {
 pub fn merge_terms(
     existing: Vec<GlossaryTerm>,
     incoming: Vec<GlossaryTerm>,
-) -> (Vec<GlossaryTerm>, usize, usize) {
+) -> (Vec<GlossaryTerm>, usize, usize, Vec<GlossaryTerm>) {
     let mut result = existing;
     let existing_keys: std::collections::HashSet<_> =
         result.iter().map(glossary_term_key).collect();
 
     let mut added = 0;
     let mut skipped = 0;
+    let mut added_terms = Vec::new();
+    let mut seen_keys = existing_keys;
 
     for term in incoming {
         let key = glossary_term_key(&term);
-        if existing_keys.contains(&key) {
+        if seen_keys.contains(&key) {
             skipped += 1;
         } else {
-            result.push(term);
+            seen_keys.insert(key);
+            result.push(term.clone());
+            added_terms.push(term);
             added += 1;
         }
     }
 
     dedupe_terms(&mut result);
-    (result, added, skipped)
+    (result, added, skipped, added_terms)
 }
 
 #[cfg(test)]
@@ -346,7 +350,7 @@ mod tests {
         let existing = vec![term("Apple", Some("苹果"), "A fruit")];
         let incoming = vec![term("Banana", Some("香蕉"), "Yellow fruit")];
 
-        let (merged, added, skipped) = merge_terms(existing, incoming);
+        let (merged, added, skipped, _) = merge_terms(existing, incoming);
         assert_eq!(added, 1);
         assert_eq!(skipped, 0);
         assert_eq!(merged.len(), 2);
@@ -357,7 +361,7 @@ mod tests {
         let existing = vec![term("Apple", Some("苹果"), "A fruit")];
         let incoming = vec![term("Apple", Some("苹果"), "Same fruit")];
 
-        let (merged, added, skipped) = merge_terms(existing, incoming);
+        let (merged, added, skipped, _) = merge_terms(existing, incoming);
         assert_eq!(added, 0);
         assert_eq!(skipped, 1);
         assert_eq!(merged.len(), 1);
@@ -375,7 +379,7 @@ mod tests {
             term("Date", Some("枣"), "Also new"),
         ];
 
-        let (merged, added, skipped) = merge_terms(existing, incoming);
+        let (merged, added, skipped, _) = merge_terms(existing, incoming);
         assert_eq!(added, 2);
         assert_eq!(skipped, 1);
         assert_eq!(merged.len(), 4);
@@ -384,10 +388,43 @@ mod tests {
     #[test]
     fn test_merge_terms_empty_incoming() {
         let existing = vec![term("Apple", Some("苹果"), "A fruit")];
-        let (merged, added, skipped) = merge_terms(existing, vec![]);
+        let (merged, added, skipped, _) = merge_terms(existing, vec![]);
         assert_eq!(added, 0);
         assert_eq!(skipped, 0);
         assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn test_merge_terms_returns_added_terms() {
+        let existing = vec![term("Apple", Some("苹果"), "A fruit")];
+        let incoming = vec![
+            term("Apple", Some("苹果"), "Dup"),
+            term("Banana", Some("香蕉"), "Yellow fruit"),
+        ];
+
+        let (_, added, skipped, added_terms) = merge_terms(existing, incoming);
+        assert_eq!(added, 1);
+        assert_eq!(skipped, 1);
+        assert_eq!(added_terms.len(), 1);
+        assert_eq!(added_terms[0].term, "Banana");
+    }
+
+    #[test]
+    fn test_merge_terms_skips_duplicate_entries_within_incoming_batch() {
+        let existing = vec![term("Apple", Some("苹果"), "A fruit")];
+        let incoming = vec![
+            term("Banana", Some("香蕉"), "Yellow fruit"),
+            term("Banana", Some("香蕉"), "Yellow fruit duplicate"),
+            term("Cherry", Some("樱桃"), "Red fruit"),
+        ];
+
+        let (merged, added, skipped, added_terms) = merge_terms(existing, incoming);
+        assert_eq!(added, 2);
+        assert_eq!(skipped, 1);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(added_terms.len(), 2);
+        assert_eq!(added_terms[0].term, "Banana");
+        assert_eq!(added_terms[1].term, "Cherry");
     }
 
     #[test]

@@ -46,7 +46,7 @@ pub fn import_glossary(book_dir: &Path, import_path: &Path) -> Result<()> {
     }
 
     let existing = load_glossary(&layout.paths.glossary_json)?;
-    let (merged, added, skipped) = merge_terms(existing, incoming);
+    let (merged, added, skipped, _) = merge_terms(existing, incoming);
 
     println!("Glossary import complete");
     if added > 0 {

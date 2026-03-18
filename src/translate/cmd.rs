@@ -307,6 +307,9 @@ async fn translate_single_chapter(
                 None,
                 None,
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+                previous_chapter_state
+                    .map(|s| s.exported_terms.clone())
+                    .unwrap_or_default(),
             ),
         });
     }
@@ -334,6 +337,9 @@ async fn translate_single_chapter(
                 Some("Empty file".to_string()),
                 None,
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+                previous_chapter_state
+                    .map(|s| s.exported_terms.clone())
+                    .unwrap_or_default(),
             ),
         });
     }
@@ -361,7 +367,7 @@ async fn translate_single_chapter(
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
         // Merge glossary terms
-        let new_terms_added =
+        let (new_terms_added, exported_terms) =
             merge_new_glossary_terms(glossary, resp.new_glossary_terms, glossary_path)?;
 
         detail_kv("Result", "translated");
@@ -379,6 +385,7 @@ async fn translate_single_chapter(
                     &selection,
                     chapter_injection_mode,
                 )),
+                exported_terms,
             ),
         });
     }
@@ -399,6 +406,9 @@ async fn translate_single_chapter(
             Some(error_msg),
             Some(duration.as_millis() as u64),
             previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+            previous_chapter_state
+                .map(|s| s.exported_terms.clone())
+                .unwrap_or_default(),
         ),
     })
 }
@@ -575,6 +585,7 @@ fn build_glossary_rerun_plan(
             if let Some(usage) = &previous_chapter_state.glossary_usage {
                 if let Some(decision) = exact_rerun_decision(
                     usage,
+                    &previous_chapter_state.exported_terms,
                     &changed_term_keys,
                     &current_fingerprints,
                     injection_mode,
@@ -657,6 +668,7 @@ fn changed_prompt_relevant_keys(
 
 fn exact_rerun_decision(
     usage: &ChapterGlossaryUsage,
+    exported_terms: &[ChapterGlossaryTerm],
     changed_term_keys: &BTreeSet<String>,
     current_fingerprints: &BTreeMap<String, String>,
     injection_mode: InjectionMode,
@@ -670,10 +682,13 @@ fn exact_rerun_decision(
             })
         }
         InjectionMode::Smart => {
+            // Merge imported and exported terms into a single list
+            let all_terms: Vec<&ChapterGlossaryTerm> =
+                usage.terms.iter().chain(exported_terms.iter()).collect();
+
             // For smart mode, check if any of the terms that would be selected now
             // differ from what was stored historically
-            let changed_keys: Vec<String> = usage
-                .terms
+            let changed_keys: Vec<String> = all_terms
                 .iter()
                 .filter_map(|term| match current_fingerprints.get(&term.key) {
                     Some(fingerprint) if fingerprint == &term.fingerprint => None,
@@ -943,13 +958,21 @@ fn merge_new_glossary_terms(
     glossary: &mut Vec<GlossaryTerm>,
     new_terms: Vec<GlossaryTerm>,
     glossary_path: &Path,
-) -> Result<usize> {
+) -> Result<(usize, Vec<ChapterGlossaryTerm>)> {
     if new_terms.is_empty() {
-        return Ok(0);
+        return Ok((0, Vec::new()));
     }
 
-    let (merged, added, dupes) = merge_terms(std::mem::take(glossary), new_terms);
+    let (merged, added, dupes, added_terms) = merge_terms(std::mem::take(glossary), new_terms);
     *glossary = merged;
+
+    let added_term_fingerprints: Vec<ChapterGlossaryTerm> = added_terms
+        .iter()
+        .map(|term| ChapterGlossaryTerm {
+            key: glossary_term_key(term),
+            fingerprint: glossary_term_prompt_fingerprint(term),
+        })
+        .collect();
 
     if added > 0 {
         if dupes > 0 {
@@ -976,7 +999,7 @@ fn merge_new_glossary_terms(
         ));
     }
 
-    Ok(added)
+    Ok((added, added_term_fingerprints))
 }
 
 fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
@@ -1239,6 +1262,7 @@ mod tests {
             None,
             None,
             None,
+            vec![],
         );
         let mut run_metadata = RunMetadata::new(
             "default".to_string(),
@@ -1369,6 +1393,7 @@ mod tests {
                     &selection,
                     InjectionMode::Smart,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1507,6 +1532,7 @@ mod tests {
                     &selection,
                     InjectionMode::Full,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1556,6 +1582,7 @@ mod tests {
                     &selection,
                     InjectionMode::Smart,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1709,6 +1736,7 @@ mod tests {
                     &selection,
                     InjectionMode::Smart,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1726,5 +1754,60 @@ mod tests {
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Smart);
         assert!(decision.reason.contains("matched changed glossary term"));
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_detects_changed_exported_term() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        std::fs::write(&chapter, "hero appears here").unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let old_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
+        let new_glossary = vec![glossary_term("Hero", Some("hero"), "New definition")];
+        let selection =
+            select_terms_for_text(&old_glossary, "hero appears here", InjectionMode::Smart);
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+        let exported_terms = vec![ChapterGlossaryTerm {
+            key: "hero".to_string(),
+            fingerprint: glossary_term_prompt_fingerprint(&glossary_term(
+                "Hero",
+                Some("hero"),
+                "Old definition",
+            )),
+        }];
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart)),
+                exported_terms,
+            ),
+        )]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        assert_eq!(plan.changed_term_count, 1);
+        let decision = plan.forced_chapters.get("chapter1.md").unwrap();
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        assert!(decision.reason.contains("matched changed glossary term"));
+        assert!(decision.reason.contains("hero"));
     }
 }
