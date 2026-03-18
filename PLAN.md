@@ -1,6 +1,6 @@
 # cipher
 
-This document describes how the rebuilt tool (renamed from `btranslate` to `cipher`) should work for end users, how books are initialized and managed, and how config/providers/keys/glossary are handled. The later "Engineering implementation plan" section is allowed to be implementation-specific.
+This document describes how the should work for end users, how books are initialized and managed, and how config/providers/keys/glossary are handled. The later "Engineering implementation plan" section is allowed to be implementation-specific.
 
 ## Goals
 
@@ -645,3 +645,11 @@ Code quality improvements:
 
 - Where should the smart-glossary matcher/index live (per run cache vs persisted under `.cipher/`), and when should it rebuild (on glossary file change vs always)?
 - What is the minimum validation strictness that catches bad outputs without false positives?
+
+## Todo
+- [x] Update the chapter state feature to check for differences everytime, even if glossary state has not changed
+- [ ] Work on a better way to store api keys
+- [ ] Better "profile new" styling and layout
+- [ ] See if we can do smart checks chapter by chapter instead of wasting time doing it all at once in the beginning
+- [ ] See how we can evolve cipher to be more than just a novel transltor. so work towards documentation translation, etc
+- [ ] Retranslating chapters with new conten

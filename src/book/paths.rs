@@ -41,6 +41,33 @@ impl BookPaths {
     pub fn is_using_legacy_out(&self) -> bool {
         !self.out_dir.exists() && self.legacy_out_dir.exists()
     }
+
+    pub fn run_json(&self) -> PathBuf {
+        self.state_dir.join("run.json")
+    }
+
+    pub fn glossary_state_json(&self) -> PathBuf {
+        self.state_dir.join("glossary_state.json")
+    }
+
+    pub fn chapters_dir(&self) -> PathBuf {
+        self.state_dir.join("chapters")
+    }
+
+    pub fn chapter_state_json(&self, chapter_path: &Path) -> PathBuf {
+        let mut path = self.chapters_dir();
+
+        if let Some(parent) = chapter_path.parent() {
+            path = path.join(parent);
+        }
+
+        let filename = chapter_path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "chapter".to_string());
+
+        path.join(format!("{}.json", filename))
+    }
 }
 
 #[derive(Debug, Clone)]

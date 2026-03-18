@@ -198,10 +198,12 @@ mod tests {
 
         let result = validate_translation("# Chapter 1\n\n\"new_glossary_terms\": []");
         assert!(!result.is_valid());
-        assert!(result
-            .errors()
-            .iter()
-            .any(|e| e.contains("Response schema leaked")));
+        assert!(
+            result
+                .errors()
+                .iter()
+                .any(|e| e.contains("Response schema leaked"))
+        );
 
         let result = validate_translation("# Prologue\n\nNormal text without JSON.");
         assert!(result.is_valid());

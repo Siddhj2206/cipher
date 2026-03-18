@@ -1,7 +1,8 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
+use crate::output::{detail, detail_kv, section, stderr_detail};
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
@@ -23,9 +24,9 @@ fn prompt_provider_name() -> anyhow::Result<String> {
             .interact_text()
             .context("Failed to get provider name")?;
         if name.trim().is_empty() {
-            eprintln!("Provider name cannot be empty. Please try again.");
+            stderr_detail("Provider name cannot be empty. Please try again.");
         } else if name.contains(' ') {
-            eprintln!("Provider name cannot contain spaces. Please try again.");
+            stderr_detail("Provider name cannot contain spaces. Please try again.");
         } else {
             return Ok(name.trim().to_string());
         }
@@ -63,7 +64,9 @@ fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Op
             .iter()
             .any(|k| k.name.as_deref() == Some(label.as_str()))
         {
-            eprintln!("That key label is already used for this provider. Please choose another.");
+            stderr_detail(
+                "That key label is already used for this provider. Please choose another.",
+            );
             continue;
         }
 
@@ -71,15 +74,19 @@ fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Op
     }
 }
 
-pub fn create_profile_interactive() -> anyhow::Result<()> {
+pub fn create_profile_interactive() -> Result<()> {
     let mut config = GlobalConfig::load()?;
 
+    section("Profile configuration");
     let profile_name = prompt_profile_name(&config)?;
 
-    let provider_name = select_or_create_provider(&mut config)?;
+    section("Provider");
+    let provider_name = select_or_create_provider_sectioned(&mut config)?;
 
-    let selected_key_label = select_or_create_api_key(&mut config, &provider_name)?;
+    section("API key");
+    let selected_key_label = select_or_create_api_key_sectioned(&mut config, &provider_name)?;
 
+    section("Model");
     let model = prompt_model()?;
 
     let profile = ProfileConfig {
@@ -90,24 +97,27 @@ pub fn create_profile_interactive() -> anyhow::Result<()> {
 
     config.profiles.insert(profile_name.clone(), profile);
 
-    prompt_default_profile(&mut config, &profile_name)?;
+    println!();
+    let is_default = prompt_default_profile(&mut config, &profile_name)?;
 
     config.save()?;
 
-    println!("Profile '{}' created successfully.", profile_name);
-    println!("\nYou can now use it with:");
-    println!("  cipher translate <bookDir> --profile {}", profile_name);
+    section("Profile created");
+    detail_kv("Name", &profile_name);
+    if is_default {
+        detail("Default profile");
+    }
+    detail(format!(
+        "Use it with: cipher translate <bookDir> --profile {}",
+        profile_name
+    ));
 
     Ok(())
 }
 
 fn prompt_profile_name(config: &GlobalConfig) -> anyhow::Result<String> {
-    let has_profiles = !config.profiles.is_empty();
-    let default_name = if has_profiles { "" } else { "default" };
-
     let profile_name: String = Input::new()
         .with_prompt("Profile name")
-        .default(default_name.to_string())
         .interact_text()
         .context("Failed to get profile name")?;
 
@@ -132,7 +142,7 @@ fn prompt_profile_name(config: &GlobalConfig) -> anyhow::Result<String> {
     Ok(profile_name)
 }
 
-fn select_or_create_provider(config: &mut GlobalConfig) -> anyhow::Result<String> {
+fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Result<String> {
     let mut existing_provider_names: Vec<String> = config.providers.keys().cloned().collect();
     existing_provider_names.sort();
 
@@ -146,8 +156,7 @@ fn select_or_create_provider(config: &mut GlobalConfig) -> anyhow::Result<String
         })
         .collect();
     let existing_count = provider_options.len();
-    provider_options.push("Create new: OpenAI".to_string());
-    provider_options.push("Create new: OpenAI-compatible".to_string());
+    provider_options.push("→ Create new provider".to_string());
 
     let selection = Select::new()
         .with_prompt("Select provider")
@@ -159,7 +168,15 @@ fn select_or_create_provider(config: &mut GlobalConfig) -> anyhow::Result<String
         return Ok(existing_provider_names[selection].clone());
     }
 
-    match selection - existing_count {
+    // Create new provider submenu
+    let creation_options = vec!["OpenAI (built-in)", "OpenAI-compatible (custom)"];
+    let creation_selection = Select::new()
+        .with_prompt("Provider type")
+        .items(&creation_options)
+        .interact()
+        .context("Failed to select provider type")?;
+
+    match creation_selection {
         0 => {
             let name = "openai".to_string();
             config
@@ -210,72 +227,69 @@ fn select_or_create_provider(config: &mut GlobalConfig) -> anyhow::Result<String
     }
 }
 
-fn select_or_create_api_key(
+fn select_or_create_api_key_sectioned(
     config: &mut GlobalConfig,
     provider_name: &str,
 ) -> anyhow::Result<Option<String>> {
     let provider_keys = config.keys.entry(provider_name.to_string()).or_default();
 
-    if !provider_keys.is_empty() {
-        let key_mode_options = vec!["Use existing API key", "Add new API key"];
-        let key_mode = Select::new()
-            .with_prompt("API key")
-            .items(&key_mode_options)
-            .interact()
-            .context("Failed to select API key mode")?;
-
-        match key_mode {
-            0 => select_existing_key(provider_keys),
-            1 => add_new_api_key(provider_keys),
-            _ => unreachable!(),
-        }
-    } else {
-        add_new_api_key(provider_keys)
+    if provider_keys.is_empty() {
+        // No existing keys, go straight to adding new
+        return add_new_api_key(provider_keys);
     }
-}
 
-fn select_existing_key(provider_keys: &mut [ApiKey]) -> anyhow::Result<Option<String>> {
-    let key_items: Vec<String> = provider_keys
+    // Build list of existing keys
+    let mut key_items: Vec<String> = provider_keys
         .iter()
         .enumerate()
         .map(|(idx, k)| {
             k.name
                 .clone()
-                .unwrap_or_else(|| format!("(unnamed) #{}", idx + 1))
+                .unwrap_or_else(|| format!("(unnamed) # {}", idx + 1))
         })
         .collect();
-    let key_idx = Select::new()
-        .with_prompt("Select existing key")
+    key_items.push("→ Add new API key".to_string());
+
+    let selection = Select::new()
+        .with_prompt("Select API key")
         .items(&key_items)
         .interact()
-        .context("Failed to select key")?;
+        .context("Failed to select API key")?;
 
-    if provider_keys[key_idx].name.is_none() {
-        let label = loop {
-            let label: String = Input::new()
-                .with_prompt("Assign a label to this key")
-                .interact_text()
-                .context("Failed to get key label")?;
-            let label = label.trim().to_string();
-            if label.is_empty() {
-                eprintln!("Key label cannot be empty. Please try again.");
-                continue;
-            }
-            if provider_keys
-                .iter()
-                .any(|k| k.name.as_deref() == Some(label.as_str()))
-            {
-                eprintln!(
-                    "That key label is already used for this provider. Please choose another."
-                );
-                continue;
-            }
-            break label;
-        };
-        provider_keys[key_idx].name = Some(label.clone());
-        Ok(Some(label))
+    if selection < provider_keys.len() {
+        // Existing key selected
+        let key = &provider_keys[selection];
+        if key.name.is_none() {
+            // Unnamed key - prompt for label
+            let label = loop {
+                let label: String = Input::new()
+                    .with_prompt("Assign a label to this key")
+                    .interact_text()
+                    .context("Failed to get key label")?;
+                let label = label.trim().to_string();
+                if label.is_empty() {
+                    stderr_detail("Key label cannot be empty. Please try again.");
+                    continue;
+                }
+                if provider_keys
+                    .iter()
+                    .any(|k| k.name.as_deref() == Some(label.as_str()))
+                {
+                    stderr_detail(
+                        "That key label is already used for this provider. Please choose another.",
+                    );
+                    continue;
+                }
+                break label;
+            };
+            provider_keys[selection].name = Some(label.clone());
+            Ok(Some(label))
+        } else {
+            Ok(key.name.clone())
+        }
     } else {
-        Ok(provider_keys[key_idx].name.clone())
+        // Add new key
+        add_new_api_key(provider_keys)
     }
 }
 
@@ -289,7 +303,7 @@ fn add_new_api_key(provider_keys: &mut Vec<ApiKey>) -> anyhow::Result<Option<Str
         .or_else(|| Some(generate_unique_key_label(provider_keys)));
 
     if label.is_some() {
-        println!("Assigned key label: {}", label.as_deref().unwrap_or(""));
+        detail_kv("Assigned key label", label.as_deref().unwrap_or(""));
     }
 
     provider_keys.push(ApiKey {
@@ -303,17 +317,22 @@ fn add_new_api_key(provider_keys: &mut Vec<ApiKey>) -> anyhow::Result<Option<Str
 fn prompt_model() -> anyhow::Result<String> {
     let model: String = Input::new()
         .with_prompt("Model name")
-        .default("gpt-4o-mini".to_string())
+        .allow_empty(true)
         .interact_text()
         .context("Failed to get model name")?;
 
-    Ok(model)
+    let model = model.trim();
+    if model.is_empty() {
+        Ok("gpt-4o-mini".to_string())
+    } else {
+        Ok(model.to_string())
+    }
 }
 
-fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> anyhow::Result<()> {
+fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> Result<bool> {
     if config.default_profile.is_none() {
         config.default_profile = Some(profile_name.to_string());
-        println!("Set '{}' as the default profile.", profile_name);
+        Ok(true)
     } else {
         let set_default = Confirm::new()
             .with_prompt("Set as default profile?")
@@ -322,54 +341,55 @@ fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> anyh
             .context("Failed to get default preference")?;
         if set_default {
             config.default_profile = Some(profile_name.to_string());
-            println!("Set '{}' as the default profile.", profile_name);
+            Ok(true)
+        } else {
+            Ok(false)
         }
     }
-    Ok(())
 }
 
 pub fn list_profiles(config: &GlobalConfig) {
     if config.profiles.is_empty() {
-        println!("No profiles configured.");
-        println!("Run 'cipher profile new' to create one.");
+        section("No profiles configured");
+        detail("Run: cipher profile new");
         return;
     }
 
-    println!("Configured profiles:\n");
+    section("Profiles");
     for (name, profile) in &config.profiles {
-        let is_default = config.default_profile.as_deref() == Some(name);
-        let marker = if is_default { " (default)" } else { "" };
-        println!("{}{}", name, marker);
-        println!("  Provider: {}", profile.provider);
-        println!("  Model: {}", profile.model);
-        println!();
+        println!("{}", name);
+        if config.default_profile.as_deref() == Some(name) {
+            detail("Default profile");
+        }
+        detail_kv("Provider", &profile.provider);
+        detail_kv("Model", &profile.model);
     }
 }
 
-pub fn show_profile(config: &GlobalConfig, name: &str) {
+pub fn show_profile(config: &GlobalConfig, name: &str) -> Result<()> {
     let Some(profile) = config.resolve_profile(name) else {
-        eprintln!("Error: Profile '{}' not found", name);
-        return;
+        anyhow::bail!("Profile '{}' not found", name);
     };
 
-    let is_default = config.default_profile.as_deref() == Some(name);
-    println!("Profile: {}", name);
-    if is_default {
-        println!("  [default profile]");
+    section(format!("Profile {}", name));
+    if config.default_profile.as_deref() == Some(name) {
+        detail("Default profile");
     }
-    println!("  Provider: {}", profile.provider);
-    println!("  Model: {}", profile.model);
+    detail_kv("Provider", &profile.provider);
+    detail_kv("Model", &profile.model);
 
     if let Some(provider) = config.resolve_provider(&profile.provider) {
-        println!("  Kind: {}", provider.kind);
+        detail_kv("Provider kind", &provider.kind);
         if let Some(url) = &provider.base_url {
-            println!("  Base URL: {}", url);
+            detail_kv("Base URL", url);
         }
     }
 
     if let Some(key) = &profile.key {
-        println!("  Key label: {}", key);
+        detail_kv("Key label", key);
     }
+
+    Ok(())
 }
 
 pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Result<()> {
@@ -378,83 +398,92 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
     }
     config.default_profile = Some(name.to_string());
     config.save()?;
-    println!("Set '{}' as the default profile.", name);
+    section("Default profile updated");
+    detail_kv("Profile", name);
     Ok(())
 }
 
 pub fn test_profile(config: &GlobalConfig, name: &str) {
     use crate::config::validate_profile;
 
-    println!("Testing profile '{}'...\n", name);
+    section("Profile test");
+    detail_kv("Name", name);
 
     let validation = validate_profile(config, name);
 
-    if validation.profile_exists {
-        println!("✓ Profile exists");
-    } else {
-        println!("✗ Profile not found");
-    }
-
-    if validation.provider_exists {
-        println!("✓ Provider configured");
-    } else {
-        println!("✗ Provider not found or not configured");
-    }
-
-    if validation.has_key {
-        println!("✓ API key configured");
-    } else {
-        println!("✗ No API key configured for provider");
-    }
+    detail_kv(
+        "Profile",
+        if validation.profile_exists {
+            "found"
+        } else {
+            "missing"
+        },
+    );
+    detail_kv(
+        "Provider",
+        if validation.provider_exists {
+            "configured"
+        } else {
+            "missing"
+        },
+    );
+    detail_kv(
+        "API key",
+        if validation.has_key {
+            "configured"
+        } else {
+            "missing"
+        },
+    );
 
     if !validation.errors.is_empty() {
-        println!("\nErrors:");
+        section("Validation errors");
         for err in &validation.errors {
-            println!("  - {}", err);
+            detail(err);
         }
     }
 
     if validation.is_valid() {
-        println!("\n✓ Profile configuration is valid");
+        detail("Profile configuration is valid");
     } else {
-        println!("\n✗ Profile configuration has errors");
+        detail("Profile configuration has errors");
     }
 }
 
-pub fn run_global_doctor(config: &GlobalConfig) {
+pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
     use crate::config::validate_profile;
 
-    let config_path = match GlobalConfig::config_path() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("Error determining config path: {}", e);
-            return;
-        }
-    };
+    let config_path = GlobalConfig::config_path()?;
 
-    println!("Global configuration:");
-    println!("  Config path: {}", config_path.display());
-    println!(
-        "  Config exists: {}",
-        if config_path.exists() { "yes" } else { "no" }
+    section("Global configuration");
+    detail_kv("Config path", config_path.display());
+    detail_kv(
+        "Config exists",
+        if config_path.exists() { "yes" } else { "no" },
     );
-    println!();
 
     if config_path.exists() {
-        println!("  Providers: {}", config.providers.len());
-        println!("  Profiles: {}", config.profiles.len());
+        detail_kv("Providers", config.providers.len());
+        detail_kv("Profiles", config.profiles.len());
         if let Some(default) = &config.default_profile {
-            println!("  Default profile: {}", default);
+            detail_kv("Default profile", default);
         }
-        println!();
 
         if !config.profiles.is_empty() {
-            println!("  Profile validation:");
+            section("Profile validation");
             for name in config.profiles.keys() {
                 let validation = validate_profile(config, name);
-                let status = if validation.is_valid() { "✓" } else { "✗" };
-                println!("    {} {}", status, name);
+                detail_kv(
+                    name,
+                    if validation.is_valid() {
+                        "valid"
+                    } else {
+                        "has errors"
+                    },
+                );
             }
         }
     }
+
+    Ok(())
 }

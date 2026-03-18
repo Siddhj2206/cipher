@@ -1,11 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use epub::doc::EpubDoc;
 use htmd::HtmlToMarkdown;
 
-use crate::book::{init_book, BookLayout};
+use crate::book::{BookLayout, init_book};
+use crate::output::{detail, stderr_warn};
 
 pub struct ImportReport {
     pub book_dir: std::path::PathBuf,
@@ -41,14 +42,15 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
         }
 
         if force && existing_chapters > 0 {
-            println!(
-                "Warning: Re-importing will delete {} existing raw chapters",
+            println!("Re-import confirmation");
+            detail(format!(
+                "This will delete {} existing raw chapters.",
                 existing_chapters
-            );
-            println!(
-                "Translations in {}/ may become orphaned if chapter order changed",
+            ));
+            detail(format!(
+                "Translations in {} may become orphaned if chapter order changed.",
                 layout.paths.out_dir.display()
-            );
+            ));
 
             let confirmed = dialoguer::Confirm::new()
                 .with_prompt("Continue?")
@@ -92,10 +94,10 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
         let html = match std::str::from_utf8(&content) {
             Ok(s) => s.to_string(),
             Err(_) => {
-                eprintln!(
-                    "- Warning: Chapter {} contains invalid UTF-8 sequences (some characters may be corrupted)",
+                stderr_warn(format!(
+                    "Chapter {} contains invalid UTF-8 sequences; some characters may be corrupted.",
                     idx + 1
-                );
+                ));
                 String::from_utf8_lossy(&content).into_owned()
             }
         };
@@ -119,14 +121,6 @@ pub fn import_epub(epub_path: &Path, force: bool) -> Result<ImportReport> {
         fs::write(&chapter_path, markdown.trim())
             .with_context(|| format!("Failed to write {}", chapter_path.display()))?;
     }
-
-    println!(
-        "Imported {} of {} chapters from {}",
-        chapter_count,
-        num_chapters,
-        epub_path.display()
-    );
-    println!("Book initialized at: {}", book_dir.display());
 
     Ok(ImportReport {
         book_dir,

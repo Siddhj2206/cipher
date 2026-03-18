@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::config::GlobalConfig;
 use crate::ProfileCommands;
+use crate::config::GlobalConfig;
 
 pub fn run_profile_command(config: &mut GlobalConfig, command: ProfileCommands) -> Result<()> {
     match command {
@@ -12,7 +12,7 @@ pub fn run_profile_command(config: &mut GlobalConfig, command: ProfileCommands) 
             super::profile::list_profiles(config);
         }
         ProfileCommands::Show { name } => {
-            super::profile::show_profile(config, &name);
+            super::profile::show_profile(config, &name)?;
         }
         ProfileCommands::SetDefault { name } => {
             super::profile::set_default_profile(config, &name)?;

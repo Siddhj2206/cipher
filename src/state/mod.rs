@@ -1,21 +1,26 @@
 pub mod status;
 
-use anyhow::Result;
+use crate::book::paths::BookPaths;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+const RUN_METADATA_VERSION: u32 = 1;
+const GLOSSARY_STATE_VERSION: u32 = 1;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RunState {
+pub struct RunMetadata {
     pub version: u32,
     pub started_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
+    pub updated_at: String,
     pub profile: String,
     pub provider: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub options: Option<RunOptions>,
-    pub chapters: BTreeMap<String, ChapterState>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -25,7 +30,26 @@ pub struct RunOptions {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GlossaryState {
+    pub version: u32,
+    pub updated_at: String,
+    pub injection_mode: GlossaryInjectionMode,
+    #[serde(default)]
+    pub terms: BTreeMap<String, GlossaryStateTerm>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct GlossaryStateTerm {
+    pub term: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub og_term: Option<String>,
+    pub definition: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChapterState {
+    pub chapter_path: String,
     pub status: ChapterStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -33,6 +57,29 @@ pub struct ChapterState {
     pub translation_time_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempted: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glossary_usage: Option<ChapterGlossaryUsage>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChapterGlossaryUsage {
+    pub injection_mode: GlossaryInjectionMode,
+    pub used_fallback_to_full: bool,
+    #[serde(default)]
+    pub terms: Vec<ChapterGlossaryTerm>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ChapterGlossaryTerm {
+    pub key: String,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GlossaryInjectionMode {
+    Full,
+    Smart,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -44,121 +91,6 @@ pub enum ChapterStatus {
     Skipped,
 }
 
-impl RunState {
-    pub fn new(
-        profile: String,
-        provider: String,
-        model: String,
-        options: Option<RunOptions>,
-    ) -> Self {
-        Self {
-            version: 1,
-            started_at: chrono::Local::now().to_rfc3339(),
-            finished_at: None,
-            profile,
-            provider,
-            model,
-            options,
-            chapters: BTreeMap::new(),
-        }
-    }
-
-    pub fn state_path(book_dir: &Path) -> PathBuf {
-        book_dir.join(".cipher").join("run_state.json")
-    }
-
-    pub fn load(book_dir: &Path) -> Result<Option<Self>> {
-        let path = Self::state_path(book_dir);
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = std::fs::read_to_string(&path)?;
-        let state: RunState = serde_json::from_str(&content)?;
-        Ok(Some(state))
-    }
-
-    pub fn save(&self, book_dir: &Path) -> Result<()> {
-        let path = Self::state_path(book_dir);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = serde_json::to_string_pretty(self)?;
-
-        // Atomic write: write to temp file then rename
-        let temp_path = path.with_extension("json.tmp");
-        std::fs::write(&temp_path, &content)?;
-        if let Err(e) = std::fs::rename(&temp_path, &path) {
-            let _ = std::fs::remove_file(&temp_path);
-            return Err(e.into());
-        }
-        Ok(())
-    }
-
-    pub fn set_chapter(
-        &mut self,
-        filename: &str,
-        status: ChapterStatus,
-        error: Option<String>,
-        duration_ms: Option<u64>,
-    ) {
-        let now = chrono::Local::now().to_rfc3339();
-        self.chapters.insert(
-            filename.to_string(),
-            ChapterState {
-                status,
-                error,
-                translation_time_ms: duration_ms,
-                last_attempted: Some(now),
-            },
-        );
-    }
-
-    /// Merge a previous run state, carrying forward chapters that weren't processed
-    pub fn merge_previous(&mut self, previous: Option<RunState>) {
-        if let Some(prev) = previous {
-            // Carry forward any chapters not in current run
-            for (filename, state) in prev.chapters {
-                self.chapters.entry(filename).or_insert(state);
-            }
-        }
-    }
-
-    pub fn mark_finished(&mut self) {
-        self.finished_at = Some(chrono::Local::now().to_rfc3339());
-    }
-
-    pub fn get_summary(&self) -> RunSummary {
-        let mut success = 0;
-        let mut failed = 0;
-        let mut skipped = 0;
-        let mut pending = 0;
-
-        for state in self.chapters.values() {
-            match state.status {
-                ChapterStatus::Success => success += 1,
-                ChapterStatus::Failed => failed += 1,
-                ChapterStatus::Skipped => skipped += 1,
-                ChapterStatus::Pending => pending += 1,
-            }
-        }
-
-        RunSummary {
-            total: self.chapters.len(),
-            success,
-            failed,
-            skipped,
-            pending,
-        }
-    }
-
-    pub fn get_failed_chapters(&self) -> Vec<(&String, &ChapterState)> {
-        self.chapters
-            .iter()
-            .filter(|(_, state)| state.status == ChapterStatus::Failed)
-            .collect()
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct RunSummary {
     pub total: usize,
@@ -168,39 +100,364 @@ pub struct RunSummary {
     pub pending: usize,
 }
 
+impl RunMetadata {
+    pub fn new(
+        profile: String,
+        provider: String,
+        model: String,
+        options: Option<RunOptions>,
+    ) -> Self {
+        let now = now_rfc3339();
+
+        Self {
+            version: RUN_METADATA_VERSION,
+            started_at: now.clone(),
+            finished_at: None,
+            updated_at: now,
+            profile,
+            provider,
+            model,
+            options,
+        }
+    }
+
+    pub fn touch(&mut self) {
+        self.updated_at = now_rfc3339();
+    }
+
+    pub fn mark_finished(&mut self) {
+        let now = now_rfc3339();
+        self.updated_at = now.clone();
+        self.finished_at = Some(now);
+    }
+}
+
+impl GlossaryState {
+    pub fn new(
+        injection_mode: GlossaryInjectionMode,
+        terms: BTreeMap<String, GlossaryStateTerm>,
+    ) -> Self {
+        Self {
+            version: GLOSSARY_STATE_VERSION,
+            updated_at: now_rfc3339(),
+            injection_mode,
+            terms,
+        }
+    }
+}
+
+impl ChapterState {
+    pub fn new(
+        chapter_path: String,
+        status: ChapterStatus,
+        error: Option<String>,
+        translation_time_ms: Option<u64>,
+        glossary_usage: Option<ChapterGlossaryUsage>,
+    ) -> Self {
+        Self {
+            chapter_path,
+            status,
+            error,
+            translation_time_ms,
+            last_attempted: Some(now_rfc3339()),
+            glossary_usage,
+        }
+    }
+}
+
+pub fn load_run_metadata(book_dir: &Path) -> Result<Option<RunMetadata>> {
+    let paths = BookPaths::resolve(book_dir);
+    load_json_if_exists(&paths.run_json())
+}
+
+pub fn save_run_metadata(book_dir: &Path, metadata: &RunMetadata) -> Result<()> {
+    let paths = BookPaths::resolve(book_dir);
+    save_json(&paths.run_json(), metadata)
+}
+
+pub fn load_glossary_state(book_dir: &Path) -> Result<Option<GlossaryState>> {
+    let paths = BookPaths::resolve(book_dir);
+    load_json_if_exists(&paths.glossary_state_json())
+}
+
+pub fn save_glossary_state(book_dir: &Path, glossary_state: &GlossaryState) -> Result<()> {
+    let paths = BookPaths::resolve(book_dir);
+    save_json(&paths.glossary_state_json(), glossary_state)
+}
+
+#[cfg(test)]
+pub fn load_chapter_state(book_dir: &Path, chapter_path: &str) -> Result<Option<ChapterState>> {
+    let paths = BookPaths::resolve(book_dir);
+    load_json_if_exists(&paths.chapter_state_json(Path::new(chapter_path)))
+}
+
+pub fn save_chapter_state(book_dir: &Path, chapter_state: &ChapterState) -> Result<()> {
+    let paths = BookPaths::resolve(book_dir);
+    save_json(
+        &paths.chapter_state_json(Path::new(&chapter_state.chapter_path)),
+        chapter_state,
+    )
+}
+
+pub fn load_all_chapter_states(book_dir: &Path) -> Result<BTreeMap<String, ChapterState>> {
+    let paths = BookPaths::resolve(book_dir);
+    let mut chapter_files = Vec::new();
+    collect_chapter_state_files(&paths.chapters_dir(), &mut chapter_files)?;
+
+    let mut states = BTreeMap::new();
+    for chapter_file in chapter_files {
+        let state: ChapterState = load_json(&chapter_file)?;
+        states.insert(state.chapter_path.clone(), state);
+    }
+
+    Ok(states)
+}
+
+pub fn summarize_chapters(chapters: &BTreeMap<String, ChapterState>) -> RunSummary {
+    let mut success = 0;
+    let mut failed = 0;
+    let mut skipped = 0;
+    let mut pending = 0;
+
+    for state in chapters.values() {
+        match state.status {
+            ChapterStatus::Success => success += 1,
+            ChapterStatus::Failed => failed += 1,
+            ChapterStatus::Skipped => skipped += 1,
+            ChapterStatus::Pending => pending += 1,
+        }
+    }
+
+    RunSummary {
+        total: chapters.len(),
+        success,
+        failed,
+        skipped,
+        pending,
+    }
+}
+
+pub fn failed_chapters(chapters: &BTreeMap<String, ChapterState>) -> Vec<(&String, &ChapterState)> {
+    chapters
+        .iter()
+        .filter(|(_, state)| state.status == ChapterStatus::Failed)
+        .collect()
+}
+
+pub fn normalize_chapter_path(path: &Path) -> String {
+    let components: Vec<String> = path
+        .components()
+        .filter_map(|component| match component {
+            Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
+            _ => None,
+        })
+        .collect();
+
+    if components.is_empty() {
+        path.to_string_lossy().replace('\\', "/")
+    } else {
+        components.join("/")
+    }
+}
+
+fn now_rfc3339() -> String {
+    chrono::Local::now().to_rfc3339()
+}
+
+fn collect_chapter_state_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
+    if !dir.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(dir)
+        .with_context(|| format!("Failed to read chapter state dir {}", dir.display()))?
+    {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            collect_chapter_state_files(&path, files)?;
+            continue;
+        }
+
+        if path.extension().map(|ext| ext == "json").unwrap_or(false) {
+            files.push(path);
+        }
+    }
+
+    files.sort();
+    Ok(())
+}
+
+fn load_json_if_exists<T>(path: &Path) -> Result<Option<T>>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    Ok(Some(load_json(path)?))
+}
+
+fn load_json<T>(path: &Path) -> Result<T>
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let value = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse {}", path.display()))?;
+    Ok(value)
+}
+
+fn save_json<T>(path: &Path, value: &T) -> Result<()>
+where
+    T: Serialize,
+{
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("Failed to create {}", parent.display()))?;
+    }
+
+    let content = serde_json::to_string_pretty(value)?;
+    let temp_path = path.with_extension("json.tmp");
+    std::fs::write(&temp_path, &content)
+        .with_context(|| format!("Failed to write {}", temp_path.display()))?;
+
+    if let Err(error) = std::fs::rename(&temp_path, path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(error).with_context(|| format!("Failed to rename {}", path.display()));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn make_state() -> RunState {
-        RunState::new("test-profile".into(), "openai".into(), "gpt-4".into(), None)
+    fn sample_glossary_usage() -> ChapterGlossaryUsage {
+        ChapterGlossaryUsage {
+            injection_mode: GlossaryInjectionMode::Smart,
+            used_fallback_to_full: false,
+            terms: vec![ChapterGlossaryTerm {
+                key: "hero".into(),
+                fingerprint: "fp-1".into(),
+            }],
+        }
     }
 
-    #[test]
-    fn test_get_summary_empty_state() {
-        let state = make_state();
-        let summary = state.get_summary();
-        assert_eq!(summary.total, 0);
-        assert_eq!(summary.success, 0);
-        assert_eq!(summary.failed, 0);
-        assert_eq!(summary.skipped, 0);
-        assert_eq!(summary.pending, 0);
-    }
-
-    #[test]
-    fn test_set_chapter_and_summary() {
-        let mut state = make_state();
-        state.set_chapter("ch01.md", ChapterStatus::Success, None, Some(1500));
-        state.set_chapter(
-            "ch02.md",
-            ChapterStatus::Failed,
-            Some("timeout".into()),
+    fn sample_chapter_state(chapter_path: &str, status: ChapterStatus) -> ChapterState {
+        ChapterState::new(
+            chapter_path.to_string(),
+            status,
             None,
-        );
-        state.set_chapter("ch03.md", ChapterStatus::Skipped, None, None);
-        state.set_chapter("ch04.md", ChapterStatus::Pending, None, None);
+            Some(1234),
+            Some(sample_glossary_usage()),
+        )
+    }
 
-        let summary = state.get_summary();
+    #[test]
+    fn test_run_metadata_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut metadata = RunMetadata::new(
+            "test-profile".into(),
+            "openai".into(),
+            "gpt-4".into(),
+            Some(RunOptions {
+                overwrite: true,
+                fail_fast: false,
+            }),
+        );
+        metadata.mark_finished();
+
+        save_run_metadata(dir.path(), &metadata).unwrap();
+
+        let loaded = load_run_metadata(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.profile, "test-profile");
+        assert_eq!(loaded.provider, "openai");
+        assert_eq!(loaded.model, "gpt-4");
+        assert!(loaded.finished_at.is_some());
+        assert!(loaded.updated_at >= loaded.started_at);
+    }
+
+    #[test]
+    fn test_glossary_state_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let glossary_state = GlossaryState::new(
+            GlossaryInjectionMode::Smart,
+            BTreeMap::from([(
+                "hero".into(),
+                GlossaryStateTerm {
+                    term: "Hero".into(),
+                    og_term: Some("勇者".into()),
+                    definition: "Main character".into(),
+                    fingerprint: "fp-1".into(),
+                },
+            )]),
+        );
+
+        save_glossary_state(dir.path(), &glossary_state).unwrap();
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.injection_mode, GlossaryInjectionMode::Smart);
+        assert_eq!(loaded.terms.len(), 1);
+        assert_eq!(loaded.terms["hero"].definition, "Main character");
+    }
+
+    #[test]
+    fn test_chapter_state_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let chapter_state = sample_chapter_state("part1/ch01.md", ChapterStatus::Success);
+
+        save_chapter_state(dir.path(), &chapter_state).unwrap();
+
+        let loaded = load_chapter_state(dir.path(), "part1/ch01.md")
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.chapter_path, "part1/ch01.md");
+        assert_eq!(loaded.status, ChapterStatus::Success);
+        assert!(loaded.glossary_usage.is_some());
+    }
+
+    #[test]
+    fn test_load_all_chapter_states() {
+        let dir = tempfile::tempdir().unwrap();
+        let chapter_a = sample_chapter_state("part1/ch01.md", ChapterStatus::Success);
+        let chapter_b = sample_chapter_state("part2/ch02.md", ChapterStatus::Failed);
+
+        save_chapter_state(dir.path(), &chapter_a).unwrap();
+        save_chapter_state(dir.path(), &chapter_b).unwrap();
+
+        let loaded = load_all_chapter_states(dir.path()).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded["part1/ch01.md"].status, ChapterStatus::Success);
+        assert_eq!(loaded["part2/ch02.md"].status, ChapterStatus::Failed);
+    }
+
+    #[test]
+    fn test_summarize_chapters() {
+        let chapters = BTreeMap::from([
+            (
+                "ch01.md".into(),
+                sample_chapter_state("ch01.md", ChapterStatus::Success),
+            ),
+            (
+                "ch02.md".into(),
+                sample_chapter_state("ch02.md", ChapterStatus::Failed),
+            ),
+            (
+                "ch03.md".into(),
+                sample_chapter_state("ch03.md", ChapterStatus::Skipped),
+            ),
+            (
+                "ch04.md".into(),
+                sample_chapter_state("ch04.md", ChapterStatus::Pending),
+            ),
+        ]);
+
+        let summary = summarize_chapters(&chapters);
         assert_eq!(summary.total, 4);
         assert_eq!(summary.success, 1);
         assert_eq!(summary.failed, 1);
@@ -209,104 +466,40 @@ mod tests {
     }
 
     #[test]
-    fn test_get_failed_chapters() {
-        let mut state = make_state();
-        state.set_chapter("ch01.md", ChapterStatus::Success, None, None);
-        state.set_chapter(
-            "ch02.md",
-            ChapterStatus::Failed,
-            Some("API error".into()),
-            None,
+    fn test_failed_chapters() {
+        let chapters = BTreeMap::from([
+            (
+                "ch01.md".into(),
+                sample_chapter_state("ch01.md", ChapterStatus::Success),
+            ),
+            (
+                "ch02.md".into(),
+                sample_chapter_state("ch02.md", ChapterStatus::Failed),
+            ),
+        ]);
+
+        let failed = failed_chapters(&chapters);
+        assert_eq!(failed.len(), 1);
+        assert_eq!(failed[0].0.as_str(), "ch02.md");
+    }
+
+    #[test]
+    fn test_normalize_chapter_path() {
+        assert_eq!(
+            normalize_chapter_path(Path::new("part1/ch01.md")),
+            "part1/ch01.md"
         );
-        state.set_chapter(
-            "ch03.md",
-            ChapterStatus::Failed,
-            Some("timeout".into()),
-            None,
-        );
-
-        let failed = state.get_failed_chapters();
-        assert_eq!(failed.len(), 2);
-        assert!(failed.iter().any(|(name, _)| name.as_str() == "ch02.md"));
-        assert!(failed.iter().any(|(name, _)| name.as_str() == "ch03.md"));
+        assert_eq!(normalize_chapter_path(Path::new("./ch01.md")), "ch01.md");
     }
 
     #[test]
-    fn test_merge_previous_fills_gaps() {
-        let mut prev = make_state();
-        prev.set_chapter("ch01.md", ChapterStatus::Success, None, Some(1000));
-        prev.set_chapter("ch02.md", ChapterStatus::Success, None, Some(2000));
-
-        let mut current = make_state();
-        current.set_chapter(
-            "ch02.md",
-            ChapterStatus::Failed,
-            Some("new error".into()),
-            None,
-        );
-
-        current.merge_previous(Some(prev));
-
-        // ch01 should be inherited from previous
-        assert_eq!(current.chapters["ch01.md"].status, ChapterStatus::Success);
-        // ch02 should keep the current (not overwritten by previous)
-        assert_eq!(current.chapters["ch02.md"].status, ChapterStatus::Failed);
-    }
-
-    #[test]
-    fn test_merge_previous_none_is_noop() {
-        let mut state = make_state();
-        state.set_chapter("ch01.md", ChapterStatus::Success, None, None);
-        state.merge_previous(None);
-        assert_eq!(state.chapters.len(), 1);
-    }
-
-    #[test]
-    fn test_save_and_load_roundtrip() {
+    fn test_temp_file_cleaned_up_after_save() {
         let dir = tempfile::tempdir().unwrap();
-        let mut state = make_state();
-        state.set_chapter("ch01.md", ChapterStatus::Success, None, Some(1234));
-        state.set_chapter("ch02.md", ChapterStatus::Failed, Some("err".into()), None);
-        state.mark_finished();
+        let metadata = RunMetadata::new("p".into(), "provider".into(), "model".into(), None);
+        let path = BookPaths::resolve(dir.path()).run_json();
 
-        state.save(dir.path()).unwrap();
+        save_run_metadata(dir.path(), &metadata).unwrap();
 
-        let loaded = RunState::load(dir.path()).unwrap().expect("should load");
-        assert_eq!(loaded.profile, "test-profile");
-        assert_eq!(loaded.provider, "openai");
-        assert_eq!(loaded.model, "gpt-4");
-        assert!(loaded.finished_at.is_some());
-        assert_eq!(loaded.chapters.len(), 2);
-        assert_eq!(loaded.chapters["ch01.md"].status, ChapterStatus::Success);
-        assert_eq!(loaded.chapters["ch01.md"].translation_time_ms, Some(1234));
-        assert_eq!(loaded.chapters["ch02.md"].error.as_deref(), Some("err"));
-    }
-
-    #[test]
-    fn test_load_nonexistent_returns_none() {
-        let dir = tempfile::tempdir().unwrap();
-        let result = RunState::load(dir.path()).unwrap();
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn test_atomic_write_no_temp_file_left() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = make_state();
-        state.save(dir.path()).unwrap();
-
-        let temp_path = RunState::state_path(dir.path()).with_extension("json.tmp");
-        assert!(!temp_path.exists(), "temp file should be cleaned up");
-    }
-
-    #[test]
-    fn test_set_chapter_overwrites_previous() {
-        let mut state = make_state();
-        state.set_chapter("ch01.md", ChapterStatus::Failed, Some("err".into()), None);
-        state.set_chapter("ch01.md", ChapterStatus::Success, None, Some(500));
-
-        assert_eq!(state.chapters["ch01.md"].status, ChapterStatus::Success);
-        assert!(state.chapters["ch01.md"].error.is_none());
-        assert_eq!(state.chapters.len(), 1);
+        assert!(!path.with_extension("json.tmp").exists());
     }
 }
