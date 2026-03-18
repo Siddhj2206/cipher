@@ -573,9 +573,12 @@ fn build_glossary_rerun_plan(
 
         if let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path) {
             if let Some(usage) = &previous_chapter_state.glossary_usage {
-                if let Some(decision) =
-                    exact_rerun_decision(usage, &changed_term_keys, &current_fingerprints)
-                {
+                if let Some(decision) = exact_rerun_decision(
+                    usage,
+                    &changed_term_keys,
+                    &current_fingerprints,
+                    injection_mode,
+                ) {
                     plan.forced_chapters.insert(chapter_path, decision);
                 }
                 continue;
@@ -656,35 +659,40 @@ fn exact_rerun_decision(
     usage: &ChapterGlossaryUsage,
     changed_term_keys: &BTreeSet<String>,
     current_fingerprints: &BTreeMap<String, String>,
+    injection_mode: InjectionMode,
 ) -> Option<GlossaryRerunDecision> {
-    let effective_mode = effective_usage_injection_mode(usage);
+    match injection_mode {
+        InjectionMode::Full => {
+            // For full mode, check if any glossary terms changed
+            full_glossary_rerun_reason(changed_term_keys).map(|reason| GlossaryRerunDecision {
+                reason,
+                injection_mode: InjectionMode::Full,
+            })
+        }
+        InjectionMode::Smart => {
+            // For smart mode, check if any of the terms that would be selected now
+            // differ from what was stored historically
+            let changed_keys: Vec<String> = usage
+                .terms
+                .iter()
+                .filter_map(|term| match current_fingerprints.get(&term.key) {
+                    Some(fingerprint) if fingerprint == &term.fingerprint => None,
+                    _ => Some(term.key.clone()),
+                })
+                .collect();
 
-    if effective_mode == InjectionMode::Full {
-        return full_glossary_rerun_reason(changed_term_keys).map(|reason| GlossaryRerunDecision {
-            reason,
-            injection_mode: InjectionMode::Full,
-        });
-    }
-
-    let changed_keys: Vec<String> = usage
-        .terms
-        .iter()
-        .filter_map(|term| match current_fingerprints.get(&term.key) {
-            Some(fingerprint) if fingerprint == &term.fingerprint => None,
-            _ => Some(term.key.clone()),
-        })
-        .collect();
-
-    if changed_keys.is_empty() {
-        None
-    } else {
-        Some(GlossaryRerunDecision {
-            reason: format!(
-                "matched changed glossary term(s): {}",
-                changed_keys.join(", ")
-            ),
-            injection_mode: InjectionMode::Smart,
-        })
+            if changed_keys.is_empty() {
+                None
+            } else {
+                Some(GlossaryRerunDecision {
+                    reason: format!(
+                        "matched changed glossary term(s): {}",
+                        changed_keys.join(", ")
+                    ),
+                    injection_mode: InjectionMode::Smart,
+                })
+            }
+        }
     }
 }
 
@@ -796,14 +804,6 @@ fn glossary_state_injection_mode(mode: GlossaryInjectionMode) -> InjectionMode {
     match mode {
         GlossaryInjectionMode::Full => InjectionMode::Full,
         GlossaryInjectionMode::Smart => InjectionMode::Smart,
-    }
-}
-
-fn effective_usage_injection_mode(usage: &ChapterGlossaryUsage) -> InjectionMode {
-    if usage.used_fallback_to_full || usage.injection_mode == GlossaryInjectionMode::Full {
-        InjectionMode::Full
-    } else {
-        InjectionMode::Smart
     }
 }
 
@@ -1724,7 +1724,7 @@ mod tests {
         .unwrap();
 
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
-        assert_eq!(decision.injection_mode, InjectionMode::Full);
-        assert!(decision.reason.contains("full glossary changed"));
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        assert!(decision.reason.contains("matched changed glossary term"));
     }
 }

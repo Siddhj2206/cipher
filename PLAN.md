@@ -649,7 +649,14 @@ Code quality improvements:
 ## Todo
 - [x] Update the chapter state feature to check for differences everytime, even if glossary state has not changed
 - [ ] Work on a better way to store api keys
-- [ ] Better "profile new" styling and layout
+- [x] Better "profile new" styling and layout
 - [ ] See if we can do smart checks chapter by chapter instead of wasting time doing it all at once in the beginning
-- [ ] See how we can evolve cipher to be more than just a novel transltor. so work towards documentation translation, etc
-- [ ] Retranslating chapters with new conten
+- [ ] See how we can evolve cipher to be more than just a novel translator. so work towards documentation translation, etc
+- [ ] Retranslating chapters with new content
+- [ ] Update rig-core
+- [x] Figure the issue with full glossary reruns
+- [ ] Better reason text
+- [ ] Check if we are saving what glossary terms we got back from a chapter and comparing againsts those aswell. See how we can deal with exported terms changing after a retranslate.
+- [ ] Plan rerun preview mode (--dry-run)
+- [ ] Plan status visibility for tracked vs untracked chapters
+- [ ] Plan future verbose mode for detailed skip output
