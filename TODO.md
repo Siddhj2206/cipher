@@ -165,6 +165,10 @@ Maintain a queue of chapters to process:
   - newly relevant terms
   - removed terms
   - fallback-to-full transitions
+- surface mid-run replanning decisions clearly in logs:
+  - when remaining chapters are replanned after glossary updates
+  - updated affected-chapter counts for the remaining queue
+  - warnings produced by incremental replanning
 - avoid repetitive or duplicate key names
 - make reasons suitable for both logs and future dry-run output
 

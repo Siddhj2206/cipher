@@ -15,7 +15,7 @@ use crate::state::{
 use crate::translate::Translator;
 use crate::validate::validate_translation;
 use anyhow::{Context, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -112,7 +112,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .context("Failed to create translator")?;
 
     // Discover chapters
-    let chapters = discover_chapters(&layout.paths.raw_dir)?;
+    let chapters: VecDeque<PathBuf> = discover_chapters(&layout.paths.raw_dir)?
+        .into_iter()
+        .collect();
     if chapters.is_empty() {
         section("No chapters found");
         detail_kv("Directory", layout.paths.raw_dir.display());
@@ -150,7 +152,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let rerun_plan = if options.rerun_affected_glossary {
         section("Planning glossary-affected chapter reruns");
         let plan = build_glossary_rerun_plan(
-            &chapters,
+            &Vec::from(chapters.clone()),
             &layout.paths.raw_dir,
             out_dir,
             previous_glossary_state.as_ref(),
@@ -194,8 +196,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut failed = 0;
     let mut new_glossary_terms = 0;
 
-    // Process each chapter
-    for chapter_file in &chapters {
+    let mut remaining_chapters = chapters.clone();
+    let mut rerun_plan = rerun_plan;
+
+    while let Some(chapter_file) = remaining_chapters.pop_front() {
         let chapter_path = chapter_state_key(&layout.paths.raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
@@ -218,7 +222,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .await?;
 
         checkpoint_chapter_progress(book_dir, &mut run_metadata, &result.chapter_state)?;
-        previous_chapter_states.insert(chapter_path, result.chapter_state.clone());
+        previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
 
         if result.translated {
             translated += 1;
@@ -234,6 +238,21 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             }
         }
         new_glossary_terms += result.new_terms_added;
+
+        if result.new_terms_added > 0
+            && options.rerun_affected_glossary
+            && !remaining_chapters.is_empty()
+        {
+            rerun_plan = build_glossary_rerun_plan(
+                &Vec::from(remaining_chapters.clone()),
+                &layout.paths.raw_dir,
+                out_dir,
+                previous_glossary_state.as_ref(),
+                &previous_chapter_states,
+                &glossary,
+                injection_mode,
+            )?;
+        }
     }
 
     let baseline_outcome = finalize_glossary_baseline(
@@ -241,7 +260,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         &options,
         previous_glossary_state.as_ref(),
         &run_start_glossary_state,
-        &chapters,
+        &Vec::from(chapters),
         &layout.paths.raw_dir,
         out_dir,
         &previous_chapter_states,
@@ -2051,5 +2070,94 @@ mod tests {
             "Expected reason to mention removed term, got: {}",
             decision.reason
         );
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_with_remaining_chapters_subset() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let chapter1 = raw_dir.join("chapter1.md");
+        let chapter2 = raw_dir.join("chapter2.md");
+        let chapter3 = raw_dir.join("chapter3.md");
+        std::fs::write(&chapter1, smart_text()).unwrap();
+        std::fs::write(&chapter2, smart_text()).unwrap();
+        std::fs::write(&chapter3, smart_text()).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+        std::fs::write(out_dir.join("chapter2.md"), "translated").unwrap();
+        std::fs::write(out_dir.join("chapter3.md"), "translated").unwrap();
+
+        let old_glossary = smart_glossary("Old hero definition");
+        let new_glossary = smart_glossary("New hero definition");
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+
+        let selection = select_terms_for_text(&old_glossary, smart_text(), InjectionMode::Smart);
+        assert!(!selection.used_fallback_to_full);
+
+        let previous_chapter_states = BTreeMap::from([
+            (
+                "chapter1.md".to_string(),
+                ChapterState::new(
+                    "chapter1.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    Some(build_chapter_glossary_usage(
+                        &selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                ),
+            ),
+            (
+                "chapter2.md".to_string(),
+                ChapterState::new(
+                    "chapter2.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    Some(build_chapter_glossary_usage(
+                        &selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                ),
+            ),
+            (
+                "chapter3.md".to_string(),
+                ChapterState::new(
+                    "chapter3.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    Some(build_chapter_glossary_usage(
+                        &selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                ),
+            ),
+        ]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter2.clone(), chapter3],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        assert_eq!(plan.changed_term_count, 1);
+        assert_eq!(plan.forced_chapters.len(), 2);
+        assert!(plan.forced_chapters.contains_key("chapter2.md"));
+        assert!(plan.forced_chapters.contains_key("chapter3.md"));
+        assert!(!plan.forced_chapters.contains_key("chapter1.md"));
     }
 }
