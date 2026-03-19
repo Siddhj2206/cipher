@@ -656,7 +656,7 @@ Code quality improvements:
 - [ ] Update rig-core
 - [x] Figure the issue with full glossary reruns
 - [ ] Better reason text
-- [ ] Check if we are saving what glossary terms we got back from a chapter and comparing againsts those aswell. See how we can deal with exported terms changing after a retranslate.
+- [x] Check if we are saving what glossary terms we got back from a chapter and comparing againsts those aswell. See how we can deal with exported terms changing after a retranslate.
 - [ ] Plan rerun preview mode (--dry-run)
 - [ ] Plan status visibility for tracked vs untracked chapters
 - [ ] Plan future verbose mode for detailed skip output

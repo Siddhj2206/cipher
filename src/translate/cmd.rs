@@ -555,7 +555,6 @@ fn build_glossary_rerun_plan(
 ) -> Result<GlossaryRerunPlan> {
     let mut plan = GlossaryRerunPlan::default();
     let current_glossary_state = build_glossary_state(current_glossary, injection_mode);
-    let current_fingerprints = snapshot_fingerprints(&current_glossary_state.terms);
 
     let changed_term_keys = previous_glossary_state
         .map(|glossary| {
@@ -583,14 +582,25 @@ fn build_glossary_rerun_plan(
 
         if let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path) {
             if let Some(usage) = &previous_chapter_state.glossary_usage {
-                if let Some(decision) = exact_rerun_decision(
-                    usage,
-                    &previous_chapter_state.exported_terms,
-                    &changed_term_keys,
-                    &current_fingerprints,
-                    injection_mode,
-                ) {
-                    plan.forced_chapters.insert(chapter_path, decision);
+                // Need previous_glossary_state for smart mode comparison
+                if let Some(prev_state) = previous_glossary_state {
+                    if let Some(decision) = exact_rerun_decision(
+                        chapter_file,
+                        usage,
+                        &previous_chapter_state.exported_terms,
+                        prev_state,
+                        current_glossary,
+                        &changed_term_keys,
+                        injection_mode,
+                    )? {
+                        plan.forced_chapters.insert(chapter_path, decision);
+                    }
+                } else {
+                    // No glossary state but chapter has tracked usage - can't compare
+                    plan.warnings.push(format!(
+                        "Chapter {} has glossary usage but no glossary state recorded",
+                        chapter_path
+                    ));
                 }
                 continue;
             }
@@ -667,28 +677,41 @@ fn changed_prompt_relevant_keys(
 }
 
 fn exact_rerun_decision(
+    raw_path: &Path,
     usage: &ChapterGlossaryUsage,
     exported_terms: &[ChapterGlossaryTerm],
+    previous_glossary_state: &GlossaryState,
+    current_glossary: &[GlossaryTerm],
     changed_term_keys: &BTreeSet<String>,
-    current_fingerprints: &BTreeMap<String, String>,
     injection_mode: InjectionMode,
-) -> Option<GlossaryRerunDecision> {
+) -> Result<Option<GlossaryRerunDecision>> {
     match injection_mode {
         InjectionMode::Full => {
             // For full mode, check if any glossary terms changed
-            full_glossary_rerun_reason(changed_term_keys).map(|reason| GlossaryRerunDecision {
-                reason,
-                injection_mode: InjectionMode::Full,
-            })
+            Ok(
+                full_glossary_rerun_reason(changed_term_keys).map(|reason| GlossaryRerunDecision {
+                    reason,
+                    injection_mode: InjectionMode::Full,
+                }),
+            )
         }
         InjectionMode::Smart => {
-            // Merge imported and exported terms into a single list
+            // For smart mode, first check if the glossary fingerprint changed for any
+            // previously selected or exported term. If so, we need to rerun.
+            let current_fingerprints: BTreeMap<String, String> = current_glossary
+                .iter()
+                .map(|term| {
+                    (
+                        glossary_term_key(term),
+                        glossary_term_prompt_fingerprint(term),
+                    )
+                })
+                .collect();
+
             let all_terms: Vec<&ChapterGlossaryTerm> =
                 usage.terms.iter().chain(exported_terms.iter()).collect();
 
-            // For smart mode, check if any of the terms that would be selected now
-            // differ from what was stored historically
-            let changed_keys: Vec<String> = all_terms
+            let fingerprint_changed_keys: Vec<String> = all_terms
                 .iter()
                 .filter_map(|term| match current_fingerprints.get(&term.key) {
                     Some(fingerprint) if fingerprint == &term.fingerprint => None,
@@ -696,16 +719,75 @@ fn exact_rerun_decision(
                 })
                 .collect();
 
-            if changed_keys.is_empty() {
-                None
-            } else {
-                Some(GlossaryRerunDecision {
+            if !fingerprint_changed_keys.is_empty() {
+                // At least one previously selected/exported term's fingerprint changed
+                return Ok(Some(GlossaryRerunDecision {
                     reason: format!(
                         "matched changed glossary term(s): {}",
-                        changed_keys.join(", ")
+                        fingerprint_changed_keys.join(", ")
                     ),
                     injection_mode: InjectionMode::Smart,
-                })
+                }));
+            }
+
+            // No fingerprint changes for tracked terms. Now check if the smart selection
+            // itself would produce a different set of terms (e.g., new terms that now match
+            // the chapter text, or terms that were removed from the glossary).
+            // This handles the case where a glossary term is added later that would now
+            // be selected for this chapter.
+            let chapter_text = match std::fs::read_to_string(raw_path) {
+                Ok(text) => text,
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("Failed to read {}", raw_path.display()));
+                }
+            };
+
+            if chapter_text.trim().is_empty() {
+                return Ok(None);
+            }
+
+            // Reconstruct previous glossary from state
+            let previous_glossary = glossary_terms_from_state(previous_glossary_state);
+
+            // Run smart selection on both old and new glossaries
+            let previous_selection =
+                select_terms_for_text(&previous_glossary, &chapter_text, InjectionMode::Smart);
+            let current_selection =
+                select_terms_for_text(current_glossary, &chapter_text, InjectionMode::Smart);
+
+            // Check if fallback state changed (e.g., was fallback before but not now, or vice versa)
+            let fallback_changed =
+                previous_selection.used_fallback_to_full != current_selection.used_fallback_to_full;
+
+            // Compare the two selections to detect changes
+            let previous_terms = selection_fingerprints(&previous_selection.terms);
+            let current_terms = selection_fingerprints(&current_selection.terms);
+            let selection_changed_keys =
+                changed_selected_term_keys(&previous_terms, &current_terms);
+
+            if selection_changed_keys.is_empty() && !fallback_changed {
+                Ok(None)
+            } else {
+                let reason = if fallback_changed {
+                    format!(
+                        "smart glossary fallback state changed: {} -> {}",
+                        previous_selection.used_fallback_to_full,
+                        current_selection.used_fallback_to_full
+                    )
+                } else {
+                    format!(
+                        "smart glossary selection changed: {}",
+                        selection_changed_keys
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                Ok(Some(GlossaryRerunDecision {
+                    reason,
+                    injection_mode: InjectionMode::Smart,
+                }))
             }
         }
     }
@@ -1373,9 +1455,10 @@ mod tests {
         std::fs::write(&chapter, smart_text()).unwrap();
         std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
 
-        let previous_glossary = smart_glossary("Old hero definition");
-        let current_glossary = smart_glossary("New hero definition");
-        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Smart);
+        // Use the same glossary for previous and current to simulate a completed run
+        // where glossary hasn't changed since last translation
+        let current_glossary = smart_glossary("Hero definition");
+        let previous_state = previous_glossary_state(&current_glossary, InjectionMode::Smart);
         save_glossary_state(dir.path(), &previous_state).unwrap();
 
         let selection =
@@ -1412,10 +1495,11 @@ mod tests {
         )
         .unwrap();
 
+        // When glossary hasn't changed, KeepExisting is returned (glossary already up to date)
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::CommitRunEnd,
+                advance: GlossaryBaselineAdvance::KeepExisting,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1788,7 +1872,10 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
-                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart)),
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
                 exported_terms,
             ),
         )]);
@@ -1809,5 +1896,160 @@ mod tests {
         assert_eq!(decision.injection_mode, InjectionMode::Smart);
         assert!(decision.reason.contains("matched changed glossary term"));
         assert!(decision.reason.contains("hero"));
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_detects_newly_matchable_term() {
+        // Test that adding a new glossary term that matches chapter text
+        // triggers a rerun for tracked smart-mode chapters
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        // Text contains all 6 terms including "竜王" (Dragon King)
+        let chapter_text = "勇者は魔導士と聖剣を手に王城で戦い竜王と戦った。";
+        std::fs::write(&chapter, chapter_text).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        // Old glossary: has 5 terms to avoid fallback, but NOT "Dragon King" (竜王)
+        // Need at least 5 terms to avoid fallback (MIN_GLOSSARY_MATCHES = 5)
+        let old_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Battle", Some("戦い"), "Battle definition"),
+            // Note: Dragon King (竜王) is NOT in old glossary
+        ];
+
+        // New glossary: now includes "Dragon King" (竜王) which appears in the text
+        let new_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Battle", Some("戦い"), "Battle definition"),
+            glossary_term("Dragon King", Some("竜王"), "Dragon King definition"),
+        ];
+
+        let selection = select_terms_for_text(&old_glossary, chapter_text, InjectionMode::Smart);
+        // All 5 terms from old glossary matched (戦い appears in text)
+        assert!(!selection.used_fallback_to_full, "Selection used fallback");
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
+                vec![],
+            ),
+        )]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        // The new glossary has 1 added term
+        assert_eq!(plan.changed_term_count, 1);
+        // Chapter should be flagged for rerun because Dragon King now matches
+        assert_eq!(plan.forced_chapters.len(), 1);
+        let decision = plan.forced_chapters.get("chapter1.md").unwrap();
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        assert!(decision.reason.contains("竜王") || decision.reason.contains("dragon king"));
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_detects_removed_previously_matched_term() {
+        // Test that removing a glossary term that was previously selected
+        // triggers a rerun for tracked smart-mode chapters
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        // Text with 6 terms: 勇者, 魔導士, 聖剣, 王城, 戦い, 竜王
+        let chapter_text = "勇者は魔導士と聖剣を手に王城で戦い竜王と戦った。";
+        std::fs::write(&chapter, chapter_text).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        // Old glossary: has all 6 terms including "Dragon King" (竜王)
+        let old_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Battle", Some("戦い"), "Battle definition"),
+            glossary_term("Dragon King", Some("竜王"), "Dragon King definition"),
+        ];
+
+        // New glossary: "Dragon King" and "Battle" removed, replaced with "Shield" which doesn't appear
+        let new_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Shield", Some("盾"), "Shield definition"),
+        ];
+
+        let selection = select_terms_for_text(&old_glossary, chapter_text, InjectionMode::Smart);
+        // Should have 6 terms matched without fallback
+        assert!(!selection.used_fallback_to_full, "Selection used fallback");
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
+                vec![],
+            ),
+        )]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        // Chapter should be flagged for rerun because selection changed (Dragon King removed)
+        // changed_term_count is 3: 2 removed (竜王, 戦い) + 1 added (盾)
+        assert_eq!(plan.changed_term_count, 3);
+        assert_eq!(plan.forced_chapters.len(), 1);
+        let decision = plan.forced_chapters.get("chapter1.md").unwrap();
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        // Reason should indicate the selection changed
+        assert!(
+            decision.reason.contains("竜王") || decision.reason.contains("dragon king"),
+            "Expected reason to mention removed term, got: {}",
+            decision.reason
+        );
     }
 }
