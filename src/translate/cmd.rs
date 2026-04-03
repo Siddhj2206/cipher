@@ -161,10 +161,13 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             &glossary,
             injection_mode,
         )?;
-        detail_kv("Changed glossary terms", plan.changed_term_count);
+        detail_kv("Changed glossary entries", plan.changed_term_count);
         detail_kv("Affected chapters", plan.forced_chapters.len());
         if plan.approximate_smart_checks > 0 {
-            detail_kv("Approximate smart checks", plan.approximate_smart_checks);
+            detail_kv(
+                "Approximate smart rerun checks",
+                plan.approximate_smart_checks,
+            );
         }
         for warning in &plan.warnings {
             warn(warning);
@@ -276,7 +279,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     if baseline_outcome.remaining_forced_chapters > 0 {
         warn(format!(
-            "Glossary baseline not updated; {} affected chapter(s) still need reruns.",
+            "Glossary baseline was not updated because {} affected chapter(s) still need reruns.",
             baseline_outcome.remaining_forced_chapters
         ));
     }
@@ -289,7 +292,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     detail_kv("Translated", translated);
     detail_kv("Skipped", skipped);
     detail_kv("Failed", failed);
-    detail_kv("New glossary terms", new_glossary_terms);
+    detail_kv("Glossary terms added", new_glossary_terms);
     if total_usage.total_tokens > 0 {
         print_usage_info_with_label("Token usage", &total_usage);
     }
@@ -345,7 +348,7 @@ async fn translate_single_chapter(
 
     if let Some(decision) = rerun_decision {
         println!("Retranslating {}", chapter_path);
-        detail_kv("Reason", &decision.reason);
+        detail_kv("Rerun reason", &decision.reason);
     } else {
         println!("Translating {}", chapter_path);
     }
@@ -364,7 +367,7 @@ async fn translate_single_chapter(
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Skipped,
-                Some("Empty file".to_string()),
+                Some("Chapter is empty".to_string()),
                 None,
                 previous_chapter_state.and_then(|state| state.translation_usage.clone()),
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
@@ -403,7 +406,7 @@ async fn translate_single_chapter(
         let (new_terms_added, exported_terms) =
             merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
 
-        detail_kv("Result", "translated");
+        detail_kv("Result", "success");
         return Ok(ChapterResult {
             translated: true,
             failed: false,
@@ -428,8 +431,9 @@ async fn translate_single_chapter(
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
     detail_kv(
         "Result",
-        format!("failed after {} attempts: {}", MAX_API_RETRIES, error_msg),
+        format!("failed after {} attempts", MAX_API_RETRIES),
     );
+    detail_kv("Error", &error_msg);
     Ok(ChapterResult {
         translated: false,
         failed: true,
@@ -760,7 +764,7 @@ fn exact_rerun_decision(
                 // At least one previously selected/exported term's fingerprint changed
                 return Ok(Some(GlossaryRerunDecision {
                     reason: format!(
-                        "matched changed glossary term(s): {}",
+                        "Imported or exported glossary term changed: {}",
                         fingerprint_changed_keys.join(", ")
                     ),
                     injection_mode: InjectionMode::Smart,
@@ -808,13 +812,13 @@ fn exact_rerun_decision(
             } else {
                 let reason = if fallback_changed {
                     format!(
-                        "smart glossary fallback state changed: {} -> {}",
-                        previous_selection.used_fallback_to_full,
-                        current_selection.used_fallback_to_full
+                        "Smart glossary selection changed fallback behavior: {} -> {}",
+                        fallback_state_label(previous_selection.used_fallback_to_full),
+                        fallback_state_label(current_selection.used_fallback_to_full)
                     )
                 } else {
                     format!(
-                        "smart glossary selection changed: {}",
+                        "Smart glossary selection changed: {}",
                         selection_changed_keys
                             .into_iter()
                             .collect::<Vec<_>>()
@@ -852,10 +856,7 @@ fn approximate_smart_rerun_decision(
     if previous_selection.used_fallback_to_full || current_selection.used_fallback_to_full {
         return Ok(full_glossary_rerun_reason(changed_term_keys).map(|reason| {
             GlossaryRerunDecision {
-                reason: format!(
-                    "approximate smart fallback matched full glossary change: {}",
-                    reason
-                ),
+                reason: format!("Approximate rerun after smart fallback matched: {}", reason),
                 injection_mode: InjectionMode::Full,
             }
         }));
@@ -870,7 +871,7 @@ fn approximate_smart_rerun_decision(
     } else {
         Ok(Some(GlossaryRerunDecision {
             reason: format!(
-                "approximate smart glossary change: {}",
+                "Approximate smart glossary selection changed: {}",
                 changed_keys.into_iter().collect::<Vec<_>>().join(", ")
             ),
             injection_mode: InjectionMode::Smart,
@@ -883,13 +884,21 @@ fn full_glossary_rerun_reason(changed_term_keys: &BTreeSet<String>) -> Option<St
         None
     } else {
         Some(format!(
-            "full glossary changed: {}",
+            "Full glossary changed: {}",
             changed_term_keys
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
         ))
+    }
+}
+
+fn fallback_state_label(used_fallback_to_full: bool) -> &'static str {
+    if used_fallback_to_full {
+        "fallback to full"
+    } else {
+        "smart selection only"
     }
 }
 
@@ -962,7 +971,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
                 detail_kv(
                     "Glossary",
                     format!(
-                        "full (fallback from smart), {}/{} terms",
+                        "smart fallback to full, {}/{} terms",
                         selection.selected_count, selection.total_count
                     ),
                 );
@@ -970,7 +979,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
                 detail_kv(
                     "Glossary",
                     format!(
-                        "smart, {}/{} terms",
+                        "smart selection, {}/{} terms",
                         selection.selected_count, selection.total_count
                     ),
                 );
@@ -1012,10 +1021,7 @@ async fn attempt_translation(
                 if api_attempt == 1 {
                     detail_kv(
                         "Validation",
-                        format!(
-                            "failed: {}. Attempting repair.",
-                            validation_errors.join(", ")
-                        ),
+                        format!("{} Attempting repair.", validation_errors.join(", ")),
                     );
 
                     let repair_req =
@@ -1031,17 +1037,17 @@ async fn attempt_translation(
                                 validate_translation(&repair_resp.response.translation);
                             if repair_validation.is_valid() {
                                 print_usage_info(&repair_resp.usage);
-                                detail_kv("Repair", "succeeded");
+                                detail_kv("Repair", "success");
                                 return (Some(repair_resp), None);
                             }
                             last_error = Some(format!(
-                                "Repair validation failed: {}",
+                                "Repair failed validation: {}",
                                 repair_validation.errors().join(", ")
                             ));
                             detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                         Err(e) => {
-                            last_error = Some(format!("Repair API error: {}", e));
+                            last_error = Some(format!("Repair request failed: {}", e));
                             detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                     }
@@ -1056,7 +1062,7 @@ async fn attempt_translation(
                     detail_kv(
                         "Attempt",
                         format!(
-                            "{}/{} failed: {}. Retrying in {}s.",
+                            "Attempt {}/{} failed: {}. Retrying in {}s.",
                             api_attempt,
                             MAX_API_RETRIES,
                             last_error.as_ref().unwrap(),
@@ -1080,7 +1086,7 @@ fn print_usage_info_with_label(label: &str, usage: &TranslationUsage) {
     detail_kv(
         label,
         format!(
-            "{} in, {} out, {} total",
+            "{} input, {} output, {} total",
             usage.input_tokens, usage.output_tokens, usage.total_tokens
         ),
     );
@@ -1109,7 +1115,7 @@ fn merge_new_glossary_terms(
     if added > 0 {
         if dupes > 0 {
             detail(format!(
-                "Added {} new glossary {} and skipped {} duplicate{}.",
+                "Added {} glossary {}; skipped {} duplicate{}.",
                 added,
                 pluralize(added, "term", "terms"),
                 dupes,
@@ -1117,7 +1123,7 @@ fn merge_new_glossary_terms(
             ));
         } else {
             detail(format!(
-                "Added {} new glossary {}.",
+                "Added {} glossary {}.",
                 added,
                 pluralize(added, "term", "terms")
             ));
@@ -1125,7 +1131,7 @@ fn merge_new_glossary_terms(
         save_glossary(glossary_path, glossary)?;
     } else if dupes > 0 {
         detail(format!(
-            "No new glossary terms added. Skipped {} duplicate{}.",
+            "No glossary terms added; skipped {} duplicate{}.",
             dupes,
             pluralize(dupes, "", "s")
         ));
@@ -1688,7 +1694,7 @@ mod tests {
         assert_eq!(plan.forced_chapters.len(), 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Full);
-        assert!(decision.reason.contains("full glossary changed"));
+        assert!(decision.reason.contains("Full glossary changed"));
     }
 
     #[test]
@@ -1738,7 +1744,11 @@ mod tests {
         assert_eq!(plan.changed_term_count, 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Smart);
-        assert!(decision.reason.contains("matched changed glossary term"));
+        assert!(
+            decision
+                .reason
+                .contains("Imported or exported glossary term changed")
+        );
     }
 
     #[test]
@@ -1773,7 +1783,7 @@ mod tests {
         assert!(
             decision
                 .reason
-                .contains("approximate smart glossary change")
+                .contains("Approximate smart glossary selection changed")
         );
         assert!(plan.warnings.is_empty());
         assert_eq!(plan.approximate_smart_checks, 1);
@@ -1892,7 +1902,11 @@ mod tests {
 
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Smart);
-        assert!(decision.reason.contains("matched changed glossary term"));
+        assert!(
+            decision
+                .reason
+                .contains("Imported or exported glossary term changed")
+        );
     }
 
     #[test]
@@ -1950,7 +1964,11 @@ mod tests {
         assert_eq!(plan.changed_term_count, 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Smart);
-        assert!(decision.reason.contains("matched changed glossary term"));
+        assert!(
+            decision
+                .reason
+                .contains("Imported or exported glossary term changed")
+        );
         assert!(decision.reason.contains("hero"));
     }
 

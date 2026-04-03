@@ -10,6 +10,8 @@ use crate::translate::prompt::build_prompt;
 use crate::translate::providers::{Provider, ProviderParams};
 use crate::translate::{ProviderTranslationResult, TranslationRequest, TranslationResponse};
 
+const EXTRACTOR_RETRIES: u64 = 1;
+
 pub struct GeminiProvider {
     client: gemini::Client,
     model: String,
@@ -84,6 +86,7 @@ impl Provider for GeminiProvider {
             .preamble(
                 "You are a professional translator. Always return valid JSON matching the TranslationResponse schema.",
             )
+            .retries(EXTRACTOR_RETRIES)
             .build();
 
         match extractor.extract_with_usage(&prompt).await {

@@ -12,6 +12,8 @@ use rig::completion::CompletionError;
 use rig::extractor::ExtractionError;
 use rig::providers::openai;
 
+const EXTRACTOR_RETRIES: u64 = 1;
+
 pub struct OpenAiProvider {
     client: openai::Client,
     model: String,
@@ -101,6 +103,7 @@ impl Provider for OpenAiProvider {
             let extractor = completions_client
                 .extractor::<TranslationResponse>(&self.model)
                 .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
+                .retries(EXTRACTOR_RETRIES)
                 .build();
 
             extractor.extract_with_usage(&prompt).await
@@ -110,6 +113,7 @@ impl Provider for OpenAiProvider {
                 .client
                 .extractor::<TranslationResponse>(&self.model)
                 .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
+                .retries(EXTRACTOR_RETRIES)
                 .build();
 
             extractor.extract_with_usage(&prompt).await

@@ -155,7 +155,7 @@ Maintain a queue of chapters to process:
 ---
 
 ### 6. Improve reason text for rerun decisions
-**Status:** Open  
+**Status:** Done  
 **Why it matters:** Current reason strings are useful but still rough, especially when explaining smart-mode changes.
 
 **Possible improvements:**
@@ -418,7 +418,7 @@ Do not overcomplicate the first version of `--rerun`. Start narrow.
 ---
 
 ### 21. Update `rig-core`
-**Status:** Open  
+**Status:** Done  
 **Why it matters:** Keep provider behavior current and reduce future compatibility debt.
 
 **Checklist when doing this:**
@@ -475,9 +475,9 @@ These were carried over from `PLAN.md` and are now represented above:
 - [ ] Smart checks chapter by chapter instead of only once at startup
 - [ ] Evolve `cipher` beyond novel translation
 - [ ] Retranslating chapters with new content
-- [ ] Update `rig-core`
+- [x] Update `rig-core`
 - [x] Figure out full glossary rerun issue
-- [ ] Better reason text
+- [x] Better reason text
 - [x] Check saving/comparing exported glossary terms from chapters
 - [ ] Plan rerun preview mode (`--dry-run`)
 - [ ] Plan status visibility for tracked vs untracked chapters
@@ -508,3 +508,26 @@ These were carried over from `PLAN.md` and are now represented above:
 **Acceptance ideas:**
 - regression test: provider schema for `TranslationResponse` contains no `$ref` to `#/$defs/GlossaryTerm` on the Nvidia/OpenAI-compatible path
 - manual check: a chapter translate request succeeds on Nvidia without the 400 grammar error
+
+---
+
+### 25. Pass provider `extras` through to rig `additional_params`
+**Status:** Optional  
+**Why it matters:** `ProviderConfig` already has an `extras` JSON field, but `cipher` currently ignores it. Passing it through would expose newer rig/provider-specific controls without expanding `cipher`'s own config surface first.
+
+**Current understanding:**
+- `ProviderConfig.extras` exists in `src/config/mod.rs`
+- provider construction currently threads only API key and model into `ProviderParams`
+- rig `0.34` extractor builders support `.additional_params(serde_json::Value)`
+- both OpenAI/OpenAI-compatible and Gemini provider paths can consume provider-specific raw JSON through that hook
+
+**Possible implementation:**
+- add `extras: Option<serde_json::Value>` to `ProviderParams`
+- clone `provider_config.extras` into provider construction
+- apply `.additional_params(extras)` conditionally on OpenAI/OpenAI-compatible and Gemini extractors
+- document this as an advanced provider-specific passthrough with no schema normalization by `cipher`
+
+**Acceptance ideas:**
+- config/provider build test: providers still resolve cleanly when `extras` is present
+- manual check: OpenAI/OpenAI-compatible extras reach rig Responses/Completions requests
+- manual check: Gemini extras such as `generationConfig` are accepted through the extractor path
