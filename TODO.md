@@ -482,6 +482,9 @@ These were carried over from `PLAN.md` and are now represented above:
 - [ ] Plan rerun preview mode (`--dry-run`)
 - [ ] Plan status visibility for tracked vs untracked chapters
 - [ ] Plan future verbose mode for detailed skip output
+- [ ] Add Openrouter provider
+- [ ] Fix display for empty chapters
+- [ ] Update config schema to merge provider and keys section
 
 ---
 
