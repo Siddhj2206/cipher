@@ -1,536 +1,372 @@
 # TODO
 
-This file collects medium-term and long-term work that should be easier to revisit than the running notes in `PLAN.md`.
+This file is the current working roadmap for `cipher`.
 
-It combines:
-- open items from the bottom of `PLAN.md`
-- follow-up work from the recent rerun / retranslate review
-- a few product-direction notes so future implementation choices stay coherent
+It is intentionally narrower than the old backlog:
+- keep items that still matter
+- mark what is already done elsewhere instead of leaving stale tasks around
+- separate near-term work from longer-term design questions
+- acknowledge that a full rerun-engine rewrite is a later decision, not current work
 
 ---
 
-## Guiding direction
-
-The desired long-term shape of `cipher` is:
+## Current direction
 
 - `smart` glossary injection is the canonical/default mode
-- reruns become reliable and explainable
-- translation acceptance and glossary extraction are treated as separate concerns
-- chapter state captures enough input fingerprints to tell when output is stale
-- `--rerun` eventually becomes the common user-facing flow
-- narrower flags like `--rerun-affected-*` remain available for advanced use
+- reruns should be understandable before they become more ambitious
 - `--overwrite` remains the "redo everything under a new regime" option
+- repair and glossary extraction should eventually become separate concerns
+- orchestration code should get simpler before rerun logic gets more ambitious
+- a full rerun-engine rewrite is explicitly deferred for now
+
+What we are not doing right now:
+- no worklist/fixpoint rerun engine rewrite yet
+- no large glossary/state model rewrite yet
+- no broad architectural rewrite just for the sake of flattening modules
 
 ---
 
-## Priority 1: Rerun correctness and predictability
+## Done recently
 
-### 1. Fix smart-mode rerun detection for newly relevant glossary terms
-**Status:** Done  
-**Why it matters:** Current tracked smart-mode rerun logic catches changed fingerprints for previously recorded terms, but it can miss terms that were not selected before and would be selected now.
+- upgrade to `rig-core 0.34`
+- add built-in Gemini provider
+- add usage-returning extractor flow and per-chapter usage persistence
+- add run token usage summary output
+- add extractor retries
+- improve rerun reason text and general translate CLI wording
+- fix smart-mode rerun detection for newly relevant glossary terms
+- move rerun planning away from one-shot startup planning with forward-only incremental replanning
 
-**Example case:**
-- chapter was translated before a glossary term existed
-- later another chapter adds that glossary term
-- chapter text would now match the new term
-- rerun planning should detect that this chapter is now affected
-
-**Desired outcome:**
-- tracked smart-mode chapters rerun when the effective smart selection changes, not only when previously tracked terms change
-
-**Possible implementation directions:**
-- compare historical selected-term fingerprints against a recomputed current selection
-- or extend exact rerun logic so it can detect selection-set expansion/contraction
-- avoid relying only on `usage.terms` and `exported_terms`
-
-**Acceptance ideas:**
-- test: new glossary term added later now forces rerun for a previously tracked smart chapter
-- test: removed glossary term also forces rerun if selection changes
+These are done and should not be treated as open backlog items anymore.
 
 ---
 
-### 2. Move rerun planning away from one-shot startup planning
-**Status:** Done  
-**Why it matters:** The current rerun plan is built once at the beginning of a run. If a chapter adds glossary terms mid-run, later decisions are not updated during that same invocation.
+## Active priorities
 
-**Questions to resolve:**
-- Should planning be recomputed after every successful chapter that mutates glossary state?
-- Should recomputation apply only to remaining chapters, or to all chapters?
-- Do we want eventual convergence in a single run, or accept multi-run convergence?
+### 1. Add chapter source hashing
+**Status:** Next up
 
-**Implementation options:**
+Why it matters:
+- glossary changes are only one source of stale output
+- content changes need a first-class rerun path
 
-#### Option A: Forward-only incremental replanning
-After a chapter succeeds and adds glossary terms:
-- recompute rerun decisions for remaining unprocessed chapters
-- simple and likely good enough for most books
+Scope for v1:
+- store a normalized raw markdown hash in chapter state
+- do not include provider/model/prompt/style fingerprints yet
 
-**Pros:**
-- much better than one-shot planning
-- easier to implement
-- lower risk of loops
-
-**Cons:**
-- can still miss earlier chapters affected by terms discovered later
-
-#### Option B: Worklist / fixpoint rerun engine
-Maintain a queue of chapters to process:
-- translate chapter
-- if glossary changes, recompute affected chapters
-- enqueue chapters whose effective inputs changed
-- stop when queue is empty
-
-**Pros:**
-- most correct model
-- naturally supports convergence
-
-**Cons:**
-- needs stronger state/fingerprinting to avoid repeated pointless reruns
-- more complex to explain and implement
-
-**Current recommendation:**
-- first implement forward-only incremental replanning
-- later evolve to worklist/fixpoint once chapter input fingerprints are stronger
-
----
-
-### 3. Design `--rerun-affected-chapters`
-**Status:** Planned  
-**Why it matters:** Glossary changes are only one source of stale output. Chapter source content changes should also have a clean rerun path.
-
-**Core idea:**
-- store chapter source-content hash in chapter state
-- compare current chapter content against stored hash
-- rerun if content changed
-
-**Likely scope for v1:**
-- hash normalized raw markdown content only
-- do not yet include provider/model/prompt/style-guide fingerprints
-
-**Acceptance ideas:**
-- modify chapter content without touching glossary
-- rerun flag detects chapter as stale
-- unchanged chapter is skipped predictably
-
----
-
-### 4. Design `--rerun`
-**Status:** Planned  
-**Why it matters:** Most users will likely want one simple rerun flag rather than many narrow options.
-
-**Proposed meaning:**
-`--rerun` = rerun if either:
-- chapter content changed
-- glossary-relevant inputs changed
-
-**CLI family proposal:**
+Expected follow-ons:
 - `--rerun-affected-chapters`
-- `--rerun-affected-glossary`
-- `--rerun` = union of both
-- keep `--overwrite` separate for "new prompt/model/provider regime"
+- a simpler future `--rerun`
 
-**Notes:**
-- provider changes, model changes, and major prompt-template changes are probably better served by `--overwrite`
-- avoid overloading `--rerun` with too many causes in the first version
+### 2. Implement `--rerun-affected-chapters`
+**Status:** Planned
 
----
+Why it matters:
+- users need a predictable way to rerun chapters whose source changed
 
-### 5. Plan rerun preview mode (`--dry-run`)
-**Status:** Planned  
-**Why it matters:** Users should be able to inspect what would rerun before committing time/cost.
+Acceptance ideas:
+- changed raw chapter reruns
+- unchanged raw chapter skips
+- works independently of glossary rerun checks
 
-**Desired output:**
-- changed glossary term count
-- chapters affected by glossary
-- chapters affected by content changes
-- whether decision was exact or approximate
+### 3. Design `--rerun`
+**Status:** Planned
+
+Desired meaning:
+- rerun if chapter source changed
+- rerun if glossary-relevant inputs changed
+
+Notes:
+- keep `--rerun-affected-glossary` and `--rerun-affected-chapters` for advanced use
+- keep `--overwrite` separate
+
+### 4. Add rerun preview mode
+**Status:** Planned
+
+Likely shape:
+- `--dry-run` on `translate`
+- possibly related visibility in `status`
+
+Useful output:
+- affected chapters
 - reason text per chapter
+- exact vs approximate decision source
 - totals by category
 
-**Open questions:**
-- Should preview include "would use smart/full injection mode"?
-- Should it display tracked vs untracked status?
-- Should preview be available for both `translate` and `status`?
+### 5. Improve tracked/untracked visibility in `status`
+**Status:** Planned
 
----
+Why it matters:
+- the current rerun model mixes exact tracking and approximation
+- users should be able to see which chapters are fully tracked
 
-### 6. Improve reason text for rerun decisions
-**Status:** Done  
-**Why it matters:** Current reason strings are useful but still rough, especially when explaining smart-mode changes.
-
-**Possible improvements:**
-- distinguish:
-  - changed imported terms
-  - changed exported terms
-  - newly relevant terms
-  - removed terms
-  - fallback-to-full transitions
-- surface mid-run replanning decisions clearly in logs:
-  - when remaining chapters are replanned after glossary updates
-  - updated affected-chapter counts for the remaining queue
-  - warnings produced by incremental replanning
-- avoid repetitive or duplicate key names
-- make reasons suitable for both logs and future dry-run output
-
-**Goal:**
-- a chapter rerun reason should be understandable without reading code
-
----
-
-### 7. Plan status visibility for tracked vs untracked chapters
-**Status:** Planned  
-**Why it matters:** Some rerun logic uses exact tracking and some uses approximation. Users should be able to see which chapters are fully tracked.
-
-**Possible status fields:**
+Potential output:
 - tracked smart selection
 - tracked full selection
-- approximate fallback used
+- approximate legacy fallback
 - exported terms recorded
 - source hash recorded
-- last effective injection mode
-
-**Possible user-facing output:**
-- `tracked`
-- `partially tracked`
-- `approximate`
-- `untracked legacy state`
 
 ---
 
-### 8. Plan future verbose mode for detailed skip output
-**Status:** Planned  
-**Why it matters:** Skip behavior is correct but often opaque.
+## Active design work
 
-**Useful verbose details:**
-- skipped because output exists
-- skipped because chapter content unchanged
-- skipped because glossary inputs unchanged
-- skipped because no rerun reason matched
-- skipped empty chapter
-- skipped due to current flag combination
+### 6. Redesign validation/repair into a cleaner pipeline
+**Status:** Open
 
----
+Current problem:
+- the initial translation response mixes accepted text and glossary extraction
+- repair can blur ownership of `new_glossary_terms`
 
-## Priority 2: Repair flow redesign
+Target pipeline:
+1. generate translation
+2. validate translation
+3. repair translation only if needed
+4. extract glossary terms after translation is accepted
 
-### 9. Redesign validation/repair into a cleaner pipeline
-**Status:** Open  
-**Why it matters:** The current repair flow works, but it mixes multiple responsibilities and makes state semantics harder to reason about.
-
-**Current problem shape:**
-- initial response tries to provide translation and new glossary terms
-- if validation fails, a repair request is made
-- repaired response becomes the accepted response
-- this blurs ownership of `new_glossary_terms`
-
-**Recommended new pipeline:**
-1. Generate translation
-2. Validate translation
-3. If needed, repair translation only
-4. After translation is accepted, extract glossary terms separately
-
-**Benefits:**
-- translation acceptance becomes independent from glossary updates
-- repair can be narrowly scoped to formatting/validation fixes
-- easier to test and reason about
+Why this matters:
 - clearer state semantics
+- easier testing
+- narrower repair behavior
 
----
+### 7. Split glossary extraction from translation response
+**Status:** Open
 
-### 10. Split glossary extraction from translation response
-**Status:** Open  
-**Why it matters:** Glossary extraction is a different concern from chapter translation.
+This is the concrete follow-on to the repair redesign.
 
-**Potential design:**
-- translation endpoint/prompt returns only accepted chapter content
-- glossary extraction runs as:
-  - a second model call, or
-  - a future deterministic extractor, or
-  - an optional post-processing step
+Questions to answer:
+- is glossary extraction mandatory for every success?
+- should extraction happen in a second call?
+- should extraction be skipped in some fallback or repair paths?
 
-**Questions to resolve:**
-- Is glossary extraction mandatory for every successful chapter?
-- Should extraction be skipped on retries/fallbacks?
-- Can glossary extraction run against accepted translation + raw source together?
+### 8. Narrow repair semantics
+**Status:** Open
 
-**Tradeoff:**
-- more requests vs much cleaner behavior
-
----
-
-### 11. Narrow repair semantics
-**Status:** Open  
-**Why it matters:** Repair should not accidentally behave like a fresh retranslation.
-
-**Potential repair contract:**
+Desired repair contract:
 - fix structure only
-- preserve meaning/content as much as possible
+- preserve meaning as much as possible
 - do not invent glossary terms
-- do not rewrite tone/style beyond what is needed for validity
+- do not rewrite style unless required for validity
 
-**Future prompt design goals:**
-- minimal patch framing
-- explicit list of validation failures
-- avoid "rewrite the whole chapter" behavior unless absolutely necessary
+### 9. Revisit validation strictness after repair redesign
+**Status:** Open
 
----
-
-### 12. Revisit validation strictness after repair redesign
-**Status:** Open  
-**Why it matters:** Validation should catch genuinely bad outputs without fighting legitimate prose.
-
-**Future work:**
+Follow-up areas:
 - separate hard failures from warnings
 - identify cases that can be auto-cleaned locally
-- evaluate whether heading checks should remain strict or become configurable
+- decide whether heading checks remain strict or become configurable
 
 ---
 
-## Priority 3: Smart/full glossary mode strategy
+## Simplification and cleanup
 
-### 13. Decide long-term role of `full` mode
-**Status:** Open  
-**Why it matters:** `full` currently exists, but the intended future is clearly centered around `smart`.
+These are worthwhile because they reduce cognitive load without changing product direction.
 
-**Possible strategies:**
+### 10. Refactor `main` into command-specific runners
+**Status:** Good cleanup
 
-#### Option A: Soft-deprecate `full`
-- keep it supported
-- warn that tracking/rerun quality is optimized for `smart`
-- simplest path
+Goal:
+- keep `main()` focused on parse + dispatch + one error path
 
-#### Option B: One-time migration to smart
-- if old baseline is `full` and current config is `smart`, trigger one-time normalization reruns
-- after that, book becomes smart-native
+Likely extraction targets:
+- `run_init(...)`
+- `run_import(...)`
+- `run_translate(...)`
+- `run_status(...)`
+- `run_doctor(...)`
+- `run_profile(...)`
 
-#### Option C: Treat `full` as non-canonical/emergency mode
-- allow `full` for current run
-- do not let `full` redefine canonical tracked baseline
-- `smart` remains the only mode that drives long-term rerun state
+### 11. Simplify `translate_single_chapter`
+**Status:** High-value cleanup
 
-**Current recommendation:**
-- strongly consider Option C if simplification is the priority
+Why it matters:
+- it repeats similar `ChapterResult` / `ChapterState` construction across skip/success/failure branches
 
----
+Preferred direction:
+- extract small helpers for skipped/success/failed result assembly
+- do not redesign the overall flow yet
 
-### 14. Review mode-switch behavior explicitly
-**Status:** Open  
-**Why it matters:** Even if `full` stays supported, switching modes changes prompt inputs materially.
+### 12. Break `import_epub` into clearer phases
+**Status:** Medium-value cleanup
 
-**Need to decide:**
-- should switching `smart <-> full` trigger reruns?
-- should only one direction trigger reruns?
-- should full-mode runs avoid advancing canonical baseline entirely?
+Likely phases:
+- prepare target
+- confirm reimport behavior
+- clean existing raw chapters if needed
+- import spine chapters
 
-**Note:**
-This should be answered intentionally rather than emerging accidentally from state logic.
+### 13. Simplify interactive profile flows
+**Status:** Medium-value cleanup
 
----
+Targets:
+- `select_or_create_provider_sectioned`
+- `select_or_create_api_key_sectioned`
 
-## Priority 4: State model evolution
+Goal:
+- separate menu branching from config mutation logic
 
-### 15. Expand chapter state to store chapter content hash
-**Status:** Planned  
-**Why it matters:** Required for `--rerun-affected-chapters` and foundational for better rerun logic.
+### 14. Keep polishing `profile new`
+**Status:** Follow-up polish
 
-**Likely fields:**
-- `source_hash`
-- maybe later `source_size` or `source_mtime` for diagnostics
-- keep hash authoritative, not mtime
-
----
-
-### 16. Consider future "effective input fingerprint" per chapter
-**Status:** Future  
-**Why it matters:** If rerun logic becomes worklist/fixpoint-based, the engine needs a stable way to decide whether a chapter has already been translated under equivalent inputs.
-
-**Potential future inputs:**
-- chapter source hash
-- selected glossary term fingerprints
-- style guide hash
-- injection mode
-- prompt version
-- maybe provider/model identity
-
-**Important caution:**
-Do not overcomplicate the first version of `--rerun`. Start narrow.
-
----
-
-### 17. Revisit exported-term tracking semantics after retranslation
-**Status:** Partially explored  
-**Why it matters:** A chapter may export glossary terms that later get imported through normal smart selection, and retranslation can change which association should be preserved.
-
-**Questions to answer explicitly:**
-- Should `exported_terms` represent only terms newly added by the last successful run?
-- Or all terms the chapter "claimed" semantically, even if already present?
-- If a rerun emits no new terms, should old exported associations be cleared or retained?
-
-**Need:**
-- settle semantics before tightening rerun logic further
-
----
-
-## Priority 5: UX, observability, and product direction
-
-### 18. Better way to store API keys
-**Status:** Open  
-**Why it matters:** Current storage works, but security and ergonomics can improve.
-
-**Ideas to explore:**
-- OS keyring / secret service integration
-- env-var indirection
-- encrypted local storage
-- profile-level references to key labels only
-- explicit import/export story that never leaks secret material
-
-**Questions:**
-- What should `cipher profile new` feel like if secrets are not stored in plain config?
-- How portable should key configuration be across machines?
-
----
-
-### 19. Better `profile new` styling and layout
-**Status:** Mostly done, but keep room for follow-up  
-**Why it matters:** First-run UX matters a lot.
-
-**Possible future polish:**
+Potential follow-ons:
 - clearer defaults
 - cleaner summaries before saving
-- better distinction between provider creation vs provider reuse
+- better distinction between provider creation and provider reuse
 - more obvious key-selection flow
 
----
+### 15. Revisit `translate_book` structure after smaller cleanups
+**Status:** Later cleanup
 
-### 20. Evolve `cipher` beyond novel translation
-**Status:** Open  
-**Why it matters:** The architecture may eventually support documentation translation or other structured markdown workflows.
+Why later:
+- it is a real hotspot, but it should be simplified after `translate_single_chapter` and `main`
+- avoid moving complexity around before smaller boundaries are clearer
 
-**Questions to explore:**
-- what assumptions are novel-specific today?
-- are glossary/style concepts general enough for docs?
-- should chapter discovery generalize to sections/pages/doc trees?
-- do validation rules need profiles by content type?
+### 16. Do not rewrite the rerun engine yet
+**Status:** Deferred intentionally
 
-**Goal:**
-- keep core abstractions broad enough that future expansion is possible without bloating current UX
+Current position:
+- the current rerun logic is already nuanced and somewhat complex
+- a worklist/fixpoint engine may eventually be cleaner, but not yet
+- any future rewrite should wait until source hashing and simpler rerun UX exist first
 
----
-
-### 21. Update `rig-core`
-**Status:** Done  
-**Why it matters:** Keep provider behavior current and reduce future compatibility debt.
-
-**Checklist when doing this:**
-- confirm extractor behavior still matches expectations
-- confirm OpenAI vs OpenAI-compatible differences remain handled correctly
-- rerun schema/structured-output checks
-- watch for response API changes
+In other words:
+- keep improving explainability and tracking now
+- postpone full engine replacement until the product shape is clearer
 
 ---
 
-## Nice-to-have implementation cleanup
+## UX and config follow-ups
 
-### 22. Improve status/reporting around skipped-but-previously-successful chapters
-**Status:** Future  
-**Why it matters:** A chapter may be skipped this run but still represent a successful prior translation. Status output should remain intuitive.
+### 17. Improve status/reporting for skipped-but-previously-successful chapters
+**Status:** Future
 
-**Question:**
-- Should "skipped this run" and "last successful translation state" be represented separately?
+Why it matters:
+- a chapter may be skipped this run while still representing a valid successful prior translation
+- status output should make that distinction obvious
 
----
+### 18. Add more detailed skip output
+**Status:** Planned
 
-### 23. Revisit glossary matcher caching only if performance becomes real-world issue
-**Status:** Deferred unless needed  
-**Why it matters:** Current smart selection is working; do not optimize prematurely.
+Useful cases to surface:
+- skipped because output exists
+- skipped because chapter content is unchanged
+- skipped because glossary inputs are unchanged
+- skipped because no rerun reason matched
+- skipped because the chapter is empty
+- skipped because of the current flag combination
 
-**Only do this if:**
+### 19. Fix display for empty chapters
+**Status:** Open
+
+Why it matters:
+- empty chapters should read clearly in CLI/status output instead of looking like an ambiguous failure or generic skip
+
+### 20. Revisit config schema for providers and keys
+**Status:** Open
+
+Why it matters:
+- the current split between provider config and keyed secrets may not be the cleanest long-term shape
+- revisit whether provider and key sections should merge or relate more directly
+
+### 21. Revisit glossary matcher caching only if performance becomes a real issue
+**Status:** Deferred unless needed
+
+Only do this if:
 - large books show measurable slowdown
-- profiling confirms matcher rebuild cost matters
+- profiling shows matcher rebuild cost actually matters
 
 ---
 
-## Suggested implementation order
+## Product and policy decisions
 
-1. Fix smart-mode rerun detection for newly relevant terms
-2. Move rerun planning to incremental replanning
-3. Add chapter source hashing
-4. Implement `--rerun-affected-chapters`
-5. Implement `--rerun`
-6. Add dry-run preview
-7. Improve reason text and tracked/untracked visibility
-8. Redesign repair flow
-9. Decide final long-term role of `full`
-10. Revisit exported-term semantics if needed
+### 22. Decide the long-term role of `full` mode
+**Status:** Open
 
----
+Current leaning:
+- keep `smart` as canonical
+- treat `full` as non-canonical or emergency mode unless there is a strong reason not to
 
-## Notes from previous ad-hoc TODOs
+### 23. Review mode-switch behavior explicitly
+**Status:** Open
 
-These were carried over from `PLAN.md` and are now represented above:
+Need to decide:
+- should switching `smart <-> full` trigger reruns?
+- should full-mode runs advance canonical baseline?
 
-- [x] Update chapter state checks even when glossary state has not changed
-- [ ] Work on a better way to store API keys
-- [x] Better `profile new` styling and layout
-- [ ] Smart checks chapter by chapter instead of only once at startup
-- [ ] Evolve `cipher` beyond novel translation
-- [ ] Retranslating chapters with new content
-- [x] Update `rig-core`
-- [x] Figure out full glossary rerun issue
-- [x] Better reason text
-- [x] Check saving/comparing exported glossary terms from chapters
-- [ ] Plan rerun preview mode (`--dry-run`)
-- [ ] Plan status visibility for tracked vs untracked chapters
-- [ ] Plan future verbose mode for detailed skip output
-- [ ] Add Openrouter provider
-- [ ] Fix display for empty chapters
-- [ ] Update config schema to merge provider and keys section
+### 24. Revisit exported-term tracking semantics
+**Status:** Open
+
+Need to decide:
+- should `exported_terms` mean only newly added terms from the last success?
+- or should it preserve a broader semantic claim by the chapter?
+
+### 25. Better API key storage
+**Status:** Open
+
+Ideas to explore:
+- OS keyring / secret service
+- env-var indirection
+- encrypted local storage
+
+### 26. Evolve `cipher` beyond novel translation
+**Status:** Open
+
+Questions:
+- what is novel-specific today?
+- can glossary/style abstractions generalize to docs or other markdown workflows?
 
 ---
 
 ## Optional follow-up fixes
 
-### 24. Flatten structured-output schema for Nvidia / OpenAI-compatible providers
-**Status:** Optional  
-**Why it matters:** Some OpenAI-compatible endpoints reject structured-output schemas that contain `$defs` references, which currently breaks glossary extraction for providers like Nvidia.
+These are real but not core roadmap items.
 
-**Observed failure:**
+### 27. Flatten structured-output schema for Nvidia / OpenAI-compatible providers
+**Status:** Optional
+
+Why it matters:
+- some OpenAI-compatible endpoints reject schemas that contain `$defs` references
+
+Observed failure:
 - `HTTP 400 Bad Request`
 - `Grammar error: Pointer '/$defs/GlossaryTerm' does not exist`
 
-**Current understanding:**
-- `TranslationResponse` includes `new_glossary_terms: Vec<GlossaryTerm>`
-- the generated JSON schema uses a `$ref` to `#/$defs/GlossaryTerm`
-- rig's OpenAI-compatible extractor path sends that schema as-is
-- Nvidia appears not to support that reference format in this path
+Likely direction:
+- flatten or inline `$defs` references before sending schemas on OpenAI-compatible paths
 
-**Possible fix:**
-- flatten or inline `$defs` references before sending the schema on OpenAI-compatible provider paths
-- keep the existing path for providers that already accept the current schema
+### 28. Pass provider `extras` through to rig `additional_params`
+**Status:** Optional
 
-**Acceptance ideas:**
-- regression test: provider schema for `TranslationResponse` contains no `$ref` to `#/$defs/GlossaryTerm` on the Nvidia/OpenAI-compatible path
-- manual check: a chapter translate request succeeds on Nvidia without the 400 grammar error
+Why it matters:
+- `ProviderConfig.extras` exists but is currently ignored
+
+Likely direction:
+- add `extras` to provider construction
+- pass it through to OpenAI/OpenAI-compatible and Gemini extractor builders
+- document it as an advanced raw passthrough feature
+
+### 29. Surface persisted usage in `status`
+**Status:** Nice to have
+
+Why it matters:
+- usage is now collected and persisted per chapter, but `status` does not expose it yet
+
+### 30. Revisit first-class OpenRouter support only if the structured-output story changes
+**Status:** Deferred
+
+Current understanding:
+- the native rig OpenRouter provider is not a good fit for `cipher` right now because `cipher` depends on structured extraction
+- if that changes in rig, revisit whether OpenRouter should be a first-class provider instead of only going through compatible paths
 
 ---
 
-### 25. Pass provider `extras` through to rig `additional_params`
-**Status:** Optional  
-**Why it matters:** `ProviderConfig` already has an `extras` JSON field, but `cipher` currently ignores it. Passing it through would expose newer rig/provider-specific controls without expanding `cipher`'s own config surface first.
+## Suggested order
 
-**Current understanding:**
-- `ProviderConfig.extras` exists in `src/config/mod.rs`
-- provider construction currently threads only API key and model into `ProviderParams`
-- rig `0.34` extractor builders support `.additional_params(serde_json::Value)`
-- both OpenAI/OpenAI-compatible and Gemini provider paths can consume provider-specific raw JSON through that hook
-
-**Possible implementation:**
-- add `extras: Option<serde_json::Value>` to `ProviderParams`
-- clone `provider_config.extras` into provider construction
-- apply `.additional_params(extras)` conditionally on OpenAI/OpenAI-compatible and Gemini extractors
-- document this as an advanced provider-specific passthrough with no schema normalization by `cipher`
-
-**Acceptance ideas:**
-- config/provider build test: providers still resolve cleanly when `extras` is present
-- manual check: OpenAI/OpenAI-compatible extras reach rig Responses/Completions requests
-- manual check: Gemini extras such as `generationConfig` are accepted through the extractor path
+1. add chapter source hashing
+2. implement `--rerun-affected-chapters`
+3. design a first useful `--rerun`
+4. add rerun preview and better status visibility
+5. simplify `main` and `translate_single_chapter`
+6. redesign validation/repair and split glossary extraction
+7. revisit `full` mode and exported-term policy questions
+8. only then consider whether a larger rerun-engine rewrite is still worth it
