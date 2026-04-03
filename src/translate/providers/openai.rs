@@ -6,11 +6,13 @@
 
 use crate::translate::prompt::build_prompt;
 use crate::translate::providers::{Provider, ProviderParams};
-use crate::translate::{TranslationRequest, TranslationResponse};
+use crate::translate::{ProviderTranslationResult, TranslationRequest, TranslationResponse};
 use anyhow::Result;
 use rig::completion::CompletionError;
 use rig::extractor::ExtractionError;
 use rig::providers::openai;
+
+const EXTRACTOR_RETRIES: u64 = 1;
 
 pub struct OpenAiProvider {
     client: openai::Client,
@@ -92,7 +94,7 @@ fn format_extraction_error(err: &ExtractionError) -> String {
 
 #[async_trait::async_trait]
 impl Provider for OpenAiProvider {
-    async fn translate(&self, req: TranslationRequest) -> Result<TranslationResponse> {
+    async fn translate(&self, req: TranslationRequest) -> Result<ProviderTranslationResult> {
         let prompt = build_prompt(&req);
 
         let result = if self.use_completions_api {
@@ -101,22 +103,27 @@ impl Provider for OpenAiProvider {
             let extractor = completions_client
                 .extractor::<TranslationResponse>(&self.model)
                 .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
+                .retries(EXTRACTOR_RETRIES)
                 .build();
 
-            extractor.extract(&prompt).await
+            extractor.extract_with_usage(&prompt).await
         } else {
             // Use Responses API (for real OpenAI - best structured output support)
             let extractor = self
                 .client
                 .extractor::<TranslationResponse>(&self.model)
                 .preamble("You are a professional translator. Always return valid JSON matching the TranslationResponse schema.")
+                .retries(EXTRACTOR_RETRIES)
                 .build();
 
-            extractor.extract(&prompt).await
+            extractor.extract_with_usage(&prompt).await
         };
 
         match result {
-            Ok(response) => Ok(response),
+            Ok(extracted) => Ok(ProviderTranslationResult {
+                response: extracted.data,
+                usage: extracted.usage.into(),
+            }),
             Err(err) => {
                 let detailed_error = format_extraction_error(&err);
                 Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))

@@ -12,10 +12,10 @@ use crate::state::{
     load_glossary_state, normalize_chapter_path, save_chapter_state, save_glossary_state,
     save_run_metadata,
 };
-use crate::translate::Translator;
+use crate::translate::{ProviderTranslationResult, TranslationUsage, Translator};
 use crate::validate::validate_translation;
 use anyhow::{Context, Result};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -31,6 +31,7 @@ struct ChapterResult {
     failed: bool,
     skipped: bool,
     new_terms_added: usize,
+    usage: Option<TranslationUsage>,
     chapter_state: ChapterState,
 }
 
@@ -112,7 +113,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .context("Failed to create translator")?;
 
     // Discover chapters
-    let chapters = discover_chapters(&layout.paths.raw_dir)?;
+    let chapters: VecDeque<PathBuf> = discover_chapters(&layout.paths.raw_dir)?
+        .into_iter()
+        .collect();
     if chapters.is_empty() {
         section("No chapters found");
         detail_kv("Directory", layout.paths.raw_dir.display());
@@ -150,7 +153,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let rerun_plan = if options.rerun_affected_glossary {
         section("Planning glossary-affected chapter reruns");
         let plan = build_glossary_rerun_plan(
-            &chapters,
+            &Vec::from(chapters.clone()),
             &layout.paths.raw_dir,
             out_dir,
             previous_glossary_state.as_ref(),
@@ -158,10 +161,13 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             &glossary,
             injection_mode,
         )?;
-        detail_kv("Changed glossary terms", plan.changed_term_count);
+        detail_kv("Changed glossary entries", plan.changed_term_count);
         detail_kv("Affected chapters", plan.forced_chapters.len());
         if plan.approximate_smart_checks > 0 {
-            detail_kv("Approximate smart checks", plan.approximate_smart_checks);
+            detail_kv(
+                "Approximate smart rerun checks",
+                plan.approximate_smart_checks,
+            );
         }
         for warning in &plan.warnings {
             warn(warning);
@@ -193,9 +199,12 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut skipped = 0;
     let mut failed = 0;
     let mut new_glossary_terms = 0;
+    let mut total_usage = TranslationUsage::default();
 
-    // Process each chapter
-    for chapter_file in &chapters {
+    let mut remaining_chapters = chapters.clone();
+    let mut rerun_plan = rerun_plan;
+
+    while let Some(chapter_file) = remaining_chapters.pop_front() {
         let chapter_path = chapter_state_key(&layout.paths.raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
@@ -218,7 +227,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .await?;
 
         checkpoint_chapter_progress(book_dir, &mut run_metadata, &result.chapter_state)?;
-        previous_chapter_states.insert(chapter_path, result.chapter_state.clone());
+        previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
 
         if result.translated {
             translated += 1;
@@ -233,7 +242,25 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 break;
             }
         }
+        if let Some(usage) = result.usage {
+            total_usage += usage;
+        }
         new_glossary_terms += result.new_terms_added;
+
+        if result.new_terms_added > 0
+            && options.rerun_affected_glossary
+            && !remaining_chapters.is_empty()
+        {
+            rerun_plan = build_glossary_rerun_plan(
+                &Vec::from(remaining_chapters.clone()),
+                &layout.paths.raw_dir,
+                out_dir,
+                previous_glossary_state.as_ref(),
+                &previous_chapter_states,
+                &glossary,
+                injection_mode,
+            )?;
+        }
     }
 
     let baseline_outcome = finalize_glossary_baseline(
@@ -241,7 +268,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         &options,
         previous_glossary_state.as_ref(),
         &run_start_glossary_state,
-        &chapters,
+        &Vec::from(chapters),
         &layout.paths.raw_dir,
         out_dir,
         &previous_chapter_states,
@@ -252,7 +279,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     if baseline_outcome.remaining_forced_chapters > 0 {
         warn(format!(
-            "Glossary baseline not updated; {} affected chapter(s) still need reruns.",
+            "Glossary baseline was not updated because {} affected chapter(s) still need reruns.",
             baseline_outcome.remaining_forced_chapters
         ));
     }
@@ -265,7 +292,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     detail_kv("Translated", translated);
     detail_kv("Skipped", skipped);
     detail_kv("Failed", failed);
-    detail_kv("New glossary terms", new_glossary_terms);
+    detail_kv("Glossary terms added", new_glossary_terms);
+    if total_usage.total_tokens > 0 {
+        print_usage_info_with_label("Token usage", &total_usage);
+    }
 
     if failed > 0 {
         anyhow::bail!("{} chapter(s) failed to translate", failed);
@@ -301,19 +331,24 @@ async fn translate_single_chapter(
             failed: false,
             skipped: true,
             new_terms_added: 0,
+            usage: None,
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Skipped,
                 None,
                 None,
+                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+                previous_chapter_state
+                    .map(|s| s.exported_terms.clone())
+                    .unwrap_or_default(),
             ),
         });
     }
 
     if let Some(decision) = rerun_decision {
         println!("Retranslating {}", chapter_path);
-        detail_kv("Reason", &decision.reason);
+        detail_kv("Rerun reason", &decision.reason);
     } else {
         println!("Translating {}", chapter_path);
     }
@@ -328,12 +363,17 @@ async fn translate_single_chapter(
             failed: false,
             skipped: true,
             new_terms_added: 0,
+            usage: None,
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Skipped,
-                Some("Empty file".to_string()),
+                Some("Chapter is empty".to_string()),
                 None,
+                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+                previous_chapter_state
+                    .map(|s| s.exported_terms.clone())
+                    .unwrap_or_default(),
             ),
         });
     }
@@ -350,6 +390,8 @@ async fn translate_single_chapter(
     let duration = start.elapsed();
 
     if let Some(resp) = response {
+        print_usage_info(&resp.usage);
+
         // Backup if overwriting existing file
         if output_exists {
             let backup_path = create_backup(book_dir, out_path)?;
@@ -357,28 +399,31 @@ async fn translate_single_chapter(
         }
 
         // Write output atomically
-        atomic_write(out_path, &resp.translation)
+        atomic_write(out_path, &resp.response.translation)
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
         // Merge glossary terms
-        let new_terms_added =
-            merge_new_glossary_terms(glossary, resp.new_glossary_terms, glossary_path)?;
+        let (new_terms_added, exported_terms) =
+            merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
 
-        detail_kv("Result", "translated");
+        detail_kv("Result", "success");
         return Ok(ChapterResult {
             translated: true,
             failed: false,
             skipped: false,
             new_terms_added,
+            usage: Some(resp.usage.clone()),
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Success,
                 None,
                 Some(duration.as_millis() as u64),
+                Some(resp.usage),
                 Some(build_chapter_glossary_usage(
                     &selection,
                     chapter_injection_mode,
                 )),
+                exported_terms,
             ),
         });
     }
@@ -386,19 +431,25 @@ async fn translate_single_chapter(
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
     detail_kv(
         "Result",
-        format!("failed after {} attempts: {}", MAX_API_RETRIES, error_msg),
+        format!("failed after {} attempts", MAX_API_RETRIES),
     );
+    detail_kv("Error", &error_msg);
     Ok(ChapterResult {
         translated: false,
         failed: true,
         skipped: false,
         new_terms_added: 0,
+        usage: None,
         chapter_state: ChapterState::new(
             chapter_path.to_string(),
             ChapterStatus::Failed,
             Some(error_msg),
             Some(duration.as_millis() as u64),
+            None,
             previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+            previous_chapter_state
+                .map(|s| s.exported_terms.clone())
+                .unwrap_or_default(),
         ),
     })
 }
@@ -545,7 +596,6 @@ fn build_glossary_rerun_plan(
 ) -> Result<GlossaryRerunPlan> {
     let mut plan = GlossaryRerunPlan::default();
     let current_glossary_state = build_glossary_state(current_glossary, injection_mode);
-    let current_fingerprints = snapshot_fingerprints(&current_glossary_state.terms);
 
     let changed_term_keys = previous_glossary_state
         .map(|glossary| {
@@ -573,10 +623,25 @@ fn build_glossary_rerun_plan(
 
         if let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path) {
             if let Some(usage) = &previous_chapter_state.glossary_usage {
-                if let Some(decision) =
-                    exact_rerun_decision(usage, &changed_term_keys, &current_fingerprints)
-                {
-                    plan.forced_chapters.insert(chapter_path, decision);
+                // Need previous_glossary_state for smart mode comparison
+                if let Some(prev_state) = previous_glossary_state {
+                    if let Some(decision) = exact_rerun_decision(
+                        chapter_file,
+                        usage,
+                        &previous_chapter_state.exported_terms,
+                        prev_state,
+                        current_glossary,
+                        &changed_term_keys,
+                        injection_mode,
+                    )? {
+                        plan.forced_chapters.insert(chapter_path, decision);
+                    }
+                } else {
+                    // No glossary state but chapter has tracked usage - can't compare
+                    plan.warnings.push(format!(
+                        "Chapter {} has glossary usage but no glossary state recorded",
+                        chapter_path
+                    ));
                 }
                 continue;
             }
@@ -653,38 +718,119 @@ fn changed_prompt_relevant_keys(
 }
 
 fn exact_rerun_decision(
+    raw_path: &Path,
     usage: &ChapterGlossaryUsage,
+    exported_terms: &[ChapterGlossaryTerm],
+    previous_glossary_state: &GlossaryState,
+    current_glossary: &[GlossaryTerm],
     changed_term_keys: &BTreeSet<String>,
-    current_fingerprints: &BTreeMap<String, String>,
-) -> Option<GlossaryRerunDecision> {
-    let effective_mode = effective_usage_injection_mode(usage);
+    injection_mode: InjectionMode,
+) -> Result<Option<GlossaryRerunDecision>> {
+    match injection_mode {
+        InjectionMode::Full => {
+            // For full mode, check if any glossary terms changed
+            Ok(
+                full_glossary_rerun_reason(changed_term_keys).map(|reason| GlossaryRerunDecision {
+                    reason,
+                    injection_mode: InjectionMode::Full,
+                }),
+            )
+        }
+        InjectionMode::Smart => {
+            // For smart mode, first check if the glossary fingerprint changed for any
+            // previously selected or exported term. If so, we need to rerun.
+            let current_fingerprints: BTreeMap<String, String> = current_glossary
+                .iter()
+                .map(|term| {
+                    (
+                        glossary_term_key(term),
+                        glossary_term_prompt_fingerprint(term),
+                    )
+                })
+                .collect();
 
-    if effective_mode == InjectionMode::Full {
-        return full_glossary_rerun_reason(changed_term_keys).map(|reason| GlossaryRerunDecision {
-            reason,
-            injection_mode: InjectionMode::Full,
-        });
-    }
+            let all_terms: Vec<&ChapterGlossaryTerm> =
+                usage.terms.iter().chain(exported_terms.iter()).collect();
 
-    let changed_keys: Vec<String> = usage
-        .terms
-        .iter()
-        .filter_map(|term| match current_fingerprints.get(&term.key) {
-            Some(fingerprint) if fingerprint == &term.fingerprint => None,
-            _ => Some(term.key.clone()),
-        })
-        .collect();
+            let fingerprint_changed_keys: Vec<String> = all_terms
+                .iter()
+                .filter_map(|term| match current_fingerprints.get(&term.key) {
+                    Some(fingerprint) if fingerprint == &term.fingerprint => None,
+                    _ => Some(term.key.clone()),
+                })
+                .collect();
 
-    if changed_keys.is_empty() {
-        None
-    } else {
-        Some(GlossaryRerunDecision {
-            reason: format!(
-                "matched changed glossary term(s): {}",
-                changed_keys.join(", ")
-            ),
-            injection_mode: InjectionMode::Smart,
-        })
+            if !fingerprint_changed_keys.is_empty() {
+                // At least one previously selected/exported term's fingerprint changed
+                return Ok(Some(GlossaryRerunDecision {
+                    reason: format!(
+                        "Imported or exported glossary term changed: {}",
+                        fingerprint_changed_keys.join(", ")
+                    ),
+                    injection_mode: InjectionMode::Smart,
+                }));
+            }
+
+            // No fingerprint changes for tracked terms. Now check if the smart selection
+            // itself would produce a different set of terms (e.g., new terms that now match
+            // the chapter text, or terms that were removed from the glossary).
+            // This handles the case where a glossary term is added later that would now
+            // be selected for this chapter.
+            let chapter_text = match std::fs::read_to_string(raw_path) {
+                Ok(text) => text,
+                Err(e) => {
+                    return Err(e)
+                        .with_context(|| format!("Failed to read {}", raw_path.display()));
+                }
+            };
+
+            if chapter_text.trim().is_empty() {
+                return Ok(None);
+            }
+
+            // Reconstruct previous glossary from state
+            let previous_glossary = glossary_terms_from_state(previous_glossary_state);
+
+            // Run smart selection on both old and new glossaries
+            let previous_selection =
+                select_terms_for_text(&previous_glossary, &chapter_text, InjectionMode::Smart);
+            let current_selection =
+                select_terms_for_text(current_glossary, &chapter_text, InjectionMode::Smart);
+
+            // Check if fallback state changed (e.g., was fallback before but not now, or vice versa)
+            let fallback_changed =
+                previous_selection.used_fallback_to_full != current_selection.used_fallback_to_full;
+
+            // Compare the two selections to detect changes
+            let previous_terms = selection_fingerprints(&previous_selection.terms);
+            let current_terms = selection_fingerprints(&current_selection.terms);
+            let selection_changed_keys =
+                changed_selected_term_keys(&previous_terms, &current_terms);
+
+            if selection_changed_keys.is_empty() && !fallback_changed {
+                Ok(None)
+            } else {
+                let reason = if fallback_changed {
+                    format!(
+                        "Smart glossary selection changed fallback behavior: {} -> {}",
+                        fallback_state_label(previous_selection.used_fallback_to_full),
+                        fallback_state_label(current_selection.used_fallback_to_full)
+                    )
+                } else {
+                    format!(
+                        "Smart glossary selection changed: {}",
+                        selection_changed_keys
+                            .into_iter()
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
+                Ok(Some(GlossaryRerunDecision {
+                    reason,
+                    injection_mode: InjectionMode::Smart,
+                }))
+            }
+        }
     }
 }
 
@@ -710,10 +856,7 @@ fn approximate_smart_rerun_decision(
     if previous_selection.used_fallback_to_full || current_selection.used_fallback_to_full {
         return Ok(full_glossary_rerun_reason(changed_term_keys).map(|reason| {
             GlossaryRerunDecision {
-                reason: format!(
-                    "approximate smart fallback matched full glossary change: {}",
-                    reason
-                ),
+                reason: format!("Approximate rerun after smart fallback matched: {}", reason),
                 injection_mode: InjectionMode::Full,
             }
         }));
@@ -728,7 +871,7 @@ fn approximate_smart_rerun_decision(
     } else {
         Ok(Some(GlossaryRerunDecision {
             reason: format!(
-                "approximate smart glossary change: {}",
+                "Approximate smart glossary selection changed: {}",
                 changed_keys.into_iter().collect::<Vec<_>>().join(", ")
             ),
             injection_mode: InjectionMode::Smart,
@@ -741,13 +884,21 @@ fn full_glossary_rerun_reason(changed_term_keys: &BTreeSet<String>) -> Option<St
         None
     } else {
         Some(format!(
-            "full glossary changed: {}",
+            "Full glossary changed: {}",
             changed_term_keys
                 .iter()
                 .cloned()
                 .collect::<Vec<_>>()
                 .join(", ")
         ))
+    }
+}
+
+fn fallback_state_label(used_fallback_to_full: bool) -> &'static str {
+    if used_fallback_to_full {
+        "fallback to full"
+    } else {
+        "smart selection only"
     }
 }
 
@@ -799,14 +950,6 @@ fn glossary_state_injection_mode(mode: GlossaryInjectionMode) -> InjectionMode {
     }
 }
 
-fn effective_usage_injection_mode(usage: &ChapterGlossaryUsage) -> InjectionMode {
-    if usage.used_fallback_to_full || usage.injection_mode == GlossaryInjectionMode::Full {
-        InjectionMode::Full
-    } else {
-        InjectionMode::Smart
-    }
-}
-
 fn chapter_state_key(raw_dir: &Path, chapter_file: &Path) -> Result<String> {
     let relative_path = chapter_file
         .strip_prefix(raw_dir)
@@ -828,7 +971,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
                 detail_kv(
                     "Glossary",
                     format!(
-                        "full (fallback from smart), {}/{} terms",
+                        "smart fallback to full, {}/{} terms",
                         selection.selected_count, selection.total_count
                     ),
                 );
@@ -836,7 +979,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
                 detail_kv(
                     "Glossary",
                     format!(
-                        "smart, {}/{} terms",
+                        "smart selection, {}/{} terms",
                         selection.selected_count, selection.total_count
                     ),
                 );
@@ -855,10 +998,7 @@ async fn attempt_translation(
     chapter_text: &str,
     selection: &SelectionResult,
     style_guide: &Option<String>,
-) -> (
-    Option<crate::translate::TranslationResponse>,
-    Option<String>,
-) {
+) -> (Option<ProviderTranslationResult>, Option<String>) {
     let mut last_error: Option<String> = None;
 
     for api_attempt in 1..=MAX_API_RETRIES {
@@ -867,7 +1007,7 @@ async fn attempt_translation(
             .await
         {
             Ok(resp) => {
-                let validation = validate_translation(&resp.translation);
+                let validation = validate_translation(&resp.response.translation);
                 if validation.is_valid() {
                     return (Some(resp), None);
                 }
@@ -881,34 +1021,33 @@ async fn attempt_translation(
                 if api_attempt == 1 {
                     detail_kv(
                         "Validation",
-                        format!(
-                            "failed: {}. Attempting repair.",
-                            validation_errors.join(", ")
-                        ),
+                        format!("{} Attempting repair.", validation_errors.join(", ")),
                     );
 
                     let repair_req =
                         crate::translate::TranslationRequest::new(chapter_text.to_string())
                             .with_glossary_terms(selection.terms.clone())
                             .with_style_guide(style_guide.clone())
-                            .with_failed_translation(resp.translation)
+                            .with_failed_translation(resp.response.translation)
                             .with_validation_errors(validation_errors.to_vec());
 
                     match translator.translate_with_request(&repair_req).await {
                         Ok(repair_resp) => {
-                            let repair_validation = validate_translation(&repair_resp.translation);
+                            let repair_validation =
+                                validate_translation(&repair_resp.response.translation);
                             if repair_validation.is_valid() {
-                                detail_kv("Repair", "succeeded");
+                                print_usage_info(&repair_resp.usage);
+                                detail_kv("Repair", "success");
                                 return (Some(repair_resp), None);
                             }
                             last_error = Some(format!(
-                                "Repair validation failed: {}",
+                                "Repair failed validation: {}",
                                 repair_validation.errors().join(", ")
                             ));
                             detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                         Err(e) => {
-                            last_error = Some(format!("Repair API error: {}", e));
+                            last_error = Some(format!("Repair request failed: {}", e));
                             detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                     }
@@ -923,7 +1062,7 @@ async fn attempt_translation(
                     detail_kv(
                         "Attempt",
                         format!(
-                            "{}/{} failed: {}. Retrying in {}s.",
+                            "Attempt {}/{} failed: {}. Retrying in {}s.",
                             api_attempt,
                             MAX_API_RETRIES,
                             last_error.as_ref().unwrap(),
@@ -939,22 +1078,44 @@ async fn attempt_translation(
     (None, last_error)
 }
 
+fn print_usage_info(usage: &TranslationUsage) {
+    print_usage_info_with_label("Usage", usage);
+}
+
+fn print_usage_info_with_label(label: &str, usage: &TranslationUsage) {
+    detail_kv(
+        label,
+        format!(
+            "{} input, {} output, {} total",
+            usage.input_tokens, usage.output_tokens, usage.total_tokens
+        ),
+    );
+}
+
 fn merge_new_glossary_terms(
     glossary: &mut Vec<GlossaryTerm>,
     new_terms: Vec<GlossaryTerm>,
     glossary_path: &Path,
-) -> Result<usize> {
+) -> Result<(usize, Vec<ChapterGlossaryTerm>)> {
     if new_terms.is_empty() {
-        return Ok(0);
+        return Ok((0, Vec::new()));
     }
 
-    let (merged, added, dupes) = merge_terms(std::mem::take(glossary), new_terms);
+    let (merged, added, dupes, added_terms) = merge_terms(std::mem::take(glossary), new_terms);
     *glossary = merged;
+
+    let added_term_fingerprints: Vec<ChapterGlossaryTerm> = added_terms
+        .iter()
+        .map(|term| ChapterGlossaryTerm {
+            key: glossary_term_key(term),
+            fingerprint: glossary_term_prompt_fingerprint(term),
+        })
+        .collect();
 
     if added > 0 {
         if dupes > 0 {
             detail(format!(
-                "Added {} new glossary {} and skipped {} duplicate{}.",
+                "Added {} glossary {}; skipped {} duplicate{}.",
                 added,
                 pluralize(added, "term", "terms"),
                 dupes,
@@ -962,7 +1123,7 @@ fn merge_new_glossary_terms(
             ));
         } else {
             detail(format!(
-                "Added {} new glossary {}.",
+                "Added {} glossary {}.",
                 added,
                 pluralize(added, "term", "terms")
             ));
@@ -970,13 +1131,13 @@ fn merge_new_glossary_terms(
         save_glossary(glossary_path, glossary)?;
     } else if dupes > 0 {
         detail(format!(
-            "No new glossary terms added. Skipped {} duplicate{}.",
+            "No glossary terms added; skipped {} duplicate{}.",
             dupes,
             pluralize(dupes, "", "s")
         ));
     }
 
-    Ok(added)
+    Ok((added, added_term_fingerprints))
 }
 
 fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
@@ -1239,6 +1400,8 @@ mod tests {
             None,
             None,
             None,
+            None,
+            vec![],
         );
         let mut run_metadata = RunMetadata::new(
             "default".to_string(),
@@ -1349,9 +1512,10 @@ mod tests {
         std::fs::write(&chapter, smart_text()).unwrap();
         std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
 
-        let previous_glossary = smart_glossary("Old hero definition");
-        let current_glossary = smart_glossary("New hero definition");
-        let previous_state = previous_glossary_state(&previous_glossary, InjectionMode::Smart);
+        // Use the same glossary for previous and current to simulate a completed run
+        // where glossary hasn't changed since last translation
+        let current_glossary = smart_glossary("Hero definition");
+        let previous_state = previous_glossary_state(&current_glossary, InjectionMode::Smart);
         save_glossary_state(dir.path(), &previous_state).unwrap();
 
         let selection =
@@ -1365,10 +1529,12 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1387,10 +1553,11 @@ mod tests {
         )
         .unwrap();
 
+        // When glossary hasn't changed, KeepExisting is returned (glossary already up to date)
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::CommitRunEnd,
+                advance: GlossaryBaselineAdvance::KeepExisting,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1503,10 +1670,12 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Full,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1525,7 +1694,7 @@ mod tests {
         assert_eq!(plan.forced_chapters.len(), 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Full);
-        assert!(decision.reason.contains("full glossary changed"));
+        assert!(decision.reason.contains("Full glossary changed"));
     }
 
     #[test]
@@ -1552,10 +1721,12 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1573,7 +1744,11 @@ mod tests {
         assert_eq!(plan.changed_term_count, 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
         assert_eq!(decision.injection_mode, InjectionMode::Smart);
-        assert!(decision.reason.contains("matched changed glossary term"));
+        assert!(
+            decision
+                .reason
+                .contains("Imported or exported glossary term changed")
+        );
     }
 
     #[test]
@@ -1608,7 +1783,7 @@ mod tests {
         assert!(
             decision
                 .reason
-                .contains("approximate smart glossary change")
+                .contains("Approximate smart glossary selection changed")
         );
         assert!(plan.warnings.is_empty());
         assert_eq!(plan.approximate_smart_checks, 1);
@@ -1705,10 +1880,12 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
                 )),
+                vec![],
             ),
         )]);
 
@@ -1724,7 +1901,323 @@ mod tests {
         .unwrap();
 
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
-        assert_eq!(decision.injection_mode, InjectionMode::Full);
-        assert!(decision.reason.contains("full glossary changed"));
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        assert!(
+            decision
+                .reason
+                .contains("Imported or exported glossary term changed")
+        );
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_detects_changed_exported_term() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        std::fs::write(&chapter, "hero appears here").unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let old_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
+        let new_glossary = vec![glossary_term("Hero", Some("hero"), "New definition")];
+        let selection =
+            select_terms_for_text(&old_glossary, "hero appears here", InjectionMode::Smart);
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+        let exported_terms = vec![ChapterGlossaryTerm {
+            key: "hero".to_string(),
+            fingerprint: glossary_term_prompt_fingerprint(&glossary_term(
+                "Hero",
+                Some("hero"),
+                "Old definition",
+            )),
+        }];
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                None,
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
+                exported_terms,
+            ),
+        )]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        assert_eq!(plan.changed_term_count, 1);
+        let decision = plan.forced_chapters.get("chapter1.md").unwrap();
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        assert!(
+            decision
+                .reason
+                .contains("Imported or exported glossary term changed")
+        );
+        assert!(decision.reason.contains("hero"));
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_detects_newly_matchable_term() {
+        // Test that adding a new glossary term that matches chapter text
+        // triggers a rerun for tracked smart-mode chapters
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        // Text contains all 6 terms including "竜王" (Dragon King)
+        let chapter_text = "勇者は魔導士と聖剣を手に王城で戦い竜王と戦った。";
+        std::fs::write(&chapter, chapter_text).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        // Old glossary: has 5 terms to avoid fallback, but NOT "Dragon King" (竜王)
+        // Need at least 5 terms to avoid fallback (MIN_GLOSSARY_MATCHES = 5)
+        let old_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Battle", Some("戦い"), "Battle definition"),
+            // Note: Dragon King (竜王) is NOT in old glossary
+        ];
+
+        // New glossary: now includes "Dragon King" (竜王) which appears in the text
+        let new_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Battle", Some("戦い"), "Battle definition"),
+            glossary_term("Dragon King", Some("竜王"), "Dragon King definition"),
+        ];
+
+        let selection = select_terms_for_text(&old_glossary, chapter_text, InjectionMode::Smart);
+        // All 5 terms from old glossary matched (戦い appears in text)
+        assert!(!selection.used_fallback_to_full, "Selection used fallback");
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                None,
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
+                vec![],
+            ),
+        )]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        // The new glossary has 1 added term
+        assert_eq!(plan.changed_term_count, 1);
+        // Chapter should be flagged for rerun because Dragon King now matches
+        assert_eq!(plan.forced_chapters.len(), 1);
+        let decision = plan.forced_chapters.get("chapter1.md").unwrap();
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        assert!(decision.reason.contains("竜王") || decision.reason.contains("dragon king"));
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_detects_removed_previously_matched_term() {
+        // Test that removing a glossary term that was previously selected
+        // triggers a rerun for tracked smart-mode chapters
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter = raw_dir.join("chapter1.md");
+        // Text with 6 terms: 勇者, 魔導士, 聖剣, 王城, 戦い, 竜王
+        let chapter_text = "勇者は魔導士と聖剣を手に王城で戦い竜王と戦った。";
+        std::fs::write(&chapter, chapter_text).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        // Old glossary: has all 6 terms including "Dragon King" (竜王)
+        let old_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Battle", Some("戦い"), "Battle definition"),
+            glossary_term("Dragon King", Some("竜王"), "Dragon King definition"),
+        ];
+
+        // New glossary: "Dragon King" and "Battle" removed, replaced with "Shield" which doesn't appear
+        let new_glossary = vec![
+            glossary_term("Hero", Some("勇者"), "Hero definition"),
+            glossary_term("Mage", Some("魔導士"), "Mage definition"),
+            glossary_term("Holy Sword", Some("聖剣"), "Sword definition"),
+            glossary_term("Royal Castle", Some("王城"), "Castle definition"),
+            glossary_term("Shield", Some("盾"), "Shield definition"),
+        ];
+
+        let selection = select_terms_for_text(&old_glossary, chapter_text, InjectionMode::Smart);
+        // Should have 6 terms matched without fallback
+        assert!(!selection.used_fallback_to_full, "Selection used fallback");
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                None,
+                Some(build_chapter_glossary_usage(
+                    &selection,
+                    InjectionMode::Smart,
+                )),
+                vec![],
+            ),
+        )]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        // Chapter should be flagged for rerun because selection changed (Dragon King removed)
+        // changed_term_count is 3: 2 removed (竜王, 戦い) + 1 added (盾)
+        assert_eq!(plan.changed_term_count, 3);
+        assert_eq!(plan.forced_chapters.len(), 1);
+        let decision = plan.forced_chapters.get("chapter1.md").unwrap();
+        assert_eq!(decision.injection_mode, InjectionMode::Smart);
+        // Reason should indicate the selection changed
+        assert!(
+            decision.reason.contains("竜王") || decision.reason.contains("dragon king"),
+            "Expected reason to mention removed term, got: {}",
+            decision.reason
+        );
+    }
+
+    #[test]
+    fn test_build_glossary_rerun_plan_with_remaining_chapters_subset() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let chapter1 = raw_dir.join("chapter1.md");
+        let chapter2 = raw_dir.join("chapter2.md");
+        let chapter3 = raw_dir.join("chapter3.md");
+        std::fs::write(&chapter1, smart_text()).unwrap();
+        std::fs::write(&chapter2, smart_text()).unwrap();
+        std::fs::write(&chapter3, smart_text()).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+        std::fs::write(out_dir.join("chapter2.md"), "translated").unwrap();
+        std::fs::write(out_dir.join("chapter3.md"), "translated").unwrap();
+
+        let old_glossary = smart_glossary("Old hero definition");
+        let new_glossary = smart_glossary("New hero definition");
+
+        let previous_glossary_state = previous_glossary_state(&old_glossary, InjectionMode::Smart);
+
+        let selection = select_terms_for_text(&old_glossary, smart_text(), InjectionMode::Smart);
+        assert!(!selection.used_fallback_to_full);
+
+        let previous_chapter_states = BTreeMap::from([
+            (
+                "chapter1.md".to_string(),
+                ChapterState::new(
+                    "chapter1.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    None,
+                    Some(build_chapter_glossary_usage(
+                        &selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                ),
+            ),
+            (
+                "chapter2.md".to_string(),
+                ChapterState::new(
+                    "chapter2.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    None,
+                    Some(build_chapter_glossary_usage(
+                        &selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                ),
+            ),
+            (
+                "chapter3.md".to_string(),
+                ChapterState::new(
+                    "chapter3.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    None,
+                    Some(build_chapter_glossary_usage(
+                        &selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                ),
+            ),
+        ]);
+
+        let plan = build_glossary_rerun_plan(
+            &[chapter2.clone(), chapter3],
+            &raw_dir,
+            &out_dir,
+            Some(&previous_glossary_state),
+            &previous_chapter_states,
+            &new_glossary,
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        assert_eq!(plan.changed_term_count, 1);
+        assert_eq!(plan.forced_chapters.len(), 2);
+        assert!(plan.forced_chapters.contains_key("chapter2.md"));
+        assert!(plan.forced_chapters.contains_key("chapter3.md"));
+        assert!(!plan.forced_chapters.contains_key("chapter1.md"));
     }
 }

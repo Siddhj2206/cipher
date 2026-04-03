@@ -2,17 +2,18 @@
 //!
 //! Each provider is in its own file for easy extension.
 
+pub mod gemini;
 pub mod openai;
 
 use crate::config::{GlobalConfig, ProviderKind};
-use crate::translate::{TranslationRequest, TranslationResponse};
+use crate::translate::{ProviderTranslationResult, TranslationRequest};
 use anyhow::Result;
 
 /// Trait for LLM providers
 #[async_trait::async_trait]
 pub trait Provider: Send + Sync {
     /// Translate a chapter given the request
-    async fn translate(&self, req: TranslationRequest) -> Result<TranslationResponse>;
+    async fn translate(&self, req: TranslationRequest) -> Result<ProviderTranslationResult>;
 }
 
 /// Parameters for provider construction
@@ -51,6 +52,7 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     };
 
     match provider_config.kind {
+        ProviderKind::Gemini => Ok(Box::new(gemini::GeminiProvider::new(params)?)),
         ProviderKind::Openai => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
         ProviderKind::OpenaiCompatible => {
             let base_url = provider_config

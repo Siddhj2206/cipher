@@ -1,6 +1,7 @@
 pub mod status;
 
 use crate::book::paths::BookPaths;
+use crate::translate::TranslationUsage;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -58,7 +59,11 @@ pub struct ChapterState {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_attempted: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_usage: Option<TranslationUsage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glossary_usage: Option<ChapterGlossaryUsage>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exported_terms: Vec<ChapterGlossaryTerm>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -152,7 +157,9 @@ impl ChapterState {
         status: ChapterStatus,
         error: Option<String>,
         translation_time_ms: Option<u64>,
+        translation_usage: Option<TranslationUsage>,
         glossary_usage: Option<ChapterGlossaryUsage>,
+        exported_terms: Vec<ChapterGlossaryTerm>,
     ) -> Self {
         Self {
             chapter_path,
@@ -160,7 +167,9 @@ impl ChapterState {
             error,
             translation_time_ms,
             last_attempted: Some(now_rfc3339()),
+            translation_usage,
             glossary_usage,
+            exported_terms,
         }
     }
 }
@@ -354,7 +363,9 @@ mod tests {
             status,
             None,
             Some(1234),
+            None,
             Some(sample_glossary_usage()),
+            vec![],
         )
     }
 
@@ -409,7 +420,14 @@ mod tests {
     #[test]
     fn test_chapter_state_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let chapter_state = sample_chapter_state("part1/ch01.md", ChapterStatus::Success);
+        let mut chapter_state = sample_chapter_state("part1/ch01.md", ChapterStatus::Success);
+        chapter_state.translation_usage = Some(TranslationUsage {
+            input_tokens: 100,
+            output_tokens: 200,
+            total_tokens: 300,
+            cached_input_tokens: 25,
+            cache_creation_input_tokens: 10,
+        });
 
         save_chapter_state(dir.path(), &chapter_state).unwrap();
 
@@ -419,6 +437,7 @@ mod tests {
         assert_eq!(loaded.chapter_path, "part1/ch01.md");
         assert_eq!(loaded.status, ChapterStatus::Success);
         assert!(loaded.glossary_usage.is_some());
+        assert_eq!(loaded.translation_usage, chapter_state.translation_usage);
     }
 
     #[test]
