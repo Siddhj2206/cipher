@@ -85,6 +85,7 @@ impl GlobalConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderKind {
+    Gemini,
     Openai,
     OpenaiCompatible,
 }
@@ -92,6 +93,7 @@ pub enum ProviderKind {
 impl std::fmt::Display for ProviderKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            ProviderKind::Gemini => write!(f, "Gemini"),
             ProviderKind::Openai => write!(f, "OpenAI"),
             ProviderKind::OpenaiCompatible => write!(f, "OpenAI-compatible"),
         }
@@ -183,4 +185,51 @@ pub fn validate_profile(config: &GlobalConfig, profile_name: &str) -> ConfigVali
 
     validation.errors = errors;
     validation
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_config() -> GlobalConfig {
+        GlobalConfig {
+            default_profile: None,
+            providers: BTreeMap::new(),
+            keys: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn test_validate_profile_accepts_gemini_without_base_url() {
+        let mut config = base_config();
+        config.providers.insert(
+            "gemini".to_string(),
+            ProviderConfig {
+                kind: ProviderKind::Gemini,
+                base_url: None,
+                extras: None,
+            },
+        );
+        config.keys.insert(
+            "gemini".to_string(),
+            vec![ApiKey {
+                value: "test-key".to_string(),
+                name: Some("default".to_string()),
+            }],
+        );
+        config.profiles.insert(
+            "gemini-profile".to_string(),
+            ProfileConfig {
+                provider: "gemini".to_string(),
+                model: "gemini-2.5-flash".to_string(),
+                key: Some("default".to_string()),
+            },
+        );
+
+        let validation = validate_profile(&config, "gemini-profile");
+
+        assert!(validation.is_valid(), "expected Gemini profile to be valid");
+        assert!(validation.errors.is_empty());
+    }
 }

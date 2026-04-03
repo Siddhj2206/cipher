@@ -2,6 +2,7 @@
 //!
 //! Each provider is in its own file for easy extension.
 
+pub mod gemini;
 pub mod openai;
 
 use crate::config::{GlobalConfig, ProviderKind};
@@ -51,6 +52,7 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     };
 
     match provider_config.kind {
+        ProviderKind::Gemini => Ok(Box::new(gemini::GeminiProvider::new(params)?)),
         ProviderKind::Openai => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
         ProviderKind::OpenaiCompatible => {
             let base_url = provider_config

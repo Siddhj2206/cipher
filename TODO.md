@@ -50,7 +50,7 @@ The desired long-term shape of `cipher` is:
 ---
 
 ### 2. Move rerun planning away from one-shot startup planning
-**Status:** Open  
+**Status:** Done  
 **Why it matters:** The current rerun plan is built once at the beginning of a run. If a chapter adds glossary terms mid-run, later decisions are not updated during that same invocation.
 
 **Questions to resolve:**
@@ -482,3 +482,29 @@ These were carried over from `PLAN.md` and are now represented above:
 - [ ] Plan rerun preview mode (`--dry-run`)
 - [ ] Plan status visibility for tracked vs untracked chapters
 - [ ] Plan future verbose mode for detailed skip output
+
+---
+
+## Optional follow-up fixes
+
+### 24. Flatten structured-output schema for Nvidia / OpenAI-compatible providers
+**Status:** Optional  
+**Why it matters:** Some OpenAI-compatible endpoints reject structured-output schemas that contain `$defs` references, which currently breaks glossary extraction for providers like Nvidia.
+
+**Observed failure:**
+- `HTTP 400 Bad Request`
+- `Grammar error: Pointer '/$defs/GlossaryTerm' does not exist`
+
+**Current understanding:**
+- `TranslationResponse` includes `new_glossary_terms: Vec<GlossaryTerm>`
+- the generated JSON schema uses a `$ref` to `#/$defs/GlossaryTerm`
+- rig's OpenAI-compatible extractor path sends that schema as-is
+- Nvidia appears not to support that reference format in this path
+
+**Possible fix:**
+- flatten or inline `$defs` references before sending the schema on OpenAI-compatible provider paths
+- keep the existing path for providers that already accept the current schema
+
+**Acceptance ideas:**
+- regression test: provider schema for `TranslationResponse` contains no `$ref` to `#/$defs/GlossaryTerm` on the Nvidia/OpenAI-compatible path
+- manual check: a chapter translate request succeeds on Nvidia without the 400 grammar error

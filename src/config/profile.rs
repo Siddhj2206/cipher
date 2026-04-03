@@ -6,6 +6,7 @@ use crate::output::{detail, detail_kv, section, stderr_detail};
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
+        ProviderKind::Gemini => format!("{} (Gemini)", name),
         ProviderKind::Openai => format!("{} (OpenAI)", name),
         ProviderKind::OpenaiCompatible => {
             if let Some(url) = cfg.base_url.as_deref() {
@@ -156,7 +157,7 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
         })
         .collect();
     let existing_count = provider_options.len();
-    provider_options.push("→ Create new provider".to_string());
+    provider_options.push("Create new provider".to_string());
 
     let selection = Select::new()
         .with_prompt("Select provider")
@@ -169,7 +170,11 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
     }
 
     // Create new provider submenu
-    let creation_options = vec!["OpenAI (built-in)", "OpenAI-compatible (custom)"];
+    let creation_options = vec![
+        "Gemini (built-in)",
+        "OpenAI (built-in)",
+        "OpenAI-compatible (custom)",
+    ];
     let creation_selection = Select::new()
         .with_prompt("Provider type")
         .items(&creation_options)
@@ -178,6 +183,18 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
 
     match creation_selection {
         0 => {
+            let name = "gemini".to_string();
+            config
+                .providers
+                .entry(name.clone())
+                .or_insert(ProviderConfig {
+                    kind: ProviderKind::Gemini,
+                    base_url: None,
+                    extras: None,
+                });
+            Ok(name)
+        }
+        1 => {
             let name = "openai".to_string();
             config
                 .providers
@@ -189,7 +206,7 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
                 });
             Ok(name)
         }
-        1 => {
+        2 => {
             let name = prompt_provider_name()?;
 
             if config.providers.contains_key(&name) {
@@ -248,7 +265,7 @@ fn select_or_create_api_key_sectioned(
                 .unwrap_or_else(|| format!("(unnamed) # {}", idx + 1))
         })
         .collect();
-    key_items.push("→ Add new API key".to_string());
+    key_items.push("Add new API key".to_string());
 
     let selection = Select::new()
         .with_prompt("Select API key")
