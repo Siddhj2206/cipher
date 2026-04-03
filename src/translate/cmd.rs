@@ -12,7 +12,7 @@ use crate::state::{
     load_glossary_state, normalize_chapter_path, save_chapter_state, save_glossary_state,
     save_run_metadata,
 };
-use crate::translate::Translator;
+use crate::translate::{ProviderTranslationResult, TranslationUsage, Translator};
 use crate::validate::validate_translation;
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -31,6 +31,7 @@ struct ChapterResult {
     failed: bool,
     skipped: bool,
     new_terms_added: usize,
+    usage: Option<TranslationUsage>,
     chapter_state: ChapterState,
 }
 
@@ -195,6 +196,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut skipped = 0;
     let mut failed = 0;
     let mut new_glossary_terms = 0;
+    let mut total_usage = TranslationUsage::default();
 
     let mut remaining_chapters = chapters.clone();
     let mut rerun_plan = rerun_plan;
@@ -236,6 +238,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
                 detail("Stopping due to --fail-fast");
                 break;
             }
+        }
+        if let Some(usage) = result.usage {
+            total_usage += usage;
         }
         new_glossary_terms += result.new_terms_added;
 
@@ -285,6 +290,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     detail_kv("Skipped", skipped);
     detail_kv("Failed", failed);
     detail_kv("New glossary terms", new_glossary_terms);
+    if total_usage.total_tokens > 0 {
+        print_usage_info_with_label("Token usage", &total_usage);
+    }
 
     if failed > 0 {
         anyhow::bail!("{} chapter(s) failed to translate", failed);
@@ -320,11 +328,13 @@ async fn translate_single_chapter(
             failed: false,
             skipped: true,
             new_terms_added: 0,
+            usage: None,
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Skipped,
                 None,
                 None,
+                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
                 previous_chapter_state
                     .map(|s| s.exported_terms.clone())
@@ -350,11 +360,13 @@ async fn translate_single_chapter(
             failed: false,
             skipped: true,
             new_terms_added: 0,
+            usage: None,
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Skipped,
                 Some("Empty file".to_string()),
                 None,
+                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
                 previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
                 previous_chapter_state
                     .map(|s| s.exported_terms.clone())
@@ -375,6 +387,8 @@ async fn translate_single_chapter(
     let duration = start.elapsed();
 
     if let Some(resp) = response {
+        print_usage_info(&resp.usage);
+
         // Backup if overwriting existing file
         if output_exists {
             let backup_path = create_backup(book_dir, out_path)?;
@@ -382,12 +396,12 @@ async fn translate_single_chapter(
         }
 
         // Write output atomically
-        atomic_write(out_path, &resp.translation)
+        atomic_write(out_path, &resp.response.translation)
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
         // Merge glossary terms
         let (new_terms_added, exported_terms) =
-            merge_new_glossary_terms(glossary, resp.new_glossary_terms, glossary_path)?;
+            merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
 
         detail_kv("Result", "translated");
         return Ok(ChapterResult {
@@ -395,11 +409,13 @@ async fn translate_single_chapter(
             failed: false,
             skipped: false,
             new_terms_added,
+            usage: Some(resp.usage.clone()),
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 ChapterStatus::Success,
                 None,
                 Some(duration.as_millis() as u64),
+                Some(resp.usage),
                 Some(build_chapter_glossary_usage(
                     &selection,
                     chapter_injection_mode,
@@ -419,11 +435,13 @@ async fn translate_single_chapter(
         failed: true,
         skipped: false,
         new_terms_added: 0,
+        usage: None,
         chapter_state: ChapterState::new(
             chapter_path.to_string(),
             ChapterStatus::Failed,
             Some(error_msg),
             Some(duration.as_millis() as u64),
+            None,
             previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
             previous_chapter_state
                 .map(|s| s.exported_terms.clone())
@@ -971,10 +989,7 @@ async fn attempt_translation(
     chapter_text: &str,
     selection: &SelectionResult,
     style_guide: &Option<String>,
-) -> (
-    Option<crate::translate::TranslationResponse>,
-    Option<String>,
-) {
+) -> (Option<ProviderTranslationResult>, Option<String>) {
     let mut last_error: Option<String> = None;
 
     for api_attempt in 1..=MAX_API_RETRIES {
@@ -983,7 +998,7 @@ async fn attempt_translation(
             .await
         {
             Ok(resp) => {
-                let validation = validate_translation(&resp.translation);
+                let validation = validate_translation(&resp.response.translation);
                 if validation.is_valid() {
                     return (Some(resp), None);
                 }
@@ -1007,13 +1022,15 @@ async fn attempt_translation(
                         crate::translate::TranslationRequest::new(chapter_text.to_string())
                             .with_glossary_terms(selection.terms.clone())
                             .with_style_guide(style_guide.clone())
-                            .with_failed_translation(resp.translation)
+                            .with_failed_translation(resp.response.translation)
                             .with_validation_errors(validation_errors.to_vec());
 
                     match translator.translate_with_request(&repair_req).await {
                         Ok(repair_resp) => {
-                            let repair_validation = validate_translation(&repair_resp.translation);
+                            let repair_validation =
+                                validate_translation(&repair_resp.response.translation);
                             if repair_validation.is_valid() {
+                                print_usage_info(&repair_resp.usage);
                                 detail_kv("Repair", "succeeded");
                                 return (Some(repair_resp), None);
                             }
@@ -1053,6 +1070,20 @@ async fn attempt_translation(
     }
 
     (None, last_error)
+}
+
+fn print_usage_info(usage: &TranslationUsage) {
+    print_usage_info_with_label("Usage", usage);
+}
+
+fn print_usage_info_with_label(label: &str, usage: &TranslationUsage) {
+    detail_kv(
+        label,
+        format!(
+            "{} in, {} out, {} total",
+            usage.input_tokens, usage.output_tokens, usage.total_tokens
+        ),
+    );
 }
 
 fn merge_new_glossary_terms(
@@ -1363,6 +1394,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             vec![],
         );
         let mut run_metadata = RunMetadata::new(
@@ -1491,6 +1523,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
@@ -1631,6 +1664,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Full,
@@ -1681,6 +1715,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
@@ -1835,6 +1870,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
@@ -1891,6 +1927,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
@@ -1965,6 +2002,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
@@ -2039,6 +2077,7 @@ mod tests {
                 ChapterStatus::Success,
                 None,
                 Some(100),
+                None,
                 Some(build_chapter_glossary_usage(
                     &selection,
                     InjectionMode::Smart,
@@ -2106,6 +2145,7 @@ mod tests {
                     ChapterStatus::Success,
                     None,
                     Some(100),
+                    None,
                     Some(build_chapter_glossary_usage(
                         &selection,
                         InjectionMode::Smart,
@@ -2120,6 +2160,7 @@ mod tests {
                     ChapterStatus::Success,
                     None,
                     Some(100),
+                    None,
                     Some(build_chapter_glossary_usage(
                         &selection,
                         InjectionMode::Smart,
@@ -2134,6 +2175,7 @@ mod tests {
                     ChapterStatus::Success,
                     None,
                     Some(100),
+                    None,
                     Some(build_chapter_glossary_usage(
                         &selection,
                         InjectionMode::Smart,

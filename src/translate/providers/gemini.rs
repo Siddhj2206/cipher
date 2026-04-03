@@ -8,7 +8,7 @@ use rig::providers::gemini;
 
 use crate::translate::prompt::build_prompt;
 use crate::translate::providers::{Provider, ProviderParams};
-use crate::translate::{TranslationRequest, TranslationResponse};
+use crate::translate::{ProviderTranslationResult, TranslationRequest, TranslationResponse};
 
 pub struct GeminiProvider {
     client: gemini::Client,
@@ -76,7 +76,7 @@ fn format_extraction_error(err: &ExtractionError) -> String {
 
 #[async_trait::async_trait]
 impl Provider for GeminiProvider {
-    async fn translate(&self, req: TranslationRequest) -> Result<TranslationResponse> {
+    async fn translate(&self, req: TranslationRequest) -> Result<ProviderTranslationResult> {
         let prompt = build_prompt(&req);
         let extractor = self
             .client
@@ -86,8 +86,11 @@ impl Provider for GeminiProvider {
             )
             .build();
 
-        match extractor.extract(&prompt).await {
-            Ok(response) => Ok(response),
+        match extractor.extract_with_usage(&prompt).await {
+            Ok(extracted) => Ok(ProviderTranslationResult {
+                response: extracted.data,
+                usage: extracted.usage.into(),
+            }),
             Err(err) => {
                 let detailed_error = format_extraction_error(&err);
                 Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))

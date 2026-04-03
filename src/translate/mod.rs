@@ -4,7 +4,9 @@ pub mod providers;
 pub mod types;
 
 pub use crate::translate::cmd::{TranslateOptions, translate_book};
-pub use crate::translate::types::{TranslationRequest, TranslationResponse};
+pub use crate::translate::types::{
+    ProviderTranslationResult, TranslationRequest, TranslationResponse, TranslationUsage,
+};
 
 use crate::config::GlobalConfig;
 use crate::glossary::GlossaryTerm;
@@ -27,7 +29,7 @@ impl Translator {
         chapter_text: &str,
         glossary_terms: &[GlossaryTerm],
         style_guide: Option<String>,
-    ) -> Result<TranslationResponse> {
+    ) -> Result<ProviderTranslationResult> {
         let request = TranslationRequest::new(chapter_text.to_string())
             .with_glossary_terms(glossary_terms.to_vec())
             .with_style_guide(style_guide);
@@ -38,7 +40,7 @@ impl Translator {
     pub async fn translate_with_request(
         &self,
         request: &TranslationRequest,
-    ) -> Result<TranslationResponse> {
+    ) -> Result<ProviderTranslationResult> {
         self.provider.translate(request.clone()).await
     }
 }

@@ -6,14 +6,14 @@ pub mod gemini;
 pub mod openai;
 
 use crate::config::{GlobalConfig, ProviderKind};
-use crate::translate::{TranslationRequest, TranslationResponse};
+use crate::translate::{ProviderTranslationResult, TranslationRequest};
 use anyhow::Result;
 
 /// Trait for LLM providers
 #[async_trait::async_trait]
 pub trait Provider: Send + Sync {
     /// Translate a chapter given the request
-    async fn translate(&self, req: TranslationRequest) -> Result<TranslationResponse>;
+    async fn translate(&self, req: TranslationRequest) -> Result<ProviderTranslationResult>;
 }
 
 /// Parameters for provider construction
