@@ -180,7 +180,7 @@ Status currently includes:
 - profile, provider, and model used for the last run
 - start/update/finish timestamps
 - chapter counts for translated, skipped, failed, and pending
-- tracking counts for smart-tracked chapters, full-tracked chapters, approximate legacy fallback, exported-term tracking, and source hashes
+- tracking counts for smart-tracked chapters, smart fallback-to-full chapters, legacy primary full-tracked chapters, approximate legacy fallback, exported-term tracking, and source hashes
 - a list of failed chapters with short error previews
 
 ### `cipher init <book_dir>`
@@ -319,12 +319,12 @@ Glossary behavior:
 - duplicate terms are skipped during merge/import
 - new terms returned by successful chapters are appended after dedupe
 
-## Glossary injection modes
+## Glossary injection behavior
 
-Book config supports two modes:
+Book config now treats `smart` as the canonical mode.
 
 - `smart` - select relevant glossary terms for the current chapter
-- `full` - inject the full glossary every time
+- legacy `full` config values are deprecated and treated as `smart`
 
 `smart` is the default.
 
@@ -333,6 +333,7 @@ Current smart-mode behavior:
 - matches glossary terms against the chapter text using deterministic selection logic
 - always includes terms with empty `og_term`
 - falls back to full glossary when too few matches are found
+- legacy primary full-tracking state is migrated opportunistically when a successful smart-era run proves it is equivalent to smart fallback tracking
 
 ## Style guide
 

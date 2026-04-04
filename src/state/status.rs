@@ -57,16 +57,15 @@ fn print_run_state(
         "Tracked smart selection",
         tracking.tracked_smart_selection,
     );
-    if tracking.tracked_full_from_smart_fallback > 0 {
+    detail_kv(
+        "Tracked fallback to full",
+        tracking.tracked_fallback_to_full,
+    );
+    if tracking.legacy_tracked_full_selection > 0 {
         detail_kv(
-            "Tracked full selection",
-            format!(
-                "{} ({} via smart fallback)",
-                tracking.tracked_full_selection, tracking.tracked_full_from_smart_fallback
-            ),
+            "Legacy tracked full selection",
+            tracking.legacy_tracked_full_selection,
         );
-    } else {
-        detail_kv("Tracked full selection", tracking.tracked_full_selection);
     }
     detail_kv(
         "Approximate legacy fallback",
@@ -79,6 +78,12 @@ fn print_run_state(
         detail(format!(
             "{} chapter(s) still rely on approximate glossary rerun checks.",
             tracking.approximate_legacy_fallback
+        ));
+    }
+    if tracking.legacy_tracked_full_selection > 0 {
+        detail(format!(
+            "{} chapter(s) still use legacy primary full-glossary tracking; an equivalent successful smart-era run can rewrite them as smart fallback state.",
+            tracking.legacy_tracked_full_selection
         ));
     }
     if tracking.missing_source_hash > 0 {
@@ -109,8 +114,8 @@ fn print_run_state(
 #[derive(Debug, Default, PartialEq, Eq)]
 struct TrackingSummary {
     tracked_smart_selection: usize,
-    tracked_full_selection: usize,
-    tracked_full_from_smart_fallback: usize,
+    tracked_fallback_to_full: usize,
+    legacy_tracked_full_selection: usize,
     approximate_legacy_fallback: usize,
     exported_terms_recorded: usize,
     source_hash_recorded: usize,
@@ -135,11 +140,10 @@ fn summarize_tracking(chapters: &BTreeMap<String, ChapterState>) -> TrackingSumm
                         summary.tracked_smart_selection += 1;
                     }
                     GlossaryInjectionMode::Smart => {
-                        summary.tracked_full_selection += 1;
-                        summary.tracked_full_from_smart_fallback += 1;
+                        summary.tracked_fallback_to_full += 1;
                     }
                     GlossaryInjectionMode::Full => {
-                        summary.tracked_full_selection += 1;
+                        summary.legacy_tracked_full_selection += 1;
                     }
                 }
             }
@@ -215,8 +219,8 @@ mod tests {
             summarize_tracking(&chapters),
             TrackingSummary {
                 tracked_smart_selection: 1,
-                tracked_full_selection: 2,
-                tracked_full_from_smart_fallback: 1,
+                tracked_fallback_to_full: 1,
+                legacy_tracked_full_selection: 1,
                 approximate_legacy_fallback: 1,
                 exported_terms_recorded: 3,
                 source_hash_recorded: 3,
