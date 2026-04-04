@@ -484,6 +484,8 @@ async fn translate_single_chapter(
         format!("failed after {} attempts", MAX_API_RETRIES),
     );
     detail_kv("Error", &error_msg);
+    let failed_source_text_hash =
+        failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
     Ok(ChapterResult {
         translated: false,
         failed: true,
@@ -500,7 +502,7 @@ async fn translate_single_chapter(
             previous_chapter_state
                 .map(|s| s.exported_terms.clone())
                 .unwrap_or_default(),
-            Some(source_text_hash),
+            failed_source_text_hash,
         ),
     })
 }
@@ -518,6 +520,15 @@ fn skipped_chapter_source_hash(
         Some(existing_hash) => Ok(Some(existing_hash)),
         None => Ok(Some(source_text_hash_for_path(raw_path)?)),
     }
+}
+
+fn failed_chapter_source_hash(
+    previous_chapter_state: Option<&ChapterState>,
+    current_source_hash: &str,
+) -> Option<String> {
+    previous_chapter_state
+        .and_then(|state| state.source_text_hash.clone())
+        .or_else(|| Some(current_source_hash.to_string()))
 }
 
 fn source_text_hash_for_path(path: &Path) -> Result<String> {
@@ -1873,6 +1884,27 @@ mod tests {
         .unwrap();
 
         assert_eq!(source_text_hash, None);
+    }
+
+    #[test]
+    fn test_failed_chapter_source_hash_preserves_previous_hash() {
+        let previous_hash = normalized_source_text_hash("old source text");
+        let previous_chapter_state = previous_chapter_state_with_hash(Some(&previous_hash));
+
+        let source_text_hash =
+            failed_chapter_source_hash(Some(&previous_chapter_state), "new-source-hash");
+
+        assert_eq!(source_text_hash, Some(previous_hash));
+    }
+
+    #[test]
+    fn test_failed_chapter_source_hash_uses_current_hash_when_untracked() {
+        let previous_chapter_state = previous_chapter_state_with_hash(None);
+
+        let source_text_hash =
+            failed_chapter_source_hash(Some(&previous_chapter_state), "new-source-hash");
+
+        assert_eq!(source_text_hash, Some("new-source-hash".to_string()));
     }
 
     #[test]
