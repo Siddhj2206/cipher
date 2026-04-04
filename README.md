@@ -180,6 +180,7 @@ Status currently includes:
 - profile, provider, and model used for the last run
 - start/update/finish timestamps
 - chapter counts for translated, skipped, failed, and pending
+- tracking counts for smart-tracked chapters, full-tracked chapters, approximate legacy fallback, exported-term tracking, and source hashes
 - a list of failed chapters with short error previews
 
 ### `cipher init <book_dir>`

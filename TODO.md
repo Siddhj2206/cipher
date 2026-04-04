@@ -94,7 +94,7 @@ Useful output:
 - totals by category
 
 ### 5. Improve tracked/untracked visibility in `status`
-**Status:** Planned
+**Status:** Done
 
 Why it matters:
 - the current rerun model mixes exact tracking and approximation
