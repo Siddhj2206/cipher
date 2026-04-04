@@ -142,6 +142,7 @@ cipher translate my-book
 cipher translate my-book --profile fast
 cipher translate my-book --overwrite
 cipher translate my-book --fail-fast
+cipher translate my-book --rerun
 cipher translate my-book --rerun-affected-glossary
 cipher translate my-book --rerun-affected-chapters
 ```
@@ -151,6 +152,7 @@ Current translate flags:
 - `--profile <name>`: override the book/global profile for this run
 - `--overwrite`: retranslate even when output already exists
 - `--fail-fast`: stop on the first failed chapter
+- `--rerun`: retranslate chapters whose tracked source or glossary-relevant inputs changed
 - `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
 - `--rerun-affected-chapters`: retranslate chapters whose raw markdown changed since the last tracked chapter state
 
@@ -392,7 +394,9 @@ This rerun model is still evolving, but it is already much better than a pure st
 These are different tools:
 
 - `--overwrite` means redo outputs regardless of tracked equivalence
+- `--rerun` means rerun chapters whose tracked source or glossary inputs changed
 - `--rerun-affected-glossary` means rerun chapters whose tracked glossary inputs became stale
+- `--rerun-affected-chapters` means rerun chapters whose tracked raw source became stale
 
 ## Safety guarantees
 
@@ -409,7 +413,6 @@ This keeps runs resumable and reduces the chance of corrupted outputs after inte
 A few areas are intentionally still evolving:
 
 - API keys are not yet stored in a proper secret store
-- chapter-content-based reruns are not implemented yet
 - dry-run rerun preview is not implemented yet
 - status output does not yet expose all tracked-vs-approximate rerun details
 - repair and glossary extraction are still more coupled than they should be long-term

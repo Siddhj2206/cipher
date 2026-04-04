@@ -70,7 +70,7 @@ Acceptance ideas:
 - works independently of glossary rerun checks
 
 ### 3. Design `--rerun`
-**Status:** Planned
+**Status:** Done
 
 Desired meaning:
 - rerun if chapter source changed

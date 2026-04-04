@@ -23,8 +23,19 @@ pub struct TranslateOptions {
     pub profile: Option<String>,
     pub overwrite: bool,
     pub fail_fast: bool,
+    pub rerun: bool,
     pub rerun_affected_glossary: bool,
     pub rerun_affected_chapters: bool,
+}
+
+impl TranslateOptions {
+    fn rerun_glossary_enabled(&self) -> bool {
+        self.rerun || self.rerun_affected_glossary
+    }
+
+    fn rerun_chapters_enabled(&self) -> bool {
+        self.rerun || self.rerun_affected_chapters
+    }
 }
 
 struct ChapterResult {
@@ -169,7 +180,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let previous_glossary_state = load_glossary_state(book_dir)?;
     let mut previous_chapter_states = load_all_chapter_states(book_dir)?;
 
-    let rerun_plan = if options.rerun_affected_glossary {
+    let rerun_plan = if options.rerun_glossary_enabled() {
         section("Planning glossary-affected chapter reruns");
         let plan = build_glossary_rerun_plan(
             &Vec::from(chapters.clone()),
@@ -196,7 +207,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         GlossaryRerunPlan::default()
     };
 
-    let source_rerun_plan = if options.rerun_affected_chapters {
+    let source_rerun_plan = if options.rerun_chapters_enabled() {
         section("Planning source-affected chapter reruns");
         let plan = build_source_rerun_plan(
             &Vec::from(chapters.clone()),
@@ -220,6 +231,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let run_options = RunOptions {
         overwrite: options.overwrite,
         fail_fast: options.fail_fast,
+        rerun: options.rerun,
         rerun_affected_glossary: options.rerun_affected_glossary,
         rerun_affected_chapters: options.rerun_affected_chapters,
     };
@@ -291,7 +303,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         new_glossary_terms += result.new_terms_added;
 
         if result.new_terms_added > 0
-            && options.rerun_affected_glossary
+            && options.rerun_glossary_enabled()
             && !remaining_chapters.is_empty()
         {
             rerun_plan = build_glossary_rerun_plan(
@@ -512,7 +524,7 @@ fn skipped_chapter_source_hash(
     previous_chapter_state: Option<&ChapterState>,
     options: &TranslateOptions,
 ) -> Result<Option<String>> {
-    if !options.rerun_affected_chapters {
+    if !options.rerun_chapters_enabled() {
         return Ok(previous_chapter_state.and_then(|state| state.source_text_hash.clone()));
     }
 
@@ -576,7 +588,7 @@ fn finalize_glossary_baseline(
         });
     }
 
-    if !options.rerun_affected_glossary {
+    if !options.rerun_glossary_enabled() {
         return Ok(GlossaryBaselineOutcome {
             advance: GlossaryBaselineAdvance::KeepExisting,
             remaining_forced_chapters: 0,
@@ -599,17 +611,16 @@ fn finalize_glossary_baseline(
         });
     }
 
-    let remaining_plan = build_glossary_rerun_plan(
+    let remaining_forced_chapters = count_chapters_still_stale_for_current_glossary(
         chapters,
         raw_dir,
         out_dir,
-        Some(previous_glossary_state),
         chapter_states,
         glossary,
         injection_mode,
     )?;
 
-    if remaining_plan.forced_chapters.is_empty() {
+    if remaining_forced_chapters == 0 {
         save_glossary_state(book_dir, &current_glossary_state)?;
         Ok(GlossaryBaselineOutcome {
             advance: GlossaryBaselineAdvance::CommitRunEnd,
@@ -618,9 +629,105 @@ fn finalize_glossary_baseline(
     } else {
         Ok(GlossaryBaselineOutcome {
             advance: GlossaryBaselineAdvance::KeepExisting,
-            remaining_forced_chapters: remaining_plan.forced_chapters.len(),
+            remaining_forced_chapters,
         })
     }
+}
+
+fn count_chapters_still_stale_for_current_glossary(
+    chapters: &[PathBuf],
+    raw_dir: &Path,
+    out_dir: &Path,
+    chapter_states: &BTreeMap<String, ChapterState>,
+    current_glossary: &[GlossaryTerm],
+    injection_mode: InjectionMode,
+) -> Result<usize> {
+    let mut remaining = 0;
+
+    for chapter_file in chapters {
+        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
+        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
+        if !output_exists {
+            continue;
+        }
+
+        let Some(chapter_state) = chapter_states.get(&chapter_path) else {
+            remaining += 1;
+            continue;
+        };
+
+        if !chapter_matches_current_glossary(
+            chapter_file,
+            chapter_state,
+            current_glossary,
+            injection_mode,
+        )? {
+            remaining += 1;
+        }
+    }
+
+    Ok(remaining)
+}
+
+fn chapter_matches_current_glossary(
+    raw_path: &Path,
+    chapter_state: &ChapterState,
+    current_glossary: &[GlossaryTerm],
+    injection_mode: InjectionMode,
+) -> Result<bool> {
+    let Some(usage) = &chapter_state.glossary_usage else {
+        return Ok(false);
+    };
+
+    let current_fingerprints: BTreeMap<String, String> = current_glossary
+        .iter()
+        .map(|term| {
+            (
+                glossary_term_key(term),
+                glossary_term_prompt_fingerprint(term),
+            )
+        })
+        .collect();
+
+    let tracked_terms_match = usage
+        .terms
+        .iter()
+        .chain(chapter_state.exported_terms.iter())
+        .all(|term| {
+            current_fingerprints
+                .get(&term.key)
+                .is_some_and(|fingerprint| fingerprint == &term.fingerprint)
+        });
+    if !tracked_terms_match {
+        return Ok(false);
+    }
+
+    let tracked_usage: BTreeMap<String, String> = usage
+        .terms
+        .iter()
+        .map(|term| (term.key.clone(), term.fingerprint.clone()))
+        .collect();
+    let full_glossary_usage = selection_fingerprints(current_glossary);
+
+    if usage.injection_mode == GlossaryInjectionMode::Full {
+        return Ok(tracked_usage == full_glossary_usage);
+    }
+
+    let chapter_text = std::fs::read_to_string(raw_path)
+        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+    if chapter_text.trim().is_empty() {
+        return Ok(true);
+    }
+
+    let current_selection = select_terms_for_text(current_glossary, &chapter_text, injection_mode);
+    let expected_usage = if current_selection.used_fallback_to_full {
+        full_glossary_usage
+    } else {
+        selection_fingerprints(&current_selection.terms)
+    };
+
+    Ok(tracked_usage == expected_usage
+        && usage.used_fallback_to_full == current_selection.used_fallback_to_full)
 }
 
 fn build_glossary_state(glossary: &[GlossaryTerm], injection_mode: InjectionMode) -> GlossaryState {
@@ -831,6 +938,7 @@ fn build_glossary_rerun_plan(
     Ok(plan)
 }
 
+#[cfg(test)]
 fn snapshot_fingerprints(terms: &BTreeMap<String, GlossaryStateTerm>) -> BTreeMap<String, String> {
     terms
         .iter()
@@ -1389,6 +1497,7 @@ mod tests {
     }
 
     fn translate_options(
+        rerun: bool,
         rerun_affected_glossary: bool,
         rerun_affected_chapters: bool,
     ) -> TranslateOptions {
@@ -1396,6 +1505,7 @@ mod tests {
             profile: None,
             overwrite: false,
             fail_fast: false,
+            rerun,
             rerun_affected_glossary,
             rerun_affected_chapters,
         }
@@ -1594,7 +1704,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, false),
+            &translate_options(false, false, false),
             None,
             &run_start_state,
             &[],
@@ -1637,7 +1747,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(true, false),
+            &translate_options(false, true, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Full),
             &[chapter],
@@ -1702,7 +1812,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(true, false),
+            &translate_options(false, true, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[chapter],
@@ -1729,6 +1839,91 @@ mod tests {
     }
 
     #[test]
+    fn test_finalize_glossary_baseline_commits_after_rerun_from_stale_empty_baseline() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+        let chapter1 = raw_dir.join("chapter1.md");
+        let chapter2 = raw_dir.join("chapter2.md");
+        std::fs::write(&chapter1, smart_text()).unwrap();
+        std::fs::write(&chapter2, smart_text()).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+        std::fs::write(out_dir.join("chapter2.md"), "translated").unwrap();
+
+        let current_glossary = smart_glossary("Hero definition");
+        let previous_state = previous_glossary_state(&[], InjectionMode::Smart);
+        save_glossary_state(dir.path(), &previous_state).unwrap();
+
+        let smart_selection =
+            select_terms_for_text(&current_glossary, smart_text(), InjectionMode::Smart);
+        let full_selection =
+            select_terms_for_text(&current_glossary, smart_text(), InjectionMode::Full);
+
+        let chapter_states = BTreeMap::from([
+            (
+                "chapter1.md".to_string(),
+                ChapterState::new(
+                    "chapter1.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    None,
+                    Some(build_chapter_glossary_usage(
+                        &smart_selection,
+                        InjectionMode::Smart,
+                    )),
+                    vec![],
+                    None,
+                ),
+            ),
+            (
+                "chapter2.md".to_string(),
+                ChapterState::new(
+                    "chapter2.md".to_string(),
+                    ChapterStatus::Success,
+                    None,
+                    Some(100),
+                    None,
+                    Some(build_chapter_glossary_usage(
+                        &full_selection,
+                        InjectionMode::Full,
+                    )),
+                    vec![],
+                    None,
+                ),
+            ),
+        ]);
+
+        let outcome = finalize_glossary_baseline(
+            dir.path(),
+            &translate_options(false, true, false),
+            Some(&previous_state),
+            &build_glossary_state(&current_glossary, InjectionMode::Smart),
+            &[chapter1, chapter2],
+            &raw_dir,
+            &out_dir,
+            &chapter_states,
+            &current_glossary,
+            InjectionMode::Smart,
+            0,
+        )
+        .unwrap();
+
+        assert_eq!(
+            outcome,
+            GlossaryBaselineOutcome {
+                advance: GlossaryBaselineAdvance::CommitRunEnd,
+                remaining_forced_chapters: 0,
+            }
+        );
+
+        let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
+        assert_glossary_state_matches(&loaded, &current_glossary, InjectionMode::Smart);
+    }
+
+    #[test]
     fn test_finalize_glossary_baseline_keeps_existing_after_failures() {
         let dir = tempfile::tempdir().unwrap();
         let raw_dir = dir.path().join("raw");
@@ -1743,7 +1938,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(true, false),
+            &translate_options(false, true, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[],
@@ -1783,7 +1978,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, false),
+            &translate_options(false, false, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[],
@@ -1858,7 +2053,7 @@ mod tests {
         let source_text_hash = skipped_chapter_source_hash(
             &raw_path,
             Some(&previous_chapter_state),
-            &translate_options(false, true),
+            &translate_options(false, false, true),
         )
         .unwrap();
 
@@ -1879,7 +2074,7 @@ mod tests {
         let source_text_hash = skipped_chapter_source_hash(
             &raw_path,
             Some(&previous_chapter_state),
-            &translate_options(false, false),
+            &translate_options(false, false, false),
         )
         .unwrap();
 
@@ -1905,6 +2100,36 @@ mod tests {
             failed_chapter_source_hash(Some(&previous_chapter_state), "new-source-hash");
 
         assert_eq!(source_text_hash, Some("new-source-hash".to_string()));
+    }
+
+    #[test]
+    fn test_translate_options_rerun_enables_both_rerun_modes() {
+        let options = translate_options(true, false, false);
+
+        assert!(options.rerun_glossary_enabled());
+        assert!(options.rerun_chapters_enabled());
+    }
+
+    #[test]
+    fn test_skipped_chapter_source_hash_backfills_legacy_hash_during_combined_rerun() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        let chapter_text = "# Chapter 1\n\nSource text\n";
+        std::fs::write(&raw_path, chapter_text).unwrap();
+
+        let previous_chapter_state = previous_chapter_state_with_hash(None);
+
+        let source_text_hash = skipped_chapter_source_hash(
+            &raw_path,
+            Some(&previous_chapter_state),
+            &translate_options(true, false, false),
+        )
+        .unwrap();
+
+        assert_eq!(
+            source_text_hash,
+            Some(normalized_source_text_hash(chapter_text))
+        );
     }
 
     #[test]

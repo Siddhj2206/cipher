@@ -30,6 +30,8 @@ pub struct RunOptions {
     pub overwrite: bool,
     pub fail_fast: bool,
     #[serde(default)]
+    pub rerun: bool,
+    #[serde(default)]
     pub rerun_affected_glossary: bool,
     #[serde(default)]
     pub rerun_affected_chapters: bool,
@@ -401,6 +403,7 @@ mod tests {
             Some(RunOptions {
                 overwrite: true,
                 fail_fast: false,
+                rerun: false,
                 rerun_affected_glossary: false,
                 rerun_affected_chapters: false,
             }),

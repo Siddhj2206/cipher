@@ -60,6 +60,9 @@ enum Commands {
         /// Stop on first error
         #[arg(long)]
         fail_fast: bool,
+        /// Re-translate chapters affected by tracked source or glossary changes
+        #[arg(long)]
+        rerun: bool,
         /// Re-translate chapters affected by glossary changes since the last run
         #[arg(long)]
         rerun_affected_glossary: bool,
@@ -205,6 +208,7 @@ async fn main() {
             profile,
             overwrite,
             fail_fast,
+            rerun,
             rerun_affected_glossary,
             rerun_affected_chapters,
         } => {
@@ -212,6 +216,7 @@ async fn main() {
                 profile,
                 overwrite,
                 fail_fast,
+                rerun,
                 rerun_affected_glossary,
                 rerun_affected_chapters,
             };
