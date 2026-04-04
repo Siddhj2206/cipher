@@ -55,7 +55,7 @@ pub fn book_config_injection_mode(value: &str) -> InjectionMode {
         "smart" | "" => InjectionMode::Smart,
         "full" => {
             stderr_warn(
-                "Book config glossary_injection 'full' is deprecated; using 'smart' with per-chapter fallback to full."
+                "Book config glossary_injection 'full' is deprecated; using 'smart' with per-chapter fallback to full.",
             );
             InjectionMode::Smart
         }

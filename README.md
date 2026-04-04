@@ -384,12 +384,14 @@ Current tracked state includes:
 
 Current support includes:
 
+- direct comparison between saved chapter glossary state and the current expected glossary usage for tracked chapters
 - changed glossary fingerprints for previously selected terms
 - changed fingerprints for exported terms
 - smart-selection changes when newly relevant or removed terms alter the effective injected set
+- fallback-to-full behavior changes when smart selection now recovers or degrades
 - forward-only incremental replanning for remaining chapters when new glossary terms are discovered mid-run
 
-This rerun model is still evolving, but it is already much better than a pure startup-only plan.
+For tracked chapters, the global glossary baseline is no longer the primary rerun decision input. It is kept mainly for legacy untracked approximation and run-level baseline commits.
 
 ### Overwrite vs rerun
 

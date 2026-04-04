@@ -1,8 +1,8 @@
 use crate::book::BookLayout;
 use crate::output::{detail, detail_kv, section};
 use crate::state::{
-    failed_chapters, load_all_chapter_states, load_run_metadata, summarize_chapters, ChapterState,
-    GlossaryInjectionMode,
+    ChapterState, GlossaryInjectionMode, failed_chapters, load_all_chapter_states,
+    load_run_metadata, summarize_chapters,
 };
 use anyhow::Result;
 use std::collections::BTreeMap;
@@ -53,10 +53,7 @@ fn print_run_state(
 
     let tracking = summarize_tracking(chapters);
     section("Tracking summary");
-    detail_kv(
-        "Tracked smart selection",
-        tracking.tracked_smart_selection,
-    );
+    detail_kv("Tracked smart selection", tracking.tracked_smart_selection);
     detail_kv(
         "Tracked fallback to full",
         tracking.tracked_fallback_to_full,
