@@ -48,9 +48,24 @@ impl std::str::FromStr for InjectionMode {
     }
 }
 
-impl InjectionMode {
-    pub fn from_str(value: &str) -> Self {
-        value.parse().unwrap()
+pub fn book_config_injection_mode(value: &str) -> InjectionMode {
+    let normalized = value.trim().to_lowercase();
+
+    match normalized.as_str() {
+        "smart" | "" => InjectionMode::Smart,
+        "full" => {
+            stderr_warn(
+                "Book config glossary_injection 'full' is deprecated; using 'smart' with per-chapter fallback to full."
+            );
+            InjectionMode::Smart
+        }
+        _ => {
+            stderr_warn(format!(
+                "Unknown glossary_injection '{}', using 'smart'.",
+                value
+            ));
+            InjectionMode::Smart
+        }
     }
 }
 
@@ -472,26 +487,29 @@ mod tests {
     #[test]
     fn test_injection_mode_from_str() {
         assert!(matches!(
-            InjectionMode::from_str("full"),
+            "full".parse::<InjectionMode>().unwrap(),
             InjectionMode::Full
         ));
         assert!(matches!(
-            InjectionMode::from_str("smart"),
+            "smart".parse::<InjectionMode>().unwrap(),
             InjectionMode::Smart
         ));
         assert!(matches!(
-            InjectionMode::from_str("SMART"),
+            "SMART".parse::<InjectionMode>().unwrap(),
             InjectionMode::Smart
         ));
         assert!(matches!(
-            InjectionMode::from_str("Full"),
+            "Full".parse::<InjectionMode>().unwrap(),
             InjectionMode::Full
         ));
         assert!(matches!(
-            InjectionMode::from_str("unknown"),
+            "unknown".parse::<InjectionMode>().unwrap(),
             InjectionMode::Smart
         ));
-        assert!(matches!(InjectionMode::from_str(""), InjectionMode::Smart));
+        assert!(matches!(
+            "".parse::<InjectionMode>().unwrap(),
+            InjectionMode::Smart
+        ));
     }
 
     #[test]
@@ -500,6 +518,26 @@ mod tests {
         assert!(matches!(mode, InjectionMode::Full));
         let mode: InjectionMode = "smart".parse().unwrap();
         assert!(matches!(mode, InjectionMode::Smart));
+    }
+
+    #[test]
+    fn test_book_config_injection_mode_demotes_full_to_smart() {
+        assert!(matches!(
+            book_config_injection_mode("full"),
+            InjectionMode::Smart
+        ));
+        assert!(matches!(
+            book_config_injection_mode("Full"),
+            InjectionMode::Smart
+        ));
+        assert!(matches!(
+            book_config_injection_mode("smart"),
+            InjectionMode::Smart
+        ));
+        assert!(matches!(
+            book_config_injection_mode("unknown"),
+            InjectionMode::Smart
+        ));
     }
 
     #[test]

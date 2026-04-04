@@ -142,7 +142,9 @@ cipher translate my-book
 cipher translate my-book --profile fast
 cipher translate my-book --overwrite
 cipher translate my-book --fail-fast
+cipher translate my-book --rerun
 cipher translate my-book --rerun-affected-glossary
+cipher translate my-book --rerun-affected-chapters
 ```
 
 Current translate flags:
@@ -150,7 +152,9 @@ Current translate flags:
 - `--profile <name>`: override the book/global profile for this run
 - `--overwrite`: retranslate even when output already exists
 - `--fail-fast`: stop on the first failed chapter
+- `--rerun`: retranslate chapters whose tracked source or glossary-relevant inputs changed
 - `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
+- `--rerun-affected-chapters`: retranslate chapters whose raw markdown changed since the last tracked chapter state
 
 Default behavior:
 
@@ -176,6 +180,7 @@ Status currently includes:
 - profile, provider, and model used for the last run
 - start/update/finish timestamps
 - chapter counts for translated, skipped, failed, and pending
+- tracking counts for smart-tracked chapters, smart fallback-to-full chapters, legacy primary full-tracked chapters, approximate legacy fallback, exported-term tracking, and source hashes
 - a list of failed chapters with short error previews
 
 ### `cipher init <book_dir>`
@@ -314,12 +319,12 @@ Glossary behavior:
 - duplicate terms are skipped during merge/import
 - new terms returned by successful chapters are appended after dedupe
 
-## Glossary injection modes
+## Glossary injection behavior
 
-Book config supports two modes:
+Book config now treats `smart` as the canonical mode.
 
 - `smart` - select relevant glossary terms for the current chapter
-- `full` - inject the full glossary every time
+- legacy `full` config values are deprecated and treated as `smart`
 
 `smart` is the default.
 
@@ -328,6 +333,7 @@ Current smart-mode behavior:
 - matches glossary terms against the chapter text using deterministic selection logic
 - always includes terms with empty `og_term`
 - falls back to full glossary when too few matches are found
+- legacy primary full-tracking state is migrated opportunistically when a successful smart-era run proves it is equivalent to smart fallback tracking
 
 ## Style guide
 
@@ -390,7 +396,9 @@ This rerun model is still evolving, but it is already much better than a pure st
 These are different tools:
 
 - `--overwrite` means redo outputs regardless of tracked equivalence
+- `--rerun` means rerun chapters whose tracked source or glossary inputs changed
 - `--rerun-affected-glossary` means rerun chapters whose tracked glossary inputs became stale
+- `--rerun-affected-chapters` means rerun chapters whose tracked raw source became stale
 
 ## Safety guarantees
 
@@ -407,7 +415,6 @@ This keeps runs resumable and reduces the chance of corrupted outputs after inte
 A few areas are intentionally still evolving:
 
 - API keys are not yet stored in a proper secret store
-- chapter-content-based reruns are not implemented yet
 - dry-run rerun preview is not implemented yet
 - status output does not yet expose all tracked-vs-approximate rerun details
 - repair and glossary extraction are still more coupled than they should be long-term

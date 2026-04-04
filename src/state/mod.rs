@@ -4,6 +4,7 @@ use crate::book::paths::BookPaths;
 use crate::translate::TranslationUsage;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
@@ -28,6 +29,12 @@ pub struct RunMetadata {
 pub struct RunOptions {
     pub overwrite: bool,
     pub fail_fast: bool,
+    #[serde(default)]
+    pub rerun: bool,
+    #[serde(default)]
+    pub rerun_affected_glossary: bool,
+    #[serde(default)]
+    pub rerun_affected_chapters: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -64,6 +71,8 @@ pub struct ChapterState {
     pub glossary_usage: Option<ChapterGlossaryUsage>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub exported_terms: Vec<ChapterGlossaryTerm>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_text_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -160,6 +169,7 @@ impl ChapterState {
         translation_usage: Option<TranslationUsage>,
         glossary_usage: Option<ChapterGlossaryUsage>,
         exported_terms: Vec<ChapterGlossaryTerm>,
+        source_text_hash: Option<String>,
     ) -> Self {
         Self {
             chapter_path,
@@ -170,8 +180,21 @@ impl ChapterState {
             translation_usage,
             glossary_usage,
             exported_terms,
+            source_text_hash,
         }
     }
+}
+
+pub fn normalized_source_text_hash(content: &str) -> String {
+    let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
+    let normalized = normalized.trim_end_matches('\n');
+    let mut hasher = Sha256::new();
+    hasher.update(normalized.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect()
 }
 
 pub fn load_run_metadata(book_dir: &Path) -> Result<Option<RunMetadata>> {
@@ -366,6 +389,7 @@ mod tests {
             None,
             Some(sample_glossary_usage()),
             vec![],
+            Some("hash-1".into()),
         )
     }
 
@@ -379,6 +403,9 @@ mod tests {
             Some(RunOptions {
                 overwrite: true,
                 fail_fast: false,
+                rerun: false,
+                rerun_affected_glossary: false,
+                rerun_affected_chapters: false,
             }),
         );
         metadata.mark_finished();
@@ -438,6 +465,7 @@ mod tests {
         assert_eq!(loaded.status, ChapterStatus::Success);
         assert!(loaded.glossary_usage.is_some());
         assert_eq!(loaded.translation_usage, chapter_state.translation_usage);
+        assert_eq!(loaded.source_text_hash, chapter_state.source_text_hash);
     }
 
     #[test]
@@ -520,5 +548,27 @@ mod tests {
         save_run_metadata(dir.path(), &metadata).unwrap();
 
         assert!(!path.with_extension("json.tmp").exists());
+    }
+
+    #[test]
+    fn test_normalized_source_text_hash_normalizes_line_endings() {
+        let lf = "# Chapter 1\n\nLine 1\nLine 2\n";
+        let crlf = "# Chapter 1\r\n\r\nLine 1\r\nLine 2\r\n";
+
+        assert_eq!(
+            normalized_source_text_hash(lf),
+            normalized_source_text_hash(crlf)
+        );
+    }
+
+    #[test]
+    fn test_normalized_source_text_hash_ignores_trailing_newlines_only() {
+        let without_trailing_newline = "# Chapter 1\n\nLine 1";
+        let with_trailing_newlines = "# Chapter 1\n\nLine 1\n\n";
+
+        assert_eq!(
+            normalized_source_text_hash(without_trailing_newline),
+            normalized_source_text_hash(with_trailing_newlines)
+        );
     }
 }
