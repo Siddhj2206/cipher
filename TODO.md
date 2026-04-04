@@ -44,7 +44,7 @@ These are done and should not be treated as open backlog items anymore.
 ## Active priorities
 
 ### 1. Add chapter source hashing
-**Status:** Next up
+**Status:** Done
 
 Why it matters:
 - glossary changes are only one source of stale output

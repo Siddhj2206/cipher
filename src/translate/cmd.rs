@@ -9,8 +9,8 @@ use crate::output::{detail, detail_kv, section, stderr_detail, warn};
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryInjectionMode,
     GlossaryState, GlossaryStateTerm, RunMetadata, RunOptions, load_all_chapter_states,
-    load_glossary_state, normalize_chapter_path, save_chapter_state, save_glossary_state,
-    save_run_metadata,
+    load_glossary_state, normalize_chapter_path, normalized_source_text_hash, save_chapter_state,
+    save_glossary_state, save_run_metadata,
 };
 use crate::translate::{ProviderTranslationResult, TranslationUsage, Translator};
 use crate::validate::validate_translation;
@@ -342,6 +342,7 @@ async fn translate_single_chapter(
                 previous_chapter_state
                     .map(|s| s.exported_terms.clone())
                     .unwrap_or_default(),
+                previous_chapter_state.and_then(|state| state.source_text_hash.clone()),
             ),
         });
     }
@@ -356,6 +357,7 @@ async fn translate_single_chapter(
     // Read chapter
     let chapter_text = std::fs::read_to_string(raw_path)
         .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+    let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
         return Ok(ChapterResult {
@@ -374,6 +376,7 @@ async fn translate_single_chapter(
                 previous_chapter_state
                     .map(|s| s.exported_terms.clone())
                     .unwrap_or_default(),
+                Some(source_text_hash),
             ),
         });
     }
@@ -424,6 +427,7 @@ async fn translate_single_chapter(
                     chapter_injection_mode,
                 )),
                 exported_terms,
+                Some(source_text_hash),
             ),
         });
     }
@@ -450,6 +454,7 @@ async fn translate_single_chapter(
             previous_chapter_state
                 .map(|s| s.exported_terms.clone())
                 .unwrap_or_default(),
+            Some(source_text_hash),
         ),
     })
 }
@@ -1402,6 +1407,7 @@ mod tests {
             None,
             None,
             vec![],
+            None,
         );
         let mut run_metadata = RunMetadata::new(
             "default".to_string(),
@@ -1535,6 +1541,7 @@ mod tests {
                     InjectionMode::Smart,
                 )),
                 vec![],
+                None,
             ),
         )]);
 
@@ -1676,6 +1683,7 @@ mod tests {
                     InjectionMode::Full,
                 )),
                 vec![],
+                None,
             ),
         )]);
 
@@ -1727,6 +1735,7 @@ mod tests {
                     InjectionMode::Smart,
                 )),
                 vec![],
+                None,
             ),
         )]);
 
@@ -1886,6 +1895,7 @@ mod tests {
                     InjectionMode::Smart,
                 )),
                 vec![],
+                None,
             ),
         )]);
 
@@ -1947,6 +1957,7 @@ mod tests {
                     InjectionMode::Smart,
                 )),
                 exported_terms,
+                None,
             ),
         )]);
 
@@ -2026,6 +2037,7 @@ mod tests {
                     InjectionMode::Smart,
                 )),
                 vec![],
+                None,
             ),
         )]);
 
@@ -2101,6 +2113,7 @@ mod tests {
                     InjectionMode::Smart,
                 )),
                 vec![],
+                None,
             ),
         )]);
 
@@ -2169,6 +2182,7 @@ mod tests {
                         InjectionMode::Smart,
                     )),
                     vec![],
+                    None,
                 ),
             ),
             (
@@ -2184,6 +2198,7 @@ mod tests {
                         InjectionMode::Smart,
                     )),
                     vec![],
+                    None,
                 ),
             ),
             (
@@ -2199,6 +2214,7 @@ mod tests {
                         InjectionMode::Smart,
                     )),
                     vec![],
+                    None,
                 ),
             ),
         ]);
