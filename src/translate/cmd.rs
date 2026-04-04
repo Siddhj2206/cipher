@@ -24,6 +24,7 @@ pub struct TranslateOptions {
     pub overwrite: bool,
     pub fail_fast: bool,
     pub rerun_affected_glossary: bool,
+    pub rerun_affected_chapters: bool,
 }
 
 struct ChapterResult {
@@ -41,12 +42,24 @@ struct GlossaryRerunDecision {
     injection_mode: InjectionMode,
 }
 
+#[derive(Debug, Clone)]
+struct ChapterRerunDecision {
+    reason: String,
+    injection_mode: InjectionMode,
+}
+
 #[derive(Debug, Default)]
 struct GlossaryRerunPlan {
     forced_chapters: BTreeMap<String, GlossaryRerunDecision>,
     warnings: Vec<String>,
     changed_term_count: usize,
     approximate_smart_checks: usize,
+}
+
+#[derive(Debug, Default)]
+struct SourceRerunPlan {
+    forced_chapters: BTreeMap<String, String>,
+    untracked_chapters: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,6 +77,12 @@ struct GlossaryBaselineOutcome {
 
 impl GlossaryRerunPlan {
     fn decision_for(&self, filename: &str) -> Option<&GlossaryRerunDecision> {
+        self.forced_chapters.get(filename)
+    }
+}
+
+impl SourceRerunPlan {
+    fn decision_for(&self, filename: &str) -> Option<&String> {
         self.forced_chapters.get(filename)
     }
 }
@@ -177,6 +196,23 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         GlossaryRerunPlan::default()
     };
 
+    let source_rerun_plan = if options.rerun_affected_chapters {
+        section("Planning source-affected chapter reruns");
+        let plan = build_source_rerun_plan(
+            &Vec::from(chapters.clone()),
+            &layout.paths.raw_dir,
+            out_dir,
+            &previous_chapter_states,
+        )?;
+        detail_kv("Affected chapters", plan.forced_chapters.len());
+        if plan.untracked_chapters > 0 {
+            detail_kv("Untracked chapters", plan.untracked_chapters);
+        }
+        plan
+    } else {
+        SourceRerunPlan::default()
+    };
+
     section("Translating chapters");
     detail_kv("Chapters found", chapters.len());
 
@@ -184,6 +220,8 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let run_options = RunOptions {
         overwrite: options.overwrite,
         fail_fast: options.fail_fast,
+        rerun_affected_glossary: options.rerun_affected_glossary,
+        rerun_affected_chapters: options.rerun_affected_chapters,
     };
 
     let mut run_metadata = RunMetadata::new(
@@ -203,12 +241,17 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     let mut remaining_chapters = chapters.clone();
     let mut rerun_plan = rerun_plan;
+    let source_rerun_plan = source_rerun_plan;
 
     while let Some(chapter_file) = remaining_chapters.pop_front() {
         let chapter_path = chapter_state_key(&layout.paths.raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
-        let rerun_decision = rerun_plan.decision_for(&chapter_path);
+        let rerun_decision = combine_rerun_decisions(
+            rerun_plan.decision_for(&chapter_path),
+            source_rerun_plan.decision_for(&chapter_path),
+            injection_mode,
+        );
 
         let result = translate_single_chapter(
             &translator,
@@ -217,7 +260,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             &chapter_path,
             &options,
             previous_chapter_state,
-            rerun_decision,
+            rerun_decision.as_ref(),
             &mut glossary,
             &style_guide,
             injection_mode,
@@ -312,7 +355,7 @@ async fn translate_single_chapter(
     chapter_path: &str,
     options: &TranslateOptions,
     previous_chapter_state: Option<&ChapterState>,
-    rerun_decision: Option<&GlossaryRerunDecision>,
+    rerun_decision: Option<&ChapterRerunDecision>,
     glossary: &mut Vec<GlossaryTerm>,
     style_guide: &Option<String>,
     injection_mode: InjectionMode,
@@ -326,6 +369,9 @@ async fn translate_single_chapter(
     // Check if output exists
     let output_exists = out_path.exists();
     if !options.overwrite && output_exists && rerun_decision.is_none() {
+        let source_text_hash =
+            skipped_chapter_source_hash(raw_path, previous_chapter_state, options)?;
+
         return Ok(ChapterResult {
             translated: false,
             failed: false,
@@ -342,7 +388,7 @@ async fn translate_single_chapter(
                 previous_chapter_state
                     .map(|s| s.exported_terms.clone())
                     .unwrap_or_default(),
-                previous_chapter_state.and_then(|state| state.source_text_hash.clone()),
+                source_text_hash,
             ),
         });
     }
@@ -459,6 +505,27 @@ async fn translate_single_chapter(
     })
 }
 
+fn skipped_chapter_source_hash(
+    raw_path: &Path,
+    previous_chapter_state: Option<&ChapterState>,
+    options: &TranslateOptions,
+) -> Result<Option<String>> {
+    if !options.rerun_affected_chapters {
+        return Ok(previous_chapter_state.and_then(|state| state.source_text_hash.clone()));
+    }
+
+    match previous_chapter_state.and_then(|state| state.source_text_hash.clone()) {
+        Some(existing_hash) => Ok(Some(existing_hash)),
+        None => Ok(Some(source_text_hash_for_path(raw_path)?)),
+    }
+}
+
+fn source_text_hash_for_path(path: &Path) -> Result<String> {
+    let chapter_text = std::fs::read_to_string(path)
+        .with_context(|| format!("Failed to read {}", path.display()))?;
+    Ok(normalized_source_text_hash(&chapter_text))
+}
+
 fn checkpoint_chapter_progress(
     book_dir: &Path,
     run_metadata: &mut RunMetadata,
@@ -563,6 +630,66 @@ fn build_glossary_state(glossary: &[GlossaryTerm], injection_mode: InjectionMode
             })
             .collect(),
     )
+}
+
+fn build_source_rerun_plan(
+    chapters: &[PathBuf],
+    raw_dir: &Path,
+    out_dir: &Path,
+    previous_chapter_states: &BTreeMap<String, ChapterState>,
+) -> Result<SourceRerunPlan> {
+    let mut plan = SourceRerunPlan::default();
+
+    for chapter_file in chapters {
+        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
+        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
+
+        if !output_exists {
+            continue;
+        }
+
+        let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path) else {
+            continue;
+        };
+
+        let Some(previous_hash) = previous_chapter_state.source_text_hash.as_ref() else {
+            plan.untracked_chapters += 1;
+            continue;
+        };
+
+        let chapter_text = std::fs::read_to_string(chapter_file)
+            .with_context(|| format!("Failed to read {}", chapter_file.display()))?;
+        let current_hash = normalized_source_text_hash(&chapter_text);
+
+        if current_hash != *previous_hash {
+            plan.forced_chapters
+                .insert(chapter_path, "Chapter source changed".to_string());
+        }
+    }
+
+    Ok(plan)
+}
+
+fn combine_rerun_decisions(
+    glossary_decision: Option<&GlossaryRerunDecision>,
+    source_reason: Option<&String>,
+    injection_mode: InjectionMode,
+) -> Option<ChapterRerunDecision> {
+    match (glossary_decision, source_reason) {
+        (None, None) => None,
+        (Some(glossary_decision), None) => Some(ChapterRerunDecision {
+            reason: glossary_decision.reason.clone(),
+            injection_mode: glossary_decision.injection_mode,
+        }),
+        (None, Some(source_reason)) => Some(ChapterRerunDecision {
+            reason: source_reason.clone(),
+            injection_mode,
+        }),
+        (Some(glossary_decision), Some(source_reason)) => Some(ChapterRerunDecision {
+            reason: format!("{}; {}", source_reason, glossary_decision.reason),
+            injection_mode: glossary_decision.injection_mode,
+        }),
+    }
 }
 
 fn build_chapter_glossary_usage(
@@ -1250,12 +1377,16 @@ mod tests {
         build_glossary_state(glossary, mode)
     }
 
-    fn translate_options(rerun_affected_glossary: bool) -> TranslateOptions {
+    fn translate_options(
+        rerun_affected_glossary: bool,
+        rerun_affected_chapters: bool,
+    ) -> TranslateOptions {
         TranslateOptions {
             profile: None,
             overwrite: false,
             fail_fast: false,
             rerun_affected_glossary,
+            rerun_affected_chapters,
         }
     }
 
@@ -1270,6 +1401,19 @@ mod tests {
             snapshot_fingerprints(&actual.terms),
             snapshot_fingerprints(&expected.terms)
         );
+    }
+
+    fn previous_chapter_state_with_hash(source_text_hash: Option<&str>) -> ChapterState {
+        ChapterState::new(
+            "chapter1.md".to_string(),
+            ChapterStatus::Success,
+            None,
+            Some(100),
+            None,
+            None,
+            vec![],
+            source_text_hash.map(str::to_string),
+        )
     }
 
     fn smart_glossary(hero_definition: &str) -> Vec<GlossaryTerm> {
@@ -1439,7 +1583,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false),
+            &translate_options(false, false),
             None,
             &run_start_state,
             &[],
@@ -1482,7 +1626,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(true),
+            &translate_options(true, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Full),
             &[chapter],
@@ -1547,7 +1691,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(true),
+            &translate_options(true, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[chapter],
@@ -1588,7 +1732,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(true),
+            &translate_options(true, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[],
@@ -1628,7 +1772,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false),
+            &translate_options(false, false),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[],
@@ -1651,6 +1795,175 @@ mod tests {
 
         let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
         assert_glossary_state_matches(&loaded, &previous_glossary, InjectionMode::Smart);
+    }
+
+    #[test]
+    fn test_build_source_rerun_plan_detects_changed_source_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let chapter = raw_dir.join("chapter1.md");
+        std::fs::write(&chapter, "new source text").unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                None,
+                None,
+                vec![],
+                Some(normalized_source_text_hash("old source text")),
+            ),
+        )]);
+
+        let plan =
+            build_source_rerun_plan(&[chapter], &raw_dir, &out_dir, &previous_chapter_states)
+                .unwrap();
+
+        assert_eq!(plan.forced_chapters.len(), 1);
+        assert_eq!(
+            plan.forced_chapters.get("chapter1.md").map(String::as_str),
+            Some("Chapter source changed")
+        );
+        assert_eq!(plan.untracked_chapters, 0);
+    }
+
+    #[test]
+    fn test_skipped_chapter_source_hash_backfills_legacy_hash_during_rerun() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        let chapter_text = "# Chapter 1\n\nSource text\n";
+        std::fs::write(&raw_path, chapter_text).unwrap();
+
+        let previous_chapter_state = previous_chapter_state_with_hash(None);
+
+        let source_text_hash = skipped_chapter_source_hash(
+            &raw_path,
+            Some(&previous_chapter_state),
+            &translate_options(false, true),
+        )
+        .unwrap();
+
+        assert_eq!(
+            source_text_hash,
+            Some(normalized_source_text_hash(chapter_text))
+        );
+    }
+
+    #[test]
+    fn test_skipped_chapter_source_hash_keeps_legacy_hash_untracked_without_rerun_flag() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        std::fs::write(&raw_path, "# Chapter 1\n\nSource text\n").unwrap();
+
+        let previous_chapter_state = previous_chapter_state_with_hash(None);
+
+        let source_text_hash = skipped_chapter_source_hash(
+            &raw_path,
+            Some(&previous_chapter_state),
+            &translate_options(false, false),
+        )
+        .unwrap();
+
+        assert_eq!(source_text_hash, None);
+    }
+
+    #[test]
+    fn test_build_source_rerun_plan_skips_unchanged_source_hash() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let chapter = raw_dir.join("chapter1.md");
+        let chapter_text = "# Chapter 1\n\nSame content\n";
+        std::fs::write(&chapter, chapter_text).unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                None,
+                None,
+                vec![],
+                Some(normalized_source_text_hash(chapter_text)),
+            ),
+        )]);
+
+        let plan =
+            build_source_rerun_plan(&[chapter], &raw_dir, &out_dir, &previous_chapter_states)
+                .unwrap();
+
+        assert!(plan.forced_chapters.is_empty());
+        assert_eq!(plan.untracked_chapters, 0);
+    }
+
+    #[test]
+    fn test_build_source_rerun_plan_counts_untracked_chapters() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+        std::fs::create_dir_all(&raw_dir).unwrap();
+        std::fs::create_dir_all(&out_dir).unwrap();
+
+        let chapter = raw_dir.join("chapter1.md");
+        std::fs::write(&chapter, "source text").unwrap();
+        std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
+
+        let previous_chapter_states = BTreeMap::from([(
+            "chapter1.md".to_string(),
+            ChapterState::new(
+                "chapter1.md".to_string(),
+                ChapterStatus::Success,
+                None,
+                Some(100),
+                None,
+                None,
+                vec![],
+                None,
+            ),
+        )]);
+
+        let plan =
+            build_source_rerun_plan(&[chapter], &raw_dir, &out_dir, &previous_chapter_states)
+                .unwrap();
+
+        assert!(plan.forced_chapters.is_empty());
+        assert_eq!(plan.untracked_chapters, 1);
+    }
+
+    #[test]
+    fn test_combine_rerun_decisions_merges_source_and_glossary_reasons() {
+        let glossary_decision = GlossaryRerunDecision {
+            reason: "Full glossary changed: hero".to_string(),
+            injection_mode: InjectionMode::Full,
+        };
+        let source_reason = "Chapter source changed".to_string();
+
+        let decision = combine_rerun_decisions(
+            Some(&glossary_decision),
+            Some(&source_reason),
+            InjectionMode::Smart,
+        )
+        .unwrap();
+
+        assert_eq!(decision.injection_mode, InjectionMode::Full);
+        assert_eq!(
+            decision.reason,
+            "Chapter source changed; Full glossary changed: hero"
+        );
     }
 
     #[test]

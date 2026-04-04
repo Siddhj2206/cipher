@@ -143,6 +143,7 @@ cipher translate my-book --profile fast
 cipher translate my-book --overwrite
 cipher translate my-book --fail-fast
 cipher translate my-book --rerun-affected-glossary
+cipher translate my-book --rerun-affected-chapters
 ```
 
 Current translate flags:
@@ -151,6 +152,7 @@ Current translate flags:
 - `--overwrite`: retranslate even when output already exists
 - `--fail-fast`: stop on the first failed chapter
 - `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
+- `--rerun-affected-chapters`: retranslate chapters whose raw markdown changed since the last tracked chapter state
 
 Default behavior:
 

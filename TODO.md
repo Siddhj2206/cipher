@@ -59,7 +59,7 @@ Expected follow-ons:
 - a simpler future `--rerun`
 
 ### 2. Implement `--rerun-affected-chapters`
-**Status:** Planned
+**Status:** Done
 
 Why it matters:
 - users need a predictable way to rerun chapters whose source changed
