@@ -12,8 +12,8 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
 
     println!("Configuration");
     detail_kv(
-        "config.json",
-        format_path_status(&layout.paths.config_json, layout.exists.config_json),
+        "cipher.toml",
+        format_path_status(&layout.paths.config_toml, layout.exists.config_toml),
     );
 
     println!("Content");
@@ -78,7 +78,7 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
 
 fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
     println!("Profile configuration");
-    let book_config = crate::book::load_book_config(&layout.paths.config_json).unwrap_or_default();
+    let book_config = crate::book::load_book_config(&layout.paths.config_toml).unwrap_or_default();
     let profile_name = config.effective_profile_name(book_config.profile.as_deref());
 
     if let Some(name) = profile_name {

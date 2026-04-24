@@ -117,7 +117,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let global_config = GlobalConfig::load().context("Failed to load global config")?;
 
     // Resolve effective profile (CLI override takes precedence)
-    let book_config = load_book_config(&layout.paths.config_json).unwrap_or_default();
+    let book_config = load_book_config(&layout.paths.config_toml).unwrap_or_default();
     let injection_mode = book_config_injection_mode(&book_config.glossary_injection);
     let profile_name = options
         .profile

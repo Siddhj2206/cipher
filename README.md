@@ -116,7 +116,7 @@ This shows the latest recorded run metadata and chapter summary.
 
 ```text
 my-book/
-  config.json        # Book configuration
+  cipher.toml        # Book configuration
   glossary.json      # Canonical glossary
   style.md           # Style guide injected into prompts
   raw/               # Source chapters
@@ -252,37 +252,35 @@ With a book directory, it checks book layout and effective profile resolution.
 Global configuration is stored using XDG config directories. On Linux, the current path resolves to:
 
 ```text
-~/.config/cipher/cipher/config.json
+~/.config/cipher/config.toml
 ```
 
 It contains:
 
 - providers
-- API keys
 - profiles
 - default profile
+
+Provider API keys are nested under each provider.
 
 The current implementation stores API keys as plain text in this config. Improving secret storage is planned.
 
 ## Book config
 
-Each book contains a portable `config.json`:
+Each book contains a portable `cipher.toml`:
 
-```json
-{
-  "profile": "",
-  "raw_dir": "raw",
-  "out_dir": "tl",
-  "glossary_path": "glossary.json",
-  "style_path": "style.md",
-  "glossary_injection": "smart"
-}
+```toml
+raw_dir = "raw"
+out_dir = "tl"
+glossary_path = "glossary.json"
+style_path = "style.md"
+glossary_injection = "smart"
 ```
 
 Profile resolution order:
 
 1. `--profile`
-2. book `config.json`
+2. book `cipher.toml`
 3. global default profile
 
 ## Glossary
