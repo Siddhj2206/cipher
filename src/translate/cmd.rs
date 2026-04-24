@@ -51,6 +51,13 @@ struct ChapterResult {
     chapter_state: ChapterState,
 }
 
+#[derive(Debug, Clone, Default)]
+struct PreviousChapterArtifacts {
+    translation_usage: Option<TranslationUsage>,
+    glossary_usage: Option<ChapterGlossaryUsage>,
+    exported_terms: Vec<ChapterGlossaryTerm>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PreviewAction {
     Translate,
@@ -455,6 +462,7 @@ async fn translate_single_chapter(
 ) -> Result<ChapterResult> {
     let translation_injection_mode =
         chapter_translation_injection_mode(injection_mode, rerun_decision);
+    let previous_artifacts = previous_chapter_artifacts(previous_chapter_state);
 
     // Check if output exists
     let output_exists = out_path.exists();
@@ -462,25 +470,13 @@ async fn translate_single_chapter(
         let source_text_hash =
             skipped_chapter_source_hash(raw_path, previous_chapter_state, options)?;
 
-        return Ok(ChapterResult {
-            translated: false,
-            failed: false,
-            skipped: true,
-            new_terms_added: 0,
-            usage: None,
-            chapter_state: ChapterState::new(
-                chapter_path.to_string(),
-                ChapterStatus::Skipped,
-                None,
-                None,
-                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
-                previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
-                previous_chapter_state
-                    .map(|s| s.exported_terms.clone())
-                    .unwrap_or_default(),
-                source_text_hash,
-            ),
-        });
+        return Ok(build_skipped_chapter_result(
+            chapter_path,
+            None,
+            None,
+            previous_artifacts,
+            source_text_hash,
+        ));
     }
 
     if let Some(decision) = rerun_decision {
@@ -496,25 +492,13 @@ async fn translate_single_chapter(
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
-        return Ok(ChapterResult {
-            translated: false,
-            failed: false,
-            skipped: true,
-            new_terms_added: 0,
-            usage: None,
-            chapter_state: ChapterState::new(
-                chapter_path.to_string(),
-                ChapterStatus::Skipped,
-                Some("Chapter is empty".to_string()),
-                None,
-                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
-                previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
-                previous_chapter_state
-                    .map(|s| s.exported_terms.clone())
-                    .unwrap_or_default(),
-                Some(source_text_hash),
-            ),
-        });
+        return Ok(build_skipped_chapter_result(
+            chapter_path,
+            Some("Chapter is empty".to_string()),
+            None,
+            previous_artifacts,
+            Some(source_text_hash),
+        ));
     }
 
     // Select glossary terms and display info
@@ -555,26 +539,15 @@ async fn translate_single_chapter(
             merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
 
         detail_kv("Result", "success");
-        return Ok(ChapterResult {
-            translated: true,
-            failed: false,
-            skipped: false,
+        return Ok(build_success_chapter_result(
+            chapter_path,
+            duration.as_millis() as u64,
+            resp.usage,
+            build_chapter_glossary_usage(&selection, translation_injection_mode),
+            exported_terms,
+            source_text_hash,
             new_terms_added,
-            usage: Some(resp.usage.clone()),
-            chapter_state: ChapterState::new(
-                chapter_path.to_string(),
-                ChapterStatus::Success,
-                None,
-                Some(duration.as_millis() as u64),
-                Some(resp.usage),
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    translation_injection_mode,
-                )),
-                exported_terms,
-                Some(source_text_hash),
-            ),
-        });
+        ));
     }
 
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
@@ -585,7 +558,89 @@ async fn translate_single_chapter(
     detail_kv("Error", &error_msg);
     let failed_source_text_hash =
         failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
-    Ok(ChapterResult {
+    Ok(build_failed_chapter_result(
+        chapter_path,
+        error_msg,
+        duration.as_millis() as u64,
+        previous_artifacts,
+        failed_source_text_hash,
+    ))
+}
+
+fn previous_chapter_artifacts(
+    previous_chapter_state: Option<&ChapterState>,
+) -> PreviousChapterArtifacts {
+    PreviousChapterArtifacts {
+        translation_usage: previous_chapter_state.and_then(|state| state.translation_usage.clone()),
+        glossary_usage: previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+        exported_terms: previous_chapter_state
+            .map(|state| state.exported_terms.clone())
+            .unwrap_or_default(),
+    }
+}
+
+fn build_skipped_chapter_result(
+    chapter_path: &str,
+    message: Option<String>,
+    duration_ms: Option<u64>,
+    previous_artifacts: PreviousChapterArtifacts,
+    source_text_hash: Option<String>,
+) -> ChapterResult {
+    ChapterResult {
+        translated: false,
+        failed: false,
+        skipped: true,
+        new_terms_added: 0,
+        usage: None,
+        chapter_state: ChapterState::new(
+            chapter_path.to_string(),
+            ChapterStatus::Skipped,
+            message,
+            duration_ms,
+            previous_artifacts.translation_usage,
+            previous_artifacts.glossary_usage,
+            previous_artifacts.exported_terms,
+            source_text_hash,
+        ),
+    }
+}
+
+fn build_success_chapter_result(
+    chapter_path: &str,
+    duration_ms: u64,
+    usage: TranslationUsage,
+    glossary_usage: ChapterGlossaryUsage,
+    exported_terms: Vec<ChapterGlossaryTerm>,
+    source_text_hash: String,
+    new_terms_added: usize,
+) -> ChapterResult {
+    ChapterResult {
+        translated: true,
+        failed: false,
+        skipped: false,
+        new_terms_added,
+        usage: Some(usage.clone()),
+        chapter_state: ChapterState::new(
+            chapter_path.to_string(),
+            ChapterStatus::Success,
+            None,
+            Some(duration_ms),
+            Some(usage),
+            Some(glossary_usage),
+            exported_terms,
+            Some(source_text_hash),
+        ),
+    }
+}
+
+fn build_failed_chapter_result(
+    chapter_path: &str,
+    error_msg: String,
+    duration_ms: u64,
+    previous_artifacts: PreviousChapterArtifacts,
+    source_text_hash: Option<String>,
+) -> ChapterResult {
+    ChapterResult {
         translated: false,
         failed: true,
         skipped: false,
@@ -595,15 +650,13 @@ async fn translate_single_chapter(
             chapter_path.to_string(),
             ChapterStatus::Failed,
             Some(error_msg),
-            Some(duration.as_millis() as u64),
+            Some(duration_ms),
             None,
-            previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
-            previous_chapter_state
-                .map(|s| s.exported_terms.clone())
-                .unwrap_or_default(),
-            failed_source_text_hash,
+            previous_artifacts.glossary_usage,
+            previous_artifacts.exported_terms,
+            source_text_hash,
         ),
-    })
+    }
 }
 
 fn skipped_chapter_source_hash(
