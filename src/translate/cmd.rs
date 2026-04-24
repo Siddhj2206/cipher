@@ -1385,9 +1385,44 @@ async fn attempt_translation(
             .await
         {
             Ok(resp) => {
-                let validation = validate_translation(&resp.response.translation);
+                let validation = validate_translation(&resp.text);
                 if validation.is_valid() {
-                    return (Some(resp), None);
+                    match translator
+                        .extract_glossary(chapter_text, resp.text.clone())
+                        .await
+                    {
+                        Ok(glossary_resp) => {
+                            let mut usage = resp.usage;
+                            usage += glossary_resp.usage;
+                            detail_kv("Glossary extraction", "success");
+                            return (
+                                Some(ProviderTranslationResult {
+                                    response: crate::translate::TranslationResponse {
+                                        translation: resp.text,
+                                        new_glossary_terms: glossary_resp.new_glossary_terms,
+                                    },
+                                    usage,
+                                }),
+                                None,
+                            );
+                        }
+                        Err(e) => {
+                            detail_kv(
+                                "Glossary extraction",
+                                format!("failed: {}. Continuing without new terms.", e),
+                            );
+                            return (
+                                Some(ProviderTranslationResult {
+                                    response: crate::translate::TranslationResponse {
+                                        translation: resp.text,
+                                        new_glossary_terms: Vec::new(),
+                                    },
+                                    usage: resp.usage,
+                                }),
+                                None,
+                            );
+                        }
+                    }
                 }
 
                 let validation_errors = validation.errors();
@@ -1402,27 +1437,65 @@ async fn attempt_translation(
                         format!("{} Attempting repair.", validation_errors.join(", ")),
                     );
 
-                    let repair_req =
-                        crate::translate::TranslationRequest::new(chapter_text.to_string())
-                            .with_glossary_terms(selection.terms.clone())
-                            .with_style_guide(style_guide.clone())
-                            .with_failed_translation(resp.response.translation)
-                            .with_validation_errors(validation_errors.to_vec());
-
-                    match translator.translate_with_request(&repair_req).await {
+                    match translator
+                        .repair_chapter(
+                            chapter_text,
+                            resp.text,
+                            &selection.terms,
+                            style_guide.clone(),
+                            validation_errors.to_vec(),
+                        )
+                        .await
+                    {
                         Ok(repair_resp) => {
-                            let repair_validation =
-                                validate_translation(&repair_resp.response.translation);
+                            let repair_validation = validate_translation(&repair_resp.text);
                             if repair_validation.is_valid() {
-                                print_usage_info(&repair_resp.usage);
-                                detail_kv("Repair", "success");
-                                return (Some(repair_resp), None);
+                                match translator
+                                    .extract_glossary(chapter_text, repair_resp.text.clone())
+                                    .await
+                                {
+                                    Ok(glossary_resp) => {
+                                        let mut usage = repair_resp.usage;
+                                        usage += glossary_resp.usage;
+                                        detail_kv("Repair", "success");
+                                        detail_kv("Glossary extraction", "success");
+                                        return (
+                                            Some(ProviderTranslationResult {
+                                                response: crate::translate::TranslationResponse {
+                                                    translation: repair_resp.text,
+                                                    new_glossary_terms: glossary_resp
+                                                        .new_glossary_terms,
+                                                },
+                                                usage,
+                                            }),
+                                            None,
+                                        );
+                                    }
+                                    Err(e) => {
+                                        detail_kv(
+                                            "Glossary extraction",
+                                            format!("failed: {}. Continuing without new terms.", e),
+                                        );
+                                        detail_kv("Repair", "success");
+                                        return (
+                                            Some(ProviderTranslationResult {
+                                                response: crate::translate::TranslationResponse {
+                                                    translation: repair_resp.text,
+                                                    new_glossary_terms: Vec::new(),
+                                                },
+                                                usage: repair_resp.usage,
+                                            }),
+                                            None,
+                                        );
+                                    }
+                                }
+                            } else {
+                                last_error = Some(format!(
+                                    "Repair failed validation: {}",
+                                    repair_validation.errors().join(", ")
+                                ));
+                                detail_kv("Repair", last_error.as_ref().unwrap());
                             }
-                            last_error = Some(format!(
-                                "Repair failed validation: {}",
-                                repair_validation.errors().join(", ")
-                            ));
-                            detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                         Err(e) => {
                             last_error = Some(format!("Repair request failed: {}", e));

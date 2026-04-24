@@ -3,7 +3,7 @@
 //! Uses the base prompt and format from Book-Translator-Go
 
 use crate::glossary::GlossaryTerm;
-use crate::translate::TranslationRequest;
+use crate::translate::{GlossaryExtractionRequest, RepairRequest, TranslationRequest};
 
 const BASE_PROMPT: &str = r#"You are an expert translator working on a serialized web novel. Your task is to translate a chapter from its original language (likely Korean or Chinese) into high-quality English prose.
 
@@ -48,22 +48,9 @@ Follow these additional style and tone instructions carefully:
 }
 
 /// Build the full translation prompt for a chapter
-pub fn build_prompt(req: &TranslationRequest) -> String {
+pub fn build_translation_prompt(req: &TranslationRequest) -> String {
     let glossary_section = build_glossary_section(&req.glossary_terms);
     let style_section = build_style_section(&req.style_guide);
-
-    if req.is_repair() {
-        build_repair_prompt(req, &glossary_section, &style_section)
-    } else {
-        build_initial_prompt(req, &glossary_section, &style_section)
-    }
-}
-
-fn build_initial_prompt(
-    req: &TranslationRequest,
-    glossary_section: &str,
-    style_section: &str,
-) -> String {
     format!(
         r#"**Project Overview & Core Task:**
 
@@ -78,26 +65,19 @@ Adhere strictly to the established glossary below for consistency.
 
 Following the translation, you are to identify any *new*, absolutely essential terms that must be added to the glossary for future chapters. Be **extremely** selective. A term should only be added if it meets **all** of the following criteria:
 
-1.  Has a specific non-English name requiring consistent translation.
-2.  Will definitely appear again (main characters/major locations only).
-3.  Would cause significant reader confusion if translated inconsistently.
-
-When in doubt, **do not** add the term. Format new terms as an array of objects with "term", "og_term", and "definition" fields. The "og_term" field should contain the original language term (e.g., Korean characters), while "term" contains the English name.
-
 {}
 
 **Text to Translate:**
 {}
 
-Return your response as a JSON object with exactly two fields:
-- "translation": string containing the translated markdown
-- "new_glossary_terms": array of glossary term objects"#,
+Return your response as a JSON object with exactly one field:
+- "translation": string containing the translated markdown"#,
         BASE_PROMPT, style_section, glossary_section, FORMATTING_REQUIREMENTS, req.chapter_markdown
     )
 }
 
-fn build_repair_prompt(
-    req: &TranslationRequest,
+pub fn build_repair_prompt(
+    req: &RepairRequest,
     glossary_section: &str,
     style_section: &str,
 ) -> String {
@@ -107,8 +87,6 @@ fn build_repair_prompt(
         .map(|e| format!("- {}", e))
         .collect::<Vec<_>>()
         .join("\n");
-
-    let failed = req.failed_translation.as_deref().unwrap_or("");
 
     format!(
         r#"**Project Overview & Core Task:**
@@ -133,20 +111,43 @@ Your previous translation had the following validation errors:
 **Your previous (failed) translation:**
 {}
 
-Please fix the issues above and provide a corrected translation. Pay special attention to the validation errors listed.
+Please fix the issues above and provide a corrected translation. Do not invent glossary entries or return any glossary metadata. Pay special attention to the validation errors listed.
 
 {}
 
-Return your response as a JSON object with exactly two fields:
-- "translation": string containing the translated markdown
-- "new_glossary_terms": array of glossary term objects"#,
+Return your response as a JSON object with exactly one field:
+- "translation": string containing the translated markdown"#,
         BASE_PROMPT,
         style_section,
         glossary_section,
         errors_list,
         req.chapter_markdown,
-        failed,
+        req.failed_translation,
         FORMATTING_REQUIREMENTS
+    )
+}
+
+pub fn build_glossary_extraction_prompt(req: &GlossaryExtractionRequest) -> String {
+    format!(
+        r#"You are reviewing an accepted chapter translation for glossary extraction.
+
+Identify only *new*, absolutely essential glossary terms that should be added for future chapters. Be **extremely** selective. A term should only be added if it meets **all** of the following criteria:
+
+1.  Has a specific non-English name requiring consistent translation.
+2.  Will definitely appear again (main characters/major locations only).
+3.  Would cause significant reader confusion if translated inconsistently.
+
+When in doubt, **do not** add the term. Format every extracted term with "term", "og_term", and "definition" fields. The "og_term" field should contain the original language term when known.
+
+**Original source chapter:**
+{}
+
+**Accepted translation:**
+{}
+
+Return your response as a JSON object with exactly one field:
+- "new_glossary_terms": array of glossary term objects"#,
+        req.chapter_markdown, req.translated_markdown
     )
 }
 
@@ -174,15 +175,16 @@ mod tests {
     use crate::glossary::GlossaryTerm;
 
     #[test]
-    fn test_build_prompt_includes_base() {
+    fn test_build_translation_prompt_includes_base() {
         let req = TranslationRequest::new("# Chapter 1\n\nHello".to_string());
-        let prompt = build_prompt(&req);
+        let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("expert translator"));
         assert!(prompt.contains("Chapter 1"));
+        assert!(!prompt.contains("new_glossary_terms"));
     }
 
     #[test]
-    fn test_build_prompt_with_glossary() {
+    fn test_build_translation_prompt_with_glossary() {
         let terms = vec![GlossaryTerm {
             term: "Magic".to_string(),
             og_term: Some("마법".to_string()),
@@ -190,42 +192,43 @@ mod tests {
             notes: None,
         }];
         let req = TranslationRequest::new("Text".to_string()).with_glossary_terms(terms);
-        let prompt = build_prompt(&req);
+        let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("Magic [마법]: Supernatural power"));
     }
 
     #[test]
-    fn test_build_prompt_without_glossary() {
+    fn test_build_translation_prompt_without_glossary() {
         let req = TranslationRequest::new("Text".to_string());
-        let prompt = build_prompt(&req);
+        let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("(No glossary terms available)"));
     }
 
     #[test]
     fn test_build_repair_prompt_includes_errors() {
-        let req = TranslationRequest::new("Original text".to_string())
-            .with_failed_translation("Bad translation".to_string())
+        let req = RepairRequest::new("Original text".to_string(), "Bad translation".to_string())
             .with_validation_errors(vec![
                 "Missing chapter heading".to_string(),
                 "Unbalanced code fences".to_string(),
             ]);
-        let prompt = build_prompt(&req);
+        let prompt = build_repair_prompt(&req, "(No glossary terms available)", "");
 
         assert!(prompt.contains("REPAIR REQUEST"));
         assert!(prompt.contains("Missing chapter heading"));
         assert!(prompt.contains("Unbalanced code fences"));
         assert!(prompt.contains("Original text"));
         assert!(prompt.contains("Bad translation"));
+        assert!(!prompt.contains("new_glossary_terms"));
     }
 
     #[test]
-    fn test_build_repair_prompt_is_repair() {
-        let req = TranslationRequest::new("Text".to_string())
-            .with_failed_translation("Failed".to_string())
-            .with_validation_errors(vec!["Error".to_string()]);
-        assert!(req.is_repair());
-
-        let normal_req = TranslationRequest::new("Text".to_string());
-        assert!(!normal_req.is_repair());
+    fn test_build_glossary_extraction_prompt_requests_terms_only() {
+        let req = GlossaryExtractionRequest::new(
+            "Source".to_string(),
+            "# Chapter 1\n\nTranslated".to_string(),
+        );
+        let prompt = build_glossary_extraction_prompt(&req);
+        assert!(prompt.contains("Accepted translation"));
+        assert!(prompt.contains("new_glossary_terms"));
+        assert!(!prompt.contains("\"translation\":"));
     }
 }

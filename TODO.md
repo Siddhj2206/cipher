@@ -112,7 +112,7 @@ Potential output:
 ## Active design work
 
 ### 6. Redesign validation/repair into a cleaner pipeline
-**Status:** Open
+**Status:** Done
 
 Current problem:
 - the initial translation response mixes accepted text and glossary extraction
@@ -130,17 +130,22 @@ Why this matters:
 - narrower repair behavior
 
 ### 7. Split glossary extraction from translation response
-**Status:** Open
+**Status:** Under discussion
 
 This is the concrete follow-on to the repair redesign.
 
+Current implementation note:
+- the code currently does glossary extraction in a separate follow-up request after translation is accepted
+- this is intentionally not settled yet and may be reverted back to a combined translation + glossary response
+
 Questions to answer:
-- is glossary extraction mandatory for every success?
-- should extraction happen in a second call?
-- should extraction be skipped in some fallback or repair paths?
+- should glossary extraction stay in a second call after accepted translation
+- should glossary extraction be folded back into the main translation response
+- if split, should glossary extraction failure invalidate chapter success or only skip term capture
+- if combined, how should repair avoid taking ownership of `new_glossary_terms`
 
 ### 8. Narrow repair semantics
-**Status:** Open
+**Status:** Done
 
 Desired repair contract:
 - fix structure only
@@ -154,7 +159,55 @@ Desired repair contract:
 Follow-up areas:
 - separate hard failures from warnings
 - identify cases that can be auto-cleaned locally
-- decide whether heading checks remain strict or become configurable
+- move toward book-configured output structure instead of hardcoded heading assumptions
+- validate structured fields separately from rendered markdown
+
+### 10. Standardize user config on TOML
+**Status:** Planned
+
+Decision:
+- use `~/.config/cipher/config.toml` for global config
+- use `cipher.toml` in each book directory
+- keep TOML for user-authored config and JSON for machine-managed glossary/state data
+- no migration compatibility is required right now
+
+Why it matters:
+- current user-facing config is split across JSON and Markdown in a way that is harder to read and edit
+- TOML is a better fit for nested config and comments
+- this is a good opportunity to simplify the schema instead of only changing file extensions
+
+### 11. Redesign global config schema while switching to TOML
+**Status:** Planned
+
+Direction:
+- keep `default_profile`
+- keep named `profiles`
+- keep named `providers`
+- nest provider keys under each provider instead of keeping a separate top-level `keys` map
+- remove provider `extras` for now
+
+Notes:
+- global config path should be `~/.config/cipher/config.toml`
+- prefer a cleaner typed schema over arbitrary passthrough blobs
+
+### 12. Add book-configured structured output format
+**Status:** Planned
+
+Direction:
+- define output structure per book in `cipher.toml`
+- keep provider-facing structured output schemas simple and flat
+- prefer a small TOML field + render-template model over a custom DSL
+- render final markdown locally from structured fields
+
+Initial shape:
+- fields like `chapter_number`, `chapter_title`, and `content`
+- per-field `required` and `description`
+- a render template for the final markdown heading/body layout
+
+Why it matters:
+- makes output shape configurable per book without inventing a full schema language
+- makes repair more targeted because it can reason about missing or malformed fields
+- reduces validator reliance on hardcoded heading heuristics
 
 ---
 
@@ -162,7 +215,7 @@ Follow-up areas:
 
 These are worthwhile because they reduce cognitive load without changing product direction.
 
-### 10. Refactor `main` into command-specific runners
+### 13. Refactor `main` into command-specific runners
 **Status:** Good cleanup
 
 Goal:
@@ -176,7 +229,7 @@ Likely extraction targets:
 - `run_doctor(...)`
 - `run_profile(...)`
 
-### 11. Simplify `translate_single_chapter`
+### 14. Simplify `translate_single_chapter`
 **Status:** High-value cleanup
 
 Why it matters:
@@ -186,7 +239,7 @@ Preferred direction:
 - extract small helpers for skipped/success/failed result assembly
 - do not redesign the overall flow yet
 
-### 12. Break `import_epub` into clearer phases
+### 15. Break `import_epub` into clearer phases
 **Status:** Medium-value cleanup
 
 Likely phases:
@@ -195,7 +248,7 @@ Likely phases:
 - clean existing raw chapters if needed
 - import spine chapters
 
-### 13. Simplify interactive profile flows
+### 16. Simplify interactive profile flows
 **Status:** Medium-value cleanup
 
 Targets:
@@ -205,7 +258,7 @@ Targets:
 Goal:
 - separate menu branching from config mutation logic
 
-### 14. Keep polishing `profile new`
+### 17. Keep polishing `profile new`
 **Status:** Follow-up polish
 
 Potential follow-ons:
@@ -214,14 +267,14 @@ Potential follow-ons:
 - better distinction between provider creation and provider reuse
 - more obvious key-selection flow
 
-### 15. Revisit `translate_book` structure after smaller cleanups
+### 18. Revisit `translate_book` structure after smaller cleanups
 **Status:** Later cleanup
 
 Why later:
 - it is a real hotspot, but it should be simplified after `translate_single_chapter` and `main`
 - avoid moving complexity around before smaller boundaries are clearer
 
-### 16. Do not rewrite the rerun engine yet
+### 19. Do not rewrite the rerun engine yet
 **Status:** Deferred intentionally
 
 Current position:
@@ -237,14 +290,14 @@ In other words:
 
 ## UX and config follow-ups
 
-### 17. Improve status/reporting for skipped-but-previously-successful chapters
+### 20. Improve status/reporting for skipped-but-previously-successful chapters
 **Status:** Future
 
 Why it matters:
 - a chapter may be skipped this run while still representing a valid successful prior translation
 - status output should make that distinction obvious
 
-### 18. Add more detailed skip output
+### 21. Add more detailed skip output
 **Status:** Planned
 
 Useful cases to surface:
@@ -255,20 +308,13 @@ Useful cases to surface:
 - skipped because the chapter is empty
 - skipped because of the current flag combination
 
-### 19. Fix display for empty chapters
+### 22. Fix display for empty chapters
 **Status:** Open
 
 Why it matters:
 - empty chapters should read clearly in CLI/status output instead of looking like an ambiguous failure or generic skip
 
-### 20. Revisit config schema for providers and keys
-**Status:** Open
-
-Why it matters:
-- the current split between provider config and keyed secrets may not be the cleanest long-term shape
-- revisit whether provider and key sections should merge or relate more directly
-
-### 21. Revisit glossary matcher caching only if performance becomes a real issue
+### 23. Revisit glossary matcher caching only if performance becomes a real issue
 **Status:** Deferred unless needed
 
 Only do this if:
@@ -279,28 +325,28 @@ Only do this if:
 
 ## Product and policy decisions
 
-### 22. Decide the long-term role of `full` mode
+### 24. Decide the long-term role of `full` mode
 **Status:** Open
 
 Current leaning:
 - keep `smart` as canonical
 - treat `full` as non-canonical or emergency mode unless there is a strong reason not to
 
-### 23. Review mode-switch behavior explicitly
+### 25. Review mode-switch behavior explicitly
 **Status:** Open
 
 Need to decide:
 - should switching `smart <-> full` trigger reruns?
 - should full-mode runs advance canonical baseline?
 
-### 24. Revisit exported-term tracking semantics
+### 26. Revisit exported-term tracking semantics
 **Status:** Open
 
 Need to decide:
 - should `exported_terms` mean only newly added terms from the last success?
 - or should it preserve a broader semantic claim by the chapter?
 
-### 25. Better API key storage
+### 27. Better API key storage
 **Status:** Open
 
 Ideas to explore:
@@ -308,7 +354,7 @@ Ideas to explore:
 - env-var indirection
 - encrypted local storage
 
-### 26. Evolve `cipher` beyond novel translation
+### 28. Evolve `cipher` beyond novel translation
 **Status:** Open
 
 Questions:
@@ -321,7 +367,7 @@ Questions:
 
 These are real but not core roadmap items.
 
-### 27. Flatten structured-output schema for Nvidia / OpenAI-compatible providers
+### 29. Flatten structured-output schema for Nvidia / OpenAI-compatible providers
 **Status:** Optional
 
 Why it matters:
@@ -334,24 +380,13 @@ Observed failure:
 Likely direction:
 - flatten or inline `$defs` references before sending schemas on OpenAI-compatible paths
 
-### 28. Pass provider `extras` through to rig `additional_params`
-**Status:** Optional
-
-Why it matters:
-- `ProviderConfig.extras` exists but is currently ignored
-
-Likely direction:
-- add `extras` to provider construction
-- pass it through to OpenAI/OpenAI-compatible and Gemini extractor builders
-- document it as an advanced raw passthrough feature
-
-### 29. Surface persisted usage in `status`
+### 30. Surface persisted usage in `status`
 **Status:** Nice to have
 
 Why it matters:
 - usage is now collected and persisted per chapter, but `status` does not expose it yet
 
-### 30. Revisit first-class OpenRouter support only if the structured-output story changes
+### 31. Revisit first-class OpenRouter support only if the structured-output story changes
 **Status:** Deferred
 
 Current understanding:
@@ -366,7 +401,8 @@ Current understanding:
 2. implement `--rerun-affected-chapters`
 3. design a first useful `--rerun`
 4. add rerun preview and better status visibility
-5. simplify `main` and `translate_single_chapter`
-6. redesign validation/repair and split glossary extraction
-7. revisit `full` mode and exported-term policy questions
-8. only then consider whether a larger rerun-engine rewrite is still worth it
+5. switch user-facing config to TOML and simplify the global config schema
+6. add book-configured structured output and move validation toward structured fields + local rendering
+7. simplify `main` and `translate_single_chapter`
+8. revisit `full` mode and exported-term policy questions
+9. only then consider whether a larger rerun-engine rewrite is still worth it

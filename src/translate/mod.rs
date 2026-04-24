@@ -5,7 +5,9 @@ pub mod types;
 
 pub use crate::translate::cmd::{TranslateOptions, translate_book};
 pub use crate::translate::types::{
-    ProviderTranslationResult, TranslationRequest, TranslationResponse, TranslationUsage,
+    GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult,
+    ProviderTranslationResult, RepairRequest, TranslationRequest, TranslationResponse,
+    TranslationUsage,
 };
 
 use crate::config::GlobalConfig;
@@ -29,7 +31,7 @@ impl Translator {
         chapter_text: &str,
         glossary_terms: &[GlossaryTerm],
         style_guide: Option<String>,
-    ) -> Result<ProviderTranslationResult> {
+    ) -> Result<ProviderTextResult> {
         let request = TranslationRequest::new(chapter_text.to_string())
             .with_glossary_terms(glossary_terms.to_vec())
             .with_style_guide(style_guide);
@@ -37,10 +39,28 @@ impl Translator {
         self.provider.translate(request).await
     }
 
-    pub async fn translate_with_request(
+    pub async fn repair_chapter(
         &self,
-        request: &TranslationRequest,
-    ) -> Result<ProviderTranslationResult> {
-        self.provider.translate(request.clone()).await
+        chapter_text: &str,
+        failed_translation: String,
+        glossary_terms: &[GlossaryTerm],
+        style_guide: Option<String>,
+        validation_errors: Vec<String>,
+    ) -> Result<ProviderTextResult> {
+        let request = RepairRequest::new(chapter_text.to_string(), failed_translation)
+            .with_glossary_terms(glossary_terms.to_vec())
+            .with_style_guide(style_guide)
+            .with_validation_errors(validation_errors);
+
+        self.provider.repair(request).await
+    }
+
+    pub async fn extract_glossary(
+        &self,
+        chapter_text: &str,
+        translated_markdown: String,
+    ) -> Result<ProviderGlossaryResult> {
+        let request = GlossaryExtractionRequest::new(chapter_text.to_string(), translated_markdown);
+        self.provider.extract_glossary(request).await
     }
 }

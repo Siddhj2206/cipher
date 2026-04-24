@@ -366,6 +366,13 @@ If validation fails:
 3. the repaired output is validated again
 4. if it still fails, the chapter is marked failed
 
+Glossary extraction now runs only after a translation has passed validation.
+
+- translation requests return translated markdown only
+- repair requests return corrected markdown only
+- glossary extraction runs as a separate follow-up call against accepted markdown
+- glossary extraction failure does not invalidate an otherwise accepted chapter; it only skips adding new terms for that chapter
+
 ## Reruns and state
 
 `cipher` stores internal state under `.cipher/` so runs are resumable and future rerun decisions can be more informed.
@@ -419,7 +426,6 @@ A few areas are intentionally still evolving:
 - API keys are not yet stored in a proper secret store
 - dry-run rerun preview is not implemented yet
 - status output does not yet expose all tracked-vs-approximate rerun details
-- repair and glossary extraction are still more coupled than they should be long-term
 
 ## Development
 
