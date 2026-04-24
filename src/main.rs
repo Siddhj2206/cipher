@@ -7,7 +7,6 @@ use output::{detail, detail_kv, stderr_error};
 mod book;
 mod config;
 mod glossary;
-mod import;
 mod output;
 mod state;
 mod translate;
@@ -24,14 +23,6 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Import an EPUB file and create a new book project
-    Import {
-        /// Path to the EPUB file
-        epub_path: PathBuf,
-        /// Force re-import even if chapters exist (will prompt for confirmation)
-        #[arg(long)]
-        force: bool,
-    },
     /// Initialize a new book project
     Init {
         /// Directory to initialize
@@ -152,16 +143,6 @@ fn load_global_config() -> anyhow::Result<config::GlobalConfig> {
     config::GlobalConfig::load().context("Failed to load global config")
 }
 
-fn run_import_command(epub_path: PathBuf, force: bool) -> anyhow::Result<()> {
-    let report = import::import_epub(&epub_path, force)?;
-
-    println!("Import complete");
-    detail_kv("Book", report.book_dir.display());
-    detail_kv("Chapters imported", report.chapters_imported);
-
-    Ok(())
-}
-
 fn run_init_command(
     book_dir: PathBuf,
     profile: Option<String>,
@@ -260,7 +241,6 @@ fn run_profile_subcommand(command: ProfileCommands) -> anyhow::Result<()> {
 
 async fn run_command(command: Commands) -> anyhow::Result<()> {
     match command {
-        Commands::Import { epub_path, force } => run_import_command(epub_path, force),
         Commands::Init {
             book_dir,
             profile,

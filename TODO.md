@@ -244,15 +244,6 @@ Preferred direction:
 - extract small helpers for skipped/success/failed result assembly
 - do not redesign the overall flow yet
 
-### 15. Break `import_epub` into clearer phases
-**Status:** Medium-value cleanup
-
-Likely phases:
-- prepare target
-- confirm reimport behavior
-- clean existing raw chapters if needed
-- import spine chapters
-
 ### 16. Simplify interactive profile flows
 **Status:** Medium-value cleanup
 

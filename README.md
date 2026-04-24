@@ -62,18 +62,12 @@ cipher profile show myprofile
 cipher profile test myprofile
 ```
 
-### 2. Create or import a book
+### 2. Create a book
 
 From scratch:
 
 ```bash
 cipher init my-book
-```
-
-From an EPUB:
-
-```bash
-cipher import my-book.epub
 ```
 
 You can also initialize a book with a profile or imported glossary:
@@ -195,23 +189,6 @@ cipher init my-book --profile myprofile
 cipher init my-book --from other-book
 cipher init my-book --import-glossary terms.json
 ```
-
-### `cipher import <epub_path>`
-
-Import an EPUB into a new book directory.
-
-```bash
-cipher import novel.epub
-cipher import novel.epub --force
-```
-
-Current import behavior:
-
-- creates a book directory alongside the EPUB
-- extracts chapters into `raw/`
-- converts HTML to markdown
-- skips very small/empty chapters
-- initializes the standard book scaffold
 
 ### `cipher glossary <subcommand> <book_dir>`
 
