@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+use crate::book::output::OutputConfig;
 use crate::book::paths::BookPaths;
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,8 @@ pub struct BookConfig {
     pub style_path: String,
     #[serde(default = "default_glossary_injection")]
     pub glossary_injection: String,
+    #[serde(default)]
+    pub output: OutputConfig,
 }
 
 impl Default for BookConfig {
@@ -36,6 +39,7 @@ impl Default for BookConfig {
             glossary_path: "glossary.json".to_string(),
             style_path: "style.md".to_string(),
             glossary_injection: default_glossary_injection(),
+            output: OutputConfig::default(),
         }
     }
 }
@@ -222,6 +226,7 @@ mod tests {
         assert_eq!(config.style_path, "style.md");
         assert_eq!(config.glossary_injection, "smart");
         assert_eq!(config.profile, None);
+        assert_eq!(config.output, OutputConfig::default());
     }
 
     #[test]

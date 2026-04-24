@@ -10,6 +10,7 @@ pub use crate::translate::types::{
     TranslationUsage,
 };
 
+use crate::book::OutputConfig;
 use crate::config::GlobalConfig;
 use crate::glossary::GlossaryTerm;
 use anyhow::{Context, Result};
@@ -31,10 +32,12 @@ impl Translator {
         chapter_text: &str,
         glossary_terms: &[GlossaryTerm],
         style_guide: Option<String>,
+        output_config: OutputConfig,
     ) -> Result<ProviderTextResult> {
         let request = TranslationRequest::new(chapter_text.to_string())
             .with_glossary_terms(glossary_terms.to_vec())
-            .with_style_guide(style_guide);
+            .with_style_guide(style_guide)
+            .with_output_config(output_config);
 
         self.provider.translate(request).await
     }
@@ -46,11 +49,13 @@ impl Translator {
         glossary_terms: &[GlossaryTerm],
         style_guide: Option<String>,
         validation_errors: Vec<String>,
+        output_config: OutputConfig,
     ) -> Result<ProviderTextResult> {
         let request = RepairRequest::new(chapter_text.to_string(), failed_translation)
             .with_glossary_terms(glossary_terms.to_vec())
             .with_style_guide(style_guide)
-            .with_validation_errors(validation_errors);
+            .with_validation_errors(validation_errors)
+            .with_output_config(output_config);
 
         self.provider.repair(request).await
     }

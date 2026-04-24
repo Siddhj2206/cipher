@@ -1,3 +1,4 @@
+use crate::book::{OutputConfig, StructuredChapter};
 use crate::glossary::GlossaryTerm;
 use serde::{Deserialize, Serialize};
 use std::ops::AddAssign;
@@ -19,7 +20,7 @@ pub struct ProviderTranslationResult {
 
 #[derive(Debug, Clone)]
 pub struct ProviderTextResult {
-    pub text: String,
+    pub chapter: StructuredChapter,
     pub usage: TranslationUsage,
 }
 
@@ -31,7 +32,7 @@ pub struct ProviderGlossaryResult {
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct TranslationResponse {
-    pub translation: String,
+    pub translation: StructuredChapter,
     pub new_glossary_terms: Vec<GlossaryTerm>,
 }
 
@@ -40,6 +41,7 @@ pub struct TranslationRequest {
     pub chapter_markdown: String,
     pub glossary_terms: Vec<GlossaryTerm>,
     pub style_guide: Option<String>,
+    pub output_config: OutputConfig,
 }
 
 impl TranslationRequest {
@@ -48,6 +50,7 @@ impl TranslationRequest {
             chapter_markdown,
             glossary_terms: Vec::new(),
             style_guide: None,
+            output_config: OutputConfig::default(),
         }
     }
 
@@ -60,6 +63,11 @@ impl TranslationRequest {
         self.style_guide = style_guide;
         self
     }
+
+    pub fn with_output_config(mut self, output_config: OutputConfig) -> Self {
+        self.output_config = output_config;
+        self
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +77,7 @@ pub struct RepairRequest {
     pub style_guide: Option<String>,
     pub failed_translation: String,
     pub validation_errors: Vec<String>,
+    pub output_config: OutputConfig,
 }
 
 impl RepairRequest {
@@ -79,6 +88,7 @@ impl RepairRequest {
             style_guide: None,
             failed_translation,
             validation_errors: Vec::new(),
+            output_config: OutputConfig::default(),
         }
     }
 
@@ -94,6 +104,11 @@ impl RepairRequest {
 
     pub fn with_validation_errors(mut self, errors: Vec<String>) -> Self {
         self.validation_errors = errors;
+        self
+    }
+
+    pub fn with_output_config(mut self, output_config: OutputConfig) -> Self {
+        self.output_config = output_config;
         self
     }
 }

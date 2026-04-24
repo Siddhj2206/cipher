@@ -81,7 +81,7 @@ Notes:
 - keep `--overwrite` separate
 
 ### 4. Add rerun preview mode
-**Status:** Planned
+**Status:** In progress
 
 Likely shape:
 - `--dry-run` on `translate`
@@ -154,16 +154,17 @@ Desired repair contract:
 - do not rewrite style unless required for validity
 
 ### 9. Revisit validation strictness after repair redesign
-**Status:** Open
+**Status:** In progress
 
 Follow-up areas:
 - separate hard failures from warnings
 - identify cases that can be auto-cleaned locally
-- move toward book-configured output structure instead of hardcoded heading assumptions
-- validate structured fields separately from rendered markdown
+- continue tightening the book-configured output path
+- decide whether chapter metadata fields need stricter validation than free-form strings
+- separate structured-field validation from rendered-markdown warnings where helpful
 
 ### 10. Standardize user config on TOML
-**Status:** Planned
+**Status:** Done
 
 Decision:
 - use `~/.config/cipher/config.toml` for global config
@@ -177,7 +178,7 @@ Why it matters:
 - this is a good opportunity to simplify the schema instead of only changing file extensions
 
 ### 11. Redesign global config schema while switching to TOML
-**Status:** Planned
+**Status:** Done
 
 Direction:
 - keep `default_profile`
@@ -191,7 +192,7 @@ Notes:
 - prefer a cleaner typed schema over arbitrary passthrough blobs
 
 ### 12. Add book-configured structured output format
-**Status:** Planned
+**Status:** Done
 
 Direction:
 - define output structure per book in `cipher.toml`
@@ -208,6 +209,10 @@ Why it matters:
 - makes output shape configurable per book without inventing a full schema language
 - makes repair more targeted because it can reason about missing or malformed fields
 - reduces validator reliance on hardcoded heading heuristics
+
+Current note:
+- the first implementation is in place with TOML-backed fields and a local render template
+- the next follow-up is tightening validation around chapter metadata and template expectations
 
 ---
 
@@ -400,9 +405,8 @@ Current understanding:
 1. add chapter source hashing
 2. implement `--rerun-affected-chapters`
 3. design a first useful `--rerun`
-4. add rerun preview and better status visibility
-5. switch user-facing config to TOML and simplify the global config schema
-6. add book-configured structured output and move validation toward structured fields + local rendering
-7. simplify `main` and `translate_single_chapter`
-8. revisit `full` mode and exported-term policy questions
-9. only then consider whether a larger rerun-engine rewrite is still worth it
+4. finish rerun preview and better status visibility
+5. simplify `main` and `translate_single_chapter`
+6. tighten validation/reporting around structured output
+7. revisit `full` mode and exported-term policy questions
+8. only then consider whether a larger rerun-engine rewrite is still worth it

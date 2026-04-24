@@ -141,6 +141,7 @@ cipher translate
 cipher translate my-book
 cipher translate my-book --profile fast
 cipher translate my-book --overwrite
+cipher translate my-book --dry-run
 cipher translate my-book --fail-fast
 cipher translate my-book --rerun
 cipher translate my-book --rerun-affected-glossary
@@ -151,6 +152,7 @@ Current translate flags:
 
 - `--profile <name>`: override the book/global profile for this run
 - `--overwrite`: retranslate even when output already exists
+- `--dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
 - `--fail-fast`: stop on the first failed chapter
 - `--rerun`: retranslate chapters whose tracked source or glossary-relevant inputs changed
 - `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
@@ -275,6 +277,20 @@ out_dir = "tl"
 glossary_path = "glossary.json"
 style_path = "style.md"
 glossary_injection = "smart"
+
+[output.fields.chapter_number]
+description = "Chapter number when one is present"
+
+[output.fields.content]
+required = true
+description = "Main translated chapter body in markdown, excluding the top heading"
+
+[output.render]
+template = """
+# {heading}
+
+{content}
+"""
 ```
 
 Profile resolution order:
@@ -422,7 +438,7 @@ This keeps runs resumable and reduces the chance of corrupted outputs after inte
 A few areas are intentionally still evolving:
 
 - API keys are not yet stored in a proper secret store
-- dry-run rerun preview is not implemented yet
+- dry-run preview is intentionally narrow and currently reports planned actions from the existing rerun rules
 - status output does not yet expose all tracked-vs-approximate rerun details
 
 ## Development

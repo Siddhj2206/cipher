@@ -7,6 +7,7 @@ use rig::extractor::ExtractionError;
 use rig::providers::gemini;
 use serde::{Deserialize, Serialize};
 
+use crate::book::StructuredChapter;
 use crate::glossary::GlossaryTerm;
 use crate::translate::prompt::{
     build_glossary_extraction_prompt, build_repair_prompt, build_translation_prompt,
@@ -25,7 +26,9 @@ const GLOSSARY_PREAMBLE: &str =
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 struct TranslationOnlyResponse {
-    translation: String,
+    chapter_number: Option<String>,
+    chapter_title: Option<String>,
+    content: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -110,7 +113,12 @@ impl Provider for GeminiProvider {
 
         match extractor.extract_with_usage(&prompt).await {
             Ok(extracted) => Ok(ProviderTextResult {
-                text: extracted.data.translation,
+                chapter: StructuredChapter {
+                    chapter_number: extracted.data.chapter_number,
+                    chapter_title: extracted.data.chapter_title,
+                    content: extracted.data.content,
+                }
+                .normalized(),
                 usage: extracted.usage.into(),
             }),
             Err(err) => {
@@ -160,7 +168,12 @@ Follow these additional style and tone instructions carefully:
 
         match extractor.extract_with_usage(&prompt).await {
             Ok(extracted) => Ok(ProviderTextResult {
-                text: extracted.data.translation,
+                chapter: StructuredChapter {
+                    chapter_number: extracted.data.chapter_number,
+                    chapter_title: extracted.data.chapter_title,
+                    content: extracted.data.content,
+                }
+                .normalized(),
                 usage: extracted.usage.into(),
             }),
             Err(err) => {

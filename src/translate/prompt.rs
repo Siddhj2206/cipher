@@ -2,6 +2,7 @@
 //!
 //! Uses the base prompt and format from Book-Translator-Go
 
+use crate::book::OutputConfig;
 use crate::glossary::GlossaryTerm;
 use crate::translate::{GlossaryExtractionRequest, RepairRequest, TranslationRequest};
 
@@ -20,10 +21,7 @@ Produce a translation that is both accurate to the source and captivating to rea
 
 const FORMATTING_REQUIREMENTS: &str = r#"**Formatting Requirements: [IMPORTANT]**
 
-  * The final output must be in proper Markdown.
-  * Start with a top-level heading ('#') for the chapter.
-      * If the original has a chapter number and title like 'X: [Chapter Title]', format it as: '# Chapter X: [Chapter Title]'. Even if the original may not have '# Chapter', use it in the translation
-      * If only a number is present, use: '# Chapter X'
+  * The translated prose must remain proper Markdown.
   * Preserve the original paragraph structure and line breaks. Do **not** merge paragraphs into a single block of text.
   * Maintain proper spacing between paragraphs.
   * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker)."#;
@@ -51,9 +49,11 @@ Follow these additional style and tone instructions carefully:
 pub fn build_translation_prompt(req: &TranslationRequest) -> String {
     let glossary_section = build_glossary_section(&req.glossary_terms);
     let style_section = build_style_section(&req.style_guide);
+    let output_section = build_output_section(&req.output_config);
     format!(
         r#"**Project Overview & Core Task:**
 
+{}
 {}
 {}
 **Glossary and New Terms:**
@@ -70,9 +70,16 @@ Following the translation, you are to identify any *new*, absolutely essential t
 **Text to Translate:**
 {}
 
-Return your response as a JSON object with exactly one field:
-- "translation": string containing the translated markdown"#,
-        BASE_PROMPT, style_section, glossary_section, FORMATTING_REQUIREMENTS, req.chapter_markdown
+Return your response as a JSON object with exactly these fields:
+- "chapter_number": string or null
+- "chapter_title": string or null
+- "content": string containing the translated markdown body without the top heading"#,
+        BASE_PROMPT,
+        style_section,
+        output_section,
+        glossary_section,
+        FORMATTING_REQUIREMENTS,
+        req.chapter_markdown
     )
 }
 
@@ -87,10 +94,12 @@ pub fn build_repair_prompt(
         .map(|e| format!("- {}", e))
         .collect::<Vec<_>>()
         .join("\n");
+    let output_section = build_output_section(&req.output_config);
 
     format!(
         r#"**Project Overview & Core Task:**
 
+{}
 {}
 {}
 **Glossary and New Terms:**
@@ -115,16 +124,73 @@ Please fix the issues above and provide a corrected translation. Do not invent g
 
 {}
 
-Return your response as a JSON object with exactly one field:
-- "translation": string containing the translated markdown"#,
+Return your response as a JSON object with exactly these fields:
+- "chapter_number": string or null
+- "chapter_title": string or null
+- "content": string containing the translated markdown body without the top heading"#,
         BASE_PROMPT,
         style_section,
+        output_section,
         glossary_section,
         errors_list,
         req.chapter_markdown,
         req.failed_translation,
         FORMATTING_REQUIREMENTS
     )
+}
+
+fn build_output_section(config: &OutputConfig) -> String {
+    let chapter_number_desc = config
+        .fields
+        .chapter_number
+        .description
+        .as_deref()
+        .unwrap_or("Chapter number when one is present");
+    let chapter_title_desc = config
+        .fields
+        .chapter_title
+        .description
+        .as_deref()
+        .unwrap_or("Chapter title when one is present");
+    let content_desc = config
+        .fields
+        .content
+        .description
+        .as_deref()
+        .unwrap_or("Main translated chapter body in markdown, excluding the top heading");
+
+    format!(
+        r#"**Structured Output Requirements: [IMPORTANT]**
+
+Return semantic chapter fields, not final rendered markdown.
+
+- `chapter_number`: {}{}
+- `chapter_title`: {}{}
+- `content`: {}{}
+
+The final markdown will be rendered locally using this template:
+
+```text
+{}
+```
+
+`content` must contain only the main chapter body. Do not include the top heading inside `content`."#,
+        chapter_number_desc,
+        required_suffix(config.fields.chapter_number.required),
+        chapter_title_desc,
+        required_suffix(config.fields.chapter_title.required),
+        content_desc,
+        required_suffix(config.fields.content.required),
+        config.render.template
+    )
+}
+
+fn required_suffix(required: bool) -> &'static str {
+    if required {
+        " (required)"
+    } else {
+        " (optional)"
+    }
 }
 
 pub fn build_glossary_extraction_prompt(req: &GlossaryExtractionRequest) -> String {
@@ -180,7 +246,7 @@ mod tests {
         let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("expert translator"));
         assert!(prompt.contains("Chapter 1"));
-        assert!(!prompt.contains("new_glossary_terms"));
+        assert!(prompt.contains("chapter_number"));
     }
 
     #[test]

@@ -1,20 +1,35 @@
-pub fn validate_translation(text: &str) -> ValidationResult {
+#[derive(Debug, Clone, Copy)]
+pub struct ValidationOptions {
+    pub require_heading: bool,
+}
+
+impl Default for ValidationOptions {
+    fn default() -> Self {
+        Self {
+            require_heading: true,
+        }
+    }
+}
+
+pub fn validate_translation(text: &str, options: ValidationOptions) -> ValidationResult {
     let mut errors = Vec::new();
 
     if text.trim().is_empty() {
         errors.push("Translation is empty".to_string());
     }
 
-    let trimmed = text.trim_start();
-    if !trimmed.starts_with('#') {
-        errors.push("Translation must start with a heading (#)".to_string());
-    } else {
-        let first_line = trimmed.lines().next().unwrap_or("");
-        if !is_valid_chapter_heading(first_line) {
-            errors.push(format!(
-                "Chapter heading must start with '# ' and have content, got: {}",
-                first_line
-            ));
+    if options.require_heading {
+        let trimmed = text.trim_start();
+        if !trimmed.starts_with('#') {
+            errors.push("Translation must start with a heading (#)".to_string());
+        } else {
+            let first_line = trimmed.lines().next().unwrap_or("");
+            if !is_valid_chapter_heading(first_line) {
+                errors.push(format!(
+                    "Chapter heading must start with '# ' and have content, got: {}",
+                    first_line
+                ));
+            }
         }
     }
 
@@ -141,6 +156,7 @@ pub enum ValidationResult {
 }
 
 impl ValidationResult {
+    #[cfg(test)]
     pub fn is_valid(&self) -> bool {
         matches!(self, ValidationResult::Valid)
     }
@@ -185,18 +201,28 @@ mod tests {
 
     #[test]
     fn test_json_leakage_detection() {
-        let result = validate_translation("{\"translation\": \"text\"}");
+        let result =
+            validate_translation("{\"translation\": \"text\"}", ValidationOptions::default());
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("raw JSON")));
 
-        let result = validate_translation("# Prologue\n\n{\n\"type\": \"string\"\n}");
+        let result = validate_translation(
+            "# Prologue\n\n{\n\"type\": \"string\"\n}",
+            ValidationOptions::default(),
+        );
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("Schema pattern")));
 
-        let result = validate_translation("# Chapter\n\nThe character said \"type\": in dialogue.");
+        let result = validate_translation(
+            "# Chapter\n\nThe character said \"type\": in dialogue.",
+            ValidationOptions::default(),
+        );
         assert!(result.is_valid());
 
-        let result = validate_translation("# Chapter 1\n\n\"new_glossary_terms\": []");
+        let result = validate_translation(
+            "# Chapter 1\n\n\"new_glossary_terms\": []",
+            ValidationOptions::default(),
+        );
         assert!(!result.is_valid());
         assert!(
             result
@@ -205,20 +231,29 @@ mod tests {
                 .any(|e| e.contains("Response schema leaked"))
         );
 
-        let result = validate_translation("# Prologue\n\nNormal text without JSON.");
+        let result = validate_translation(
+            "# Prologue\n\nNormal text without JSON.",
+            ValidationOptions::default(),
+        );
         assert!(result.is_valid());
     }
 
     #[test]
     fn test_valid_translation_passes() {
         let text = "# Chapter 1\n\nThis is a valid translation.";
-        assert!(validate_translation(text).is_valid());
+        assert!(validate_translation(text, ValidationOptions::default()).is_valid());
     }
 
     #[test]
     fn test_prologue_epilogue_passes() {
-        assert!(validate_translation("# Prologue\n\nSome text").is_valid());
-        assert!(validate_translation("# Epilogue\n\nSome text").is_valid());
+        assert!(
+            validate_translation("# Prologue\n\nSome text", ValidationOptions::default())
+                .is_valid()
+        );
+        assert!(
+            validate_translation("# Epilogue\n\nSome text", ValidationOptions::default())
+                .is_valid()
+        );
     }
 
     #[test]
@@ -290,22 +325,39 @@ mod tests {
 
     #[test]
     fn test_empty_translation() {
-        let result = validate_translation("");
+        let result = validate_translation("", ValidationOptions::default());
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("empty")));
     }
 
     #[test]
     fn test_missing_heading() {
-        let result = validate_translation("Just some text without heading.");
+        let result = validate_translation(
+            "Just some text without heading.",
+            ValidationOptions::default(),
+        );
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("heading")));
     }
 
     #[test]
     fn test_unbalanced_code_fences() {
-        let result = validate_translation("# Chapter 1\n\n```rust\nlet x = 1;");
+        let result = validate_translation(
+            "# Chapter 1\n\n```rust\nlet x = 1;",
+            ValidationOptions::default(),
+        );
         assert!(!result.is_valid());
         assert!(result.errors().iter().any(|e| e.contains("code fences")));
+    }
+
+    #[test]
+    fn test_heading_optional() {
+        let result = validate_translation(
+            "Just some text without heading.",
+            ValidationOptions {
+                require_heading: false,
+            },
+        );
+        assert!(result.is_valid());
     }
 }
