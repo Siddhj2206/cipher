@@ -148,64 +148,125 @@ fn run_profile_command(
     config::cli::run_profile_command(config, command)
 }
 
-fn exit_with_error(message: impl std::fmt::Display) -> ! {
-    stderr_error(message);
-    std::process::exit(1);
+fn load_global_config() -> anyhow::Result<config::GlobalConfig> {
+    config::GlobalConfig::load().context("Failed to load global config")
 }
 
-#[tokio::main]
-async fn main() {
-    let cli = Cli::parse();
+fn run_import_command(epub_path: PathBuf, force: bool) -> anyhow::Result<()> {
+    let report = import::import_epub(&epub_path, force)?;
 
-    match cli.command {
-        Commands::Import { epub_path, force } => match import::import_epub(&epub_path, force) {
-            Ok(report) => {
-                println!("Import complete");
-                detail_kv("Book", report.book_dir.display());
-                detail_kv("Chapters imported", report.chapters_imported);
-            }
-            Err(e) => exit_with_error(e),
-        },
+    println!("Import complete");
+    detail_kv("Book", report.book_dir.display());
+    detail_kv("Chapters imported", report.chapters_imported);
+
+    Ok(())
+}
+
+fn run_init_command(
+    book_dir: PathBuf,
+    profile: Option<String>,
+    from: Option<PathBuf>,
+    import_glossary: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let report = book::init_book(
+        &book_dir,
+        profile.as_deref(),
+        from.as_deref(),
+        import_glossary.as_deref(),
+    )
+    .with_context(|| format!("Failed to initialize book at {}", book_dir.display()))?;
+
+    println!("Book initialized");
+    detail_kv("Directory", report.book_dir.display());
+    if !report.created_dirs.is_empty() {
+        println!("Created directories:");
+        for dir in &report.created_dirs {
+            detail(format!("{}/", dir));
+        }
+    }
+    if !report.created_files.is_empty() {
+        println!("Created files:");
+        for file in &report.created_files {
+            detail(file);
+        }
+    }
+    if !report.skipped_files.is_empty() {
+        println!("Already present:");
+        for file in &report.skipped_files {
+            detail(file);
+        }
+    }
+    if let Some(src) = report.imported_glossary {
+        detail_kv("Imported glossary", src.display());
+    }
+
+    Ok(())
+}
+
+async fn run_translate_command(
+    book_dir: PathBuf,
+    profile: Option<String>,
+    overwrite: bool,
+    fail_fast: bool,
+    rerun: bool,
+    rerun_affected_glossary: bool,
+    rerun_affected_chapters: bool,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let options = translate::TranslateOptions {
+        profile,
+        overwrite,
+        fail_fast,
+        rerun,
+        rerun_affected_glossary,
+        rerun_affected_chapters,
+        dry_run,
+    };
+
+    translate::translate_book(&book_dir, options).await
+}
+
+fn run_status_command(book_dir: PathBuf) -> anyhow::Result<()> {
+    state::status::show_status(&book_dir)
+}
+
+fn run_glossary_command(command: GlossaryCommands) -> anyhow::Result<()> {
+    match command {
+        GlossaryCommands::List { book_dir } => glossary::cli::list_glossary(&book_dir),
+        GlossaryCommands::Import { book_dir, path } => {
+            glossary::cli::import_glossary(&book_dir, &path)
+        }
+        GlossaryCommands::Export { book_dir, path } => {
+            glossary::cli::export_glossary(&book_dir, &path)
+        }
+    }
+}
+
+fn run_doctor_command(book_dir: Option<PathBuf>) -> anyhow::Result<()> {
+    let config = load_global_config()?;
+
+    if let Some(dir) = book_dir {
+        book::doctor::run_book_doctor(&dir, &config);
+        Ok(())
+    } else {
+        config::profile::run_global_doctor(&config)
+    }
+}
+
+fn run_profile_subcommand(command: ProfileCommands) -> anyhow::Result<()> {
+    let mut config = load_global_config()?;
+    run_profile_command(&mut config, command)
+}
+
+async fn run_command(command: Commands) -> anyhow::Result<()> {
+    match command {
+        Commands::Import { epub_path, force } => run_import_command(epub_path, force),
         Commands::Init {
             book_dir,
             profile,
             from,
             import_glossary,
-        } => match book::init_book(
-            &book_dir,
-            profile.as_deref(),
-            from.as_deref(),
-            import_glossary.as_deref(),
-        )
-        .with_context(|| format!("Failed to initialize book at {}", book_dir.display()))
-        {
-            Ok(report) => {
-                println!("Book initialized");
-                detail_kv("Directory", report.book_dir.display());
-                if !report.created_dirs.is_empty() {
-                    println!("Created directories:");
-                    for dir in &report.created_dirs {
-                        detail(format!("{}/", dir));
-                    }
-                }
-                if !report.created_files.is_empty() {
-                    println!("Created files:");
-                    for file in &report.created_files {
-                        detail(file);
-                    }
-                }
-                if !report.skipped_files.is_empty() {
-                    println!("Already present:");
-                    for file in &report.skipped_files {
-                        detail(file);
-                    }
-                }
-                if let Some(src) = report.imported_glossary {
-                    detail_kv("Imported glossary", src.display());
-                }
-            }
-            Err(e) => exit_with_error(e),
-        },
+        } => run_init_command(book_dir, profile, from, import_glossary),
         Commands::Translate {
             book_dir,
             profile,
@@ -216,7 +277,8 @@ async fn main() {
             rerun_affected_chapters,
             dry_run,
         } => {
-            let options = translate::TranslateOptions {
+            run_translate_command(
+                book_dir,
                 profile,
                 overwrite,
                 fail_fast,
@@ -224,56 +286,25 @@ async fn main() {
                 rerun_affected_glossary,
                 rerun_affected_chapters,
                 dry_run,
-            };
+            )
+            .await
+        }
+        Commands::Status { book_dir } => run_status_command(book_dir),
+        Commands::Glossary { command } => run_glossary_command(command),
+        Commands::Doctor { book_dir } => run_doctor_command(book_dir),
+        Commands::Profile { command } => run_profile_subcommand(command),
+    }
+}
 
-            if let Err(e) = translate::translate_book(&book_dir, options).await {
-                exit_with_error(e);
-            }
-        }
-        Commands::Status { book_dir } => {
-            if let Err(e) = state::status::show_status(&book_dir) {
-                exit_with_error(e);
-            }
-        }
-        Commands::Glossary { command } => {
-            let result = match command {
-                GlossaryCommands::List { book_dir } => glossary::cli::list_glossary(&book_dir),
-                GlossaryCommands::Import { book_dir, path } => {
-                    glossary::cli::import_glossary(&book_dir, &path)
-                }
-                GlossaryCommands::Export { book_dir, path } => {
-                    glossary::cli::export_glossary(&book_dir, &path)
-                }
-            };
-            if let Err(e) = result {
-                exit_with_error(e);
-            }
-        }
-        Commands::Doctor { book_dir } => {
-            let config = match config::GlobalConfig::load().context("Failed to load global config")
-            {
-                Ok(c) => c,
-                Err(e) => exit_with_error(e),
-            };
+fn exit_with_error(message: impl std::fmt::Display) -> ! {
+    stderr_error(message);
+    std::process::exit(1);
+}
 
-            if let Some(dir) = book_dir {
-                book::doctor::run_book_doctor(&dir, &config);
-            } else {
-                if let Err(e) = config::profile::run_global_doctor(&config) {
-                    exit_with_error(e);
-                }
-            }
-        }
-        Commands::Profile { command } => {
-            let mut config =
-                match config::GlobalConfig::load().context("Failed to load global config") {
-                    Ok(c) => c,
-                    Err(e) => exit_with_error(e),
-                };
-
-            if let Err(e) = run_profile_command(&mut config, command) {
-                exit_with_error(e);
-            }
-        }
+#[tokio::main]
+async fn main() {
+    let cli = Cli::parse();
+    if let Err(e) = run_command(cli.command).await {
+        exit_with_error(e);
     }
 }
