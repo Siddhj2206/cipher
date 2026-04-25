@@ -64,8 +64,13 @@ impl Translator {
         &self,
         chapter_text: &str,
         translated_markdown: String,
+        existing_glossary_terms: &[GlossaryTerm],
     ) -> Result<ProviderGlossaryResult> {
-        let request = GlossaryExtractionRequest::new(chapter_text.to_string(), translated_markdown);
+        let request = GlossaryExtractionRequest::new(
+            chapter_text.to_string(),
+            translated_markdown,
+            existing_glossary_terms.to_vec(),
+        );
         self.provider.extract_glossary(request).await
     }
 }

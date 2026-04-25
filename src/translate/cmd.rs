@@ -511,6 +511,7 @@ async fn translate_single_chapter(
         translator,
         &chapter_text,
         &selection,
+        glossary,
         style_guide,
         output_config,
     )
@@ -1676,6 +1677,7 @@ async fn attempt_translation(
     translator: &Translator,
     chapter_text: &str,
     selection: &SelectionResult,
+    glossary: &[GlossaryTerm],
     style_guide: &Option<String>,
     output_config: &OutputConfig,
 ) -> (Option<ProviderTranslationResult>, Option<String>) {
@@ -1700,10 +1702,11 @@ async fn attempt_translation(
                     validate_structured_chapter(&resp.chapter, output_config);
                 let rendered_validation = validate_translation(&rendered, validation_options);
                 validation_errors.extend(rendered_validation.errors().iter().cloned());
+                let original_translation_usage = resp.usage.clone();
 
                 if validation_errors.is_empty() {
                     match translator
-                        .extract_glossary(chapter_text, rendered.clone())
+                        .extract_glossary(chapter_text, rendered.clone(), glossary)
                         .await
                     {
                         Ok(glossary_resp) => {
@@ -1773,11 +1776,16 @@ async fn attempt_translation(
 
                             if repair_errors.is_empty() {
                                 match translator
-                                    .extract_glossary(chapter_text, repaired_rendered.clone())
+                                    .extract_glossary(
+                                        chapter_text,
+                                        repaired_rendered.clone(),
+                                        glossary,
+                                    )
                                     .await
                                 {
                                     Ok(glossary_resp) => {
-                                        let mut usage = repair_resp.usage;
+                                        let mut usage = original_translation_usage.clone();
+                                        usage += repair_resp.usage;
                                         usage += glossary_resp.usage;
                                         detail_kv("Repair", "success");
                                         detail_kv("Glossary extraction", "success");
@@ -1799,13 +1807,15 @@ async fn attempt_translation(
                                             format!("failed: {}. Continuing without new terms.", e),
                                         );
                                         detail_kv("Repair", "success");
+                                        let mut usage = original_translation_usage.clone();
+                                        usage += repair_resp.usage;
                                         return (
                                             Some(ProviderTranslationResult {
                                                 response: crate::translate::TranslationResponse {
                                                     translation: repair_resp.chapter,
                                                     new_glossary_terms: Vec::new(),
                                                 },
-                                                usage: repair_resp.usage,
+                                                usage,
                                             }),
                                             None,
                                         );

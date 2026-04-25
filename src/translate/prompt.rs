@@ -56,16 +56,14 @@ pub fn build_translation_prompt(req: &TranslationRequest) -> String {
 {}
 {}
 {}
-**Glossary and New Terms:**
+**Glossary Requirements:**
 
 Adhere strictly to the established glossary below for consistency.
 
 **Established Glossary:**
 {}
 
-Following the translation, you are to identify any *new*, absolutely essential terms that must be added to the glossary for future chapters. Be **extremely** selective. A term should only be added if it meets **all** of the following criteria:
-
-{}
+Do not return glossary metadata or new glossary terms in this response. Glossary extraction is handled separately after the translation is accepted.
 
 **Text to Translate:**
 {}
@@ -74,12 +72,7 @@ Return your response as a JSON object with exactly these fields:
 - "chapter_number": string or null
 - "chapter_title": string or null
 - "content": string containing the translated markdown body without the top heading"#,
-        BASE_PROMPT,
-        style_section,
-        output_section,
-        glossary_section,
-        FORMATTING_REQUIREMENTS,
-        req.chapter_markdown
+        BASE_PROMPT, style_section, output_section, glossary_section, req.chapter_markdown
     )
 }
 
@@ -102,7 +95,7 @@ pub fn build_repair_prompt(
 {}
 {}
 {}
-**Glossary and New Terms:**
+**Glossary Requirements:**
 
 Adhere strictly to the established glossary below for consistency.
 
@@ -194,6 +187,8 @@ fn required_suffix(required: bool) -> &'static str {
 }
 
 pub fn build_glossary_extraction_prompt(req: &GlossaryExtractionRequest) -> String {
+    let glossary_section = build_existing_glossary_keys_section(&req.existing_glossary_terms);
+
     format!(
         r#"You are reviewing an accepted chapter translation for glossary extraction.
 
@@ -205,6 +200,11 @@ Identify only *new*, absolutely essential glossary terms that should be added fo
 
 When in doubt, **do not** add the term. Format every extracted term with "term", "og_term", and "definition" fields. The "og_term" field should contain the original language term when known.
 
+**Existing glossary terms:**
+{}
+
+Do not return terms that are already present in the existing glossary. If a term appears in the existing glossary, omit it even if it appears in this chapter.
+
 **Original source chapter:**
 {}
 
@@ -213,8 +213,23 @@ When in doubt, **do not** add the term. Format every extracted term with "term",
 
 Return your response as a JSON object with exactly one field:
 - "new_glossary_terms": array of glossary term objects"#,
-        req.chapter_markdown, req.translated_markdown
+        glossary_section, req.chapter_markdown, req.translated_markdown
     )
+}
+
+fn build_existing_glossary_keys_section(terms: &[GlossaryTerm]) -> String {
+    if terms.is_empty() {
+        "(No existing glossary terms)".to_string()
+    } else {
+        terms
+            .iter()
+            .map(|t| match t.og_term.as_deref() {
+                Some(og) => format!("{} [{}]", t.term, og),
+                None => t.term.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 fn build_glossary_section(terms: &[GlossaryTerm]) -> String {
@@ -247,6 +262,9 @@ mod tests {
         assert!(prompt.contains("expert translator"));
         assert!(prompt.contains("Chapter 1"));
         assert!(prompt.contains("chapter_number"));
+        assert!(!prompt.contains("new_glossary_terms"));
+        assert!(!prompt.contains("Following the translation"));
+        assert!(prompt.contains("Glossary extraction is handled separately"));
     }
 
     #[test]
@@ -291,9 +309,17 @@ mod tests {
         let req = GlossaryExtractionRequest::new(
             "Source".to_string(),
             "# Chapter 1\n\nTranslated".to_string(),
+            vec![GlossaryTerm {
+                term: "Magic".to_string(),
+                og_term: Some("마법".to_string()),
+                definition: "Supernatural power".to_string(),
+                notes: None,
+            }],
         );
         let prompt = build_glossary_extraction_prompt(&req);
         assert!(prompt.contains("Accepted translation"));
+        assert!(prompt.contains("Magic [마법]"));
+        assert!(prompt.contains("Do not return terms that are already present"));
         assert!(prompt.contains("new_glossary_terms"));
         assert!(!prompt.contains("\"translation\":"));
     }

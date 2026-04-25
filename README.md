@@ -20,12 +20,13 @@ For each chapter, `cipher`:
 
 1. loads the raw markdown
 2. selects glossary terms using `smart` or `full` injection
-3. sends the chapter, glossary, and style guide to the configured model
+3. sends the chapter, selected glossary, and style guide to the configured model for translation
 4. validates the returned translation
 5. attempts one repair pass if validation fails
-6. writes accepted output atomically
-7. merges any newly discovered glossary terms
-8. saves run and chapter state under `.cipher/`
+6. sends accepted output through a separate glossary extraction request
+7. writes accepted output atomically
+8. merges any newly discovered glossary terms
+9. saves run and chapter state under `.cipher/`
 
 This makes later runs safer and more explainable, especially when the glossary grows over time.
 
@@ -361,7 +362,7 @@ Glossary extraction now runs only after a translation has passed validation.
 
 - translation requests return translated markdown only
 - repair requests return corrected markdown only
-- glossary extraction runs as a separate follow-up call against accepted markdown
+- glossary extraction runs as a separate follow-up call against accepted markdown and existing glossary terms
 - glossary extraction failure does not invalidate an otherwise accepted chapter; it only skips adding new terms for that chapter
 
 ## Reruns and state

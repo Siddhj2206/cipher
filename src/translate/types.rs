@@ -117,13 +117,19 @@ impl RepairRequest {
 pub struct GlossaryExtractionRequest {
     pub chapter_markdown: String,
     pub translated_markdown: String,
+    pub existing_glossary_terms: Vec<GlossaryTerm>,
 }
 
 impl GlossaryExtractionRequest {
-    pub fn new(chapter_markdown: String, translated_markdown: String) -> Self {
+    pub fn new(
+        chapter_markdown: String,
+        translated_markdown: String,
+        existing_glossary_terms: Vec<GlossaryTerm>,
+    ) -> Self {
         Self {
             chapter_markdown,
             translated_markdown,
+            existing_glossary_terms,
         }
     }
 }
