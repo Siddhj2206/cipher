@@ -45,6 +45,12 @@ enum Commands {
         /// Profile to use (overrides book config and global default)
         #[arg(long)]
         profile: Option<String>,
+        /// Profile to use for repair requests (defaults to translation profile)
+        #[arg(long)]
+        repair_profile: Option<String>,
+        /// Profile to use for glossary extraction requests (defaults to translation profile)
+        #[arg(long)]
+        glossary_profile: Option<String>,
         /// Overwrite existing translations (creates backups automatically)
         #[arg(long)]
         overwrite: bool,
@@ -187,6 +193,8 @@ fn run_init_command(
 async fn run_translate_command(
     book_dir: PathBuf,
     profile: Option<String>,
+    repair_profile: Option<String>,
+    glossary_profile: Option<String>,
     overwrite: bool,
     fail_fast: bool,
     rerun: bool,
@@ -196,6 +204,8 @@ async fn run_translate_command(
 ) -> anyhow::Result<()> {
     let options = translate::TranslateOptions {
         profile,
+        repair_profile,
+        glossary_profile,
         overwrite,
         fail_fast,
         rerun,
@@ -250,6 +260,8 @@ async fn run_command(command: Commands) -> anyhow::Result<()> {
         Commands::Translate {
             book_dir,
             profile,
+            repair_profile,
+            glossary_profile,
             overwrite,
             fail_fast,
             rerun,
@@ -260,6 +272,8 @@ async fn run_command(command: Commands) -> anyhow::Result<()> {
             run_translate_command(
                 book_dir,
                 profile,
+                repair_profile,
+                glossary_profile,
                 overwrite,
                 fail_fast,
                 rerun,

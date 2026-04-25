@@ -20,6 +20,10 @@ pub struct InitReport {
 pub struct BookConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary_profile: Option<String>,
     pub raw_dir: String,
     pub out_dir: String,
     pub glossary_path: String,
@@ -34,6 +38,8 @@ impl Default for BookConfig {
     fn default() -> Self {
         Self {
             profile: None,
+            repair_profile: None,
+            glossary_profile: None,
             raw_dir: "raw".to_string(),
             out_dir: "tl".to_string(),
             glossary_path: "glossary.json".to_string(),

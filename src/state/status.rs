@@ -35,6 +35,12 @@ fn print_run_state(
     chapters: &BTreeMap<String, ChapterState>,
 ) {
     detail_kv("Profile", &metadata.profile);
+    if let Some(profile) = &metadata.repair_profile {
+        detail_kv("Repair profile", profile);
+    }
+    if let Some(profile) = &metadata.glossary_profile {
+        detail_kv("Glossary profile", profile);
+    }
     detail_kv("Provider", &metadata.provider);
     detail_kv("Model", &metadata.model);
     detail_kv("Started", &metadata.started_at);

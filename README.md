@@ -135,6 +135,7 @@ Translate a book. If `book_dir` is omitted, the current directory is used.
 cipher translate
 cipher translate my-book
 cipher translate my-book --profile fast
+cipher translate my-book --profile best --repair-profile fast --glossary-profile cheap
 cipher translate my-book --overwrite
 cipher translate my-book --dry-run
 cipher translate my-book --fail-fast
@@ -146,6 +147,8 @@ cipher translate my-book --rerun-affected-chapters
 Current translate flags:
 
 - `--profile <name>`: override the book/global profile for this run
+- `--repair-profile <name>`: use a different profile for repair requests
+- `--glossary-profile <name>`: use a different profile for glossary extraction requests
 - `--overwrite`: retranslate even when output already exists
 - `--dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
 - `--fail-fast`: stop on the first failed chapter
@@ -255,6 +258,10 @@ out_dir = "tl"
 glossary_path = "glossary.json"
 style_path = "style.md"
 glossary_injection = "smart"
+# Optional profile overrides:
+# profile = "best"
+# repair_profile = "fast"
+# glossary_profile = "cheap"
 
 [output.fields.chapter_number]
 description = "Chapter number when one is present"
@@ -271,11 +278,13 @@ template = """
 """
 ```
 
-Profile resolution order:
+Translation profile resolution order:
 
 1. `--profile`
 2. book `cipher.toml`
 3. global default profile
+
+Repair and glossary extraction profiles default to the translation profile. They can be overridden with `--repair-profile` / `--glossary-profile` or persistent `repair_profile` / `glossary_profile` values in `cipher.toml`.
 
 ## Glossary
 

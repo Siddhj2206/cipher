@@ -1,6 +1,6 @@
 use crate::book::{
-    BookLayout, OutputConfig, StructuredChapter, load_book_config, render_chapter_markdown,
-    render_requires_heading, validate_structured_chapter,
+    BookLayout, OutputConfig, StructuredChapter, init::BookConfig, load_book_config,
+    render_chapter_markdown, render_requires_heading, validate_structured_chapter,
 };
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{
@@ -26,12 +26,85 @@ use std::time::Instant;
 
 pub struct TranslateOptions {
     pub profile: Option<String>,
+    pub repair_profile: Option<String>,
+    pub glossary_profile: Option<String>,
     pub overwrite: bool,
     pub fail_fast: bool,
     pub rerun: bool,
     pub rerun_affected_glossary: bool,
     pub rerun_affected_chapters: bool,
     pub dry_run: bool,
+}
+
+struct TranslateProfiles<'a> {
+    translation_name: &'a str,
+    repair_name: &'a str,
+    glossary_name: &'a str,
+}
+
+struct Translators {
+    translation: Translator,
+    repair: Translator,
+    glossary: Translator,
+}
+
+fn resolve_translate_profiles<'a>(
+    global_config: &'a GlobalConfig,
+    book_config: &'a BookConfig,
+    options: &'a TranslateOptions,
+) -> Option<TranslateProfiles<'a>> {
+    let translation_name = options
+        .profile
+        .as_deref()
+        .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()))?;
+    let repair_name = options
+        .repair_profile
+        .as_deref()
+        .or(book_config.repair_profile.as_deref())
+        .unwrap_or(translation_name);
+    let glossary_name = options
+        .glossary_profile
+        .as_deref()
+        .or(book_config.glossary_profile.as_deref())
+        .unwrap_or(translation_name);
+
+    Some(TranslateProfiles {
+        translation_name,
+        repair_name,
+        glossary_name,
+    })
+}
+
+fn validate_translate_profiles(
+    config: &GlobalConfig,
+    profiles: &TranslateProfiles<'_>,
+) -> Result<()> {
+    for (label, name) in [
+        ("translation", profiles.translation_name),
+        ("repair", profiles.repair_name),
+        ("glossary", profiles.glossary_name),
+    ] {
+        let validation = validate_profile(config, name);
+        if !validation.is_valid() {
+            eprintln!("{} profile validation failed", label);
+            for error in &validation.errors {
+                stderr_detail(error);
+            }
+            anyhow::bail!("Cannot translate with invalid {} profile", label);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_profile_names(profiles: &TranslateProfiles<'_>) {
+    detail_kv("Translation profile", profiles.translation_name);
+    if profiles.repair_name != profiles.translation_name {
+        detail_kv("Repair profile", profiles.repair_name);
+    }
+    if profiles.glossary_name != profiles.translation_name {
+        detail_kv("Glossary profile", profiles.glossary_name);
+    }
 }
 
 impl TranslateOptions {
@@ -237,12 +310,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     if options.dry_run {
         section("Translation preview");
         detail_kv("Book", book_dir.display());
-        if let Some(profile_name) = options
-            .profile
-            .as_deref()
-            .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()))
+        if let Some(profile_names) =
+            resolve_translate_profiles(&global_config, &book_config, &options)
         {
-            detail_kv("Profile", profile_name);
+            print_profile_names(&profile_names);
         }
         return preview_translation_run(
             &chapters,
@@ -254,40 +325,33 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         );
     }
 
-    // Resolve effective profile (CLI override takes precedence)
-    let profile_name = options
-        .profile
-        .as_deref()
-        .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()));
+    let profile_names = resolve_translate_profiles(&global_config, &book_config, &options)
+        .ok_or_else(|| {
+            anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
+        })?;
 
-    let profile_name = profile_name.ok_or_else(|| {
-        anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
-    })?;
-
-    // Validate profile
-    let validation = validate_profile(&global_config, profile_name);
-    if !validation.is_valid() {
-        eprintln!("Profile validation failed");
-        for error in &validation.errors {
-            stderr_detail(error);
-        }
-        anyhow::bail!("Cannot translate with invalid profile");
-    }
+    validate_translate_profiles(&global_config, &profile_names)?;
 
     let profile = global_config
-        .resolve_profile(profile_name)
-        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
+        .resolve_profile(profile_names.translation_name)
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_names.translation_name))?;
 
-    section(format!("Using profile {}", profile_name));
+    section("Using profiles");
+    print_profile_names(&profile_names);
     detail_kv("Provider", &profile.provider);
     detail_kv("Model", &profile.model);
     if style_guide.is_some() {
         detail_kv("Style guide", layout.paths.style_md.display());
     }
 
-    // Create translator
-    let translator = Translator::from_config(&global_config, profile_name)
-        .context("Failed to create translator")?;
+    let translators = Translators {
+        translation: Translator::from_config(&global_config, profile_names.translation_name)
+            .context("Failed to create translation translator")?,
+        repair: Translator::from_config(&global_config, profile_names.repair_name)
+            .context("Failed to create repair translator")?,
+        glossary: Translator::from_config(&global_config, profile_names.glossary_name)
+            .context("Failed to create glossary translator")?,
+    };
 
     section("Translating chapters");
     detail_kv("Chapters found", chapters.len());
@@ -302,10 +366,16 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     let mut run_metadata = RunMetadata::new(
-        profile_name.to_string(),
+        profile_names.translation_name.to_string(),
         profile.provider.clone(),
         profile.model.clone(),
         Some(run_options),
+    )
+    .with_task_profiles(
+        (profile_names.repair_name != profile_names.translation_name)
+            .then(|| profile_names.repair_name.to_string()),
+        (profile_names.glossary_name != profile_names.translation_name)
+            .then(|| profile_names.glossary_name.to_string()),
     );
     save_run_metadata(book_dir, &run_metadata)?;
 
@@ -330,7 +400,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         );
 
         let result = translate_single_chapter(
-            &translator,
+            &translators,
             &chapter_file,
             &out_path,
             &chapter_path,
@@ -448,7 +518,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
 #[allow(clippy::too_many_arguments)]
 async fn translate_single_chapter(
-    translator: &Translator,
+    translators: &Translators,
     raw_path: &Path,
     out_path: &Path,
     chapter_path: &str,
@@ -510,7 +580,7 @@ async fn translate_single_chapter(
 
     // Attempt translation with retries
     let (response, last_error) = attempt_translation(
-        translator,
+        translators,
         &chapter_text,
         &selection,
         glossary,
@@ -1675,7 +1745,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
 const MAX_API_RETRIES: usize = 3;
 
 async fn attempt_translation(
-    translator: &Translator,
+    translators: &Translators,
     chapter_text: &str,
     selection: &SelectionResult,
     glossary: &[GlossaryTerm],
@@ -1688,7 +1758,8 @@ async fn attempt_translation(
     };
 
     for api_attempt in 1..=MAX_API_RETRIES {
-        match translator
+        match translators
+            .translation
             .translate_chapter(
                 chapter_text,
                 &selection.terms,
@@ -1707,7 +1778,7 @@ async fn attempt_translation(
 
                 if validation_errors.is_empty() {
                     let result = finish_accepted_translation(
-                        translator,
+                        &translators.glossary,
                         chapter_text,
                         resp.chapter,
                         rendered,
@@ -1729,7 +1800,8 @@ async fn attempt_translation(
                         format!("{} Attempting repair.", validation_errors.join(", ")),
                     );
 
-                    match translator
+                    match translators
+                        .repair
                         .repair_chapter(
                             chapter_text,
                             rendered,
@@ -1754,7 +1826,7 @@ async fn attempt_translation(
                                 let mut usage = original_translation_usage.clone();
                                 usage += repair_resp.usage;
                                 let result = finish_accepted_translation(
-                                    translator,
+                                    &translators.glossary,
                                     chapter_text,
                                     repair_resp.chapter,
                                     repaired_rendered,
@@ -2013,6 +2085,8 @@ mod tests {
     ) -> TranslateOptions {
         TranslateOptions {
             profile: None,
+            repair_profile: None,
+            glossary_profile: None,
             overwrite: false,
             fail_fast: false,
             rerun,
@@ -2020,6 +2094,55 @@ mod tests {
             rerun_affected_chapters,
             dry_run: false,
         }
+    }
+
+    fn profile_options(
+        profile: Option<&str>,
+        repair_profile: Option<&str>,
+        glossary_profile: Option<&str>,
+    ) -> TranslateOptions {
+        TranslateOptions {
+            profile: profile.map(str::to_string),
+            repair_profile: repair_profile.map(str::to_string),
+            glossary_profile: glossary_profile.map(str::to_string),
+            overwrite: false,
+            fail_fast: false,
+            rerun: false,
+            rerun_affected_glossary: false,
+            rerun_affected_chapters: false,
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn test_resolve_translate_profiles_defaults_to_translation_profile() {
+        let config = GlobalConfig {
+            default_profile: Some("default".to_string()),
+            ..GlobalConfig::default()
+        };
+        let book_config = BookConfig::default();
+        let options = profile_options(None, None, None);
+
+        let profiles = resolve_translate_profiles(&config, &book_config, &options).unwrap();
+
+        assert_eq!(profiles.translation_name, "default");
+        assert_eq!(profiles.repair_name, "default");
+        assert_eq!(profiles.glossary_name, "default");
+    }
+
+    #[test]
+    fn test_resolve_translate_profiles_uses_task_overrides() {
+        let config = GlobalConfig::default();
+        let mut book_config = BookConfig::with_profile("book");
+        book_config.repair_profile = Some("book-repair".to_string());
+        book_config.glossary_profile = Some("book-glossary".to_string());
+        let options = profile_options(Some("cli"), Some("cli-repair"), Some("cli-glossary"));
+
+        let profiles = resolve_translate_profiles(&config, &book_config, &options).unwrap();
+
+        assert_eq!(profiles.translation_name, "cli");
+        assert_eq!(profiles.repair_name, "cli-repair");
+        assert_eq!(profiles.glossary_name, "cli-glossary");
     }
 
     fn assert_glossary_state_matches(
