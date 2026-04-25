@@ -14,7 +14,7 @@ pub struct TranslationUsage {
 
 #[derive(Debug, Clone)]
 pub struct ProviderTranslationResult {
-    pub response: TranslationResponse,
+    pub response: AcceptedTranslation,
     pub usage: TranslationUsage,
 }
 
@@ -31,8 +31,8 @@ pub struct ProviderGlossaryResult {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-pub struct TranslationResponse {
-    pub translation: StructuredChapter,
+pub struct AcceptedTranslation {
+    pub chapter: StructuredChapter,
     pub new_glossary_terms: Vec<GlossaryTerm>,
 }
 
@@ -42,32 +42,6 @@ pub struct TranslationRequest {
     pub glossary_terms: Vec<GlossaryTerm>,
     pub style_guide: Option<String>,
     pub output_config: OutputConfig,
-}
-
-impl TranslationRequest {
-    pub fn new(chapter_markdown: String) -> Self {
-        Self {
-            chapter_markdown,
-            glossary_terms: Vec::new(),
-            style_guide: None,
-            output_config: OutputConfig::default(),
-        }
-    }
-
-    pub fn with_glossary_terms(mut self, terms: Vec<GlossaryTerm>) -> Self {
-        self.glossary_terms = terms;
-        self
-    }
-
-    pub fn with_style_guide(mut self, style_guide: Option<String>) -> Self {
-        self.style_guide = style_guide;
-        self
-    }
-
-    pub fn with_output_config(mut self, output_config: OutputConfig) -> Self {
-        self.output_config = output_config;
-        self
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -80,58 +54,11 @@ pub struct RepairRequest {
     pub output_config: OutputConfig,
 }
 
-impl RepairRequest {
-    pub fn new(chapter_markdown: String, failed_translation: String) -> Self {
-        Self {
-            chapter_markdown,
-            glossary_terms: Vec::new(),
-            style_guide: None,
-            failed_translation,
-            validation_errors: Vec::new(),
-            output_config: OutputConfig::default(),
-        }
-    }
-
-    pub fn with_glossary_terms(mut self, terms: Vec<GlossaryTerm>) -> Self {
-        self.glossary_terms = terms;
-        self
-    }
-
-    pub fn with_style_guide(mut self, style_guide: Option<String>) -> Self {
-        self.style_guide = style_guide;
-        self
-    }
-
-    pub fn with_validation_errors(mut self, errors: Vec<String>) -> Self {
-        self.validation_errors = errors;
-        self
-    }
-
-    pub fn with_output_config(mut self, output_config: OutputConfig) -> Self {
-        self.output_config = output_config;
-        self
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct GlossaryExtractionRequest {
     pub chapter_markdown: String,
     pub translated_markdown: String,
     pub existing_glossary_terms: Vec<GlossaryTerm>,
-}
-
-impl GlossaryExtractionRequest {
-    pub fn new(
-        chapter_markdown: String,
-        translated_markdown: String,
-        existing_glossary_terms: Vec<GlossaryTerm>,
-    ) -> Self {
-        Self {
-            chapter_markdown,
-            translated_markdown,
-            existing_glossary_terms,
-        }
-    }
 }
 
 impl From<rig::completion::Usage> for TranslationUsage {

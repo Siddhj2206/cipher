@@ -1,6 +1,6 @@
 use crate::book::{
-    BookLayout, OutputConfig, load_book_config, render_chapter_markdown, render_requires_heading,
-    validate_structured_chapter,
+    BookLayout, OutputConfig, StructuredChapter, load_book_config, render_chapter_markdown,
+    render_requires_heading, validate_structured_chapter,
 };
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{
@@ -15,7 +15,9 @@ use crate::state::{
     load_glossary_state, normalize_chapter_path, normalized_source_text_hash, save_chapter_state,
     save_glossary_state, save_run_metadata,
 };
-use crate::translate::{ProviderTranslationResult, TranslationUsage, Translator};
+use crate::translate::{
+    AcceptedTranslation, ProviderTranslationResult, TranslationUsage, Translator,
+};
 use crate::validate::{ValidationOptions, validate_translation};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -528,8 +530,7 @@ async fn translate_single_chapter(
             detail_kv("Backup", backup_path.display());
         }
 
-        let rendered_translation =
-            render_chapter_markdown(&resp.response.translation, output_config);
+        let rendered_translation = render_chapter_markdown(&resp.response.chapter, output_config);
 
         // Write output atomically
         atomic_write(out_path, &rendered_translation)
@@ -1705,42 +1706,16 @@ async fn attempt_translation(
                 let original_translation_usage = resp.usage.clone();
 
                 if validation_errors.is_empty() {
-                    match translator
-                        .extract_glossary(chapter_text, rendered.clone(), glossary)
-                        .await
-                    {
-                        Ok(glossary_resp) => {
-                            let mut usage = resp.usage;
-                            usage += glossary_resp.usage;
-                            detail_kv("Glossary extraction", "success");
-                            return (
-                                Some(ProviderTranslationResult {
-                                    response: crate::translate::TranslationResponse {
-                                        translation: resp.chapter,
-                                        new_glossary_terms: glossary_resp.new_glossary_terms,
-                                    },
-                                    usage,
-                                }),
-                                None,
-                            );
-                        }
-                        Err(e) => {
-                            detail_kv(
-                                "Glossary extraction",
-                                format!("failed: {}. Continuing without new terms.", e),
-                            );
-                            return (
-                                Some(ProviderTranslationResult {
-                                    response: crate::translate::TranslationResponse {
-                                        translation: resp.chapter,
-                                        new_glossary_terms: Vec::new(),
-                                    },
-                                    usage: resp.usage,
-                                }),
-                                None,
-                            );
-                        }
-                    }
+                    let result = finish_accepted_translation(
+                        translator,
+                        chapter_text,
+                        resp.chapter,
+                        rendered,
+                        glossary,
+                        resp.usage,
+                    )
+                    .await;
+                    return (Some(result), None);
                 }
 
                 last_error = Some(format!(
@@ -1775,52 +1750,19 @@ async fn attempt_translation(
                             repair_errors.extend(repair_validation.errors().iter().cloned());
 
                             if repair_errors.is_empty() {
-                                match translator
-                                    .extract_glossary(
-                                        chapter_text,
-                                        repaired_rendered.clone(),
-                                        glossary,
-                                    )
-                                    .await
-                                {
-                                    Ok(glossary_resp) => {
-                                        let mut usage = original_translation_usage.clone();
-                                        usage += repair_resp.usage;
-                                        usage += glossary_resp.usage;
-                                        detail_kv("Repair", "success");
-                                        detail_kv("Glossary extraction", "success");
-                                        return (
-                                            Some(ProviderTranslationResult {
-                                                response: crate::translate::TranslationResponse {
-                                                    translation: repair_resp.chapter,
-                                                    new_glossary_terms: glossary_resp
-                                                        .new_glossary_terms,
-                                                },
-                                                usage,
-                                            }),
-                                            None,
-                                        );
-                                    }
-                                    Err(e) => {
-                                        detail_kv(
-                                            "Glossary extraction",
-                                            format!("failed: {}. Continuing without new terms.", e),
-                                        );
-                                        detail_kv("Repair", "success");
-                                        let mut usage = original_translation_usage.clone();
-                                        usage += repair_resp.usage;
-                                        return (
-                                            Some(ProviderTranslationResult {
-                                                response: crate::translate::TranslationResponse {
-                                                    translation: repair_resp.chapter,
-                                                    new_glossary_terms: Vec::new(),
-                                                },
-                                                usage,
-                                            }),
-                                            None,
-                                        );
-                                    }
-                                }
+                                detail_kv("Repair", "success");
+                                let mut usage = original_translation_usage.clone();
+                                usage += repair_resp.usage;
+                                let result = finish_accepted_translation(
+                                    translator,
+                                    chapter_text,
+                                    repair_resp.chapter,
+                                    repaired_rendered,
+                                    glossary,
+                                    usage,
+                                )
+                                .await;
+                                return (Some(result), None);
                             } else {
                                 last_error = Some(format!(
                                     "Repair failed validation: {}",
@@ -1859,6 +1801,41 @@ async fn attempt_translation(
     }
 
     (None, last_error)
+}
+
+async fn finish_accepted_translation(
+    translator: &Translator,
+    chapter_text: &str,
+    chapter: StructuredChapter,
+    rendered_markdown: String,
+    glossary: &[GlossaryTerm],
+    mut usage: TranslationUsage,
+) -> ProviderTranslationResult {
+    let new_glossary_terms = match translator
+        .extract_glossary(chapter_text, rendered_markdown, glossary)
+        .await
+    {
+        Ok(glossary_resp) => {
+            usage += glossary_resp.usage;
+            detail_kv("Glossary extraction", "success");
+            glossary_resp.new_glossary_terms
+        }
+        Err(e) => {
+            detail_kv(
+                "Glossary extraction",
+                format!("failed: {}. Continuing without new terms.", e),
+            );
+            Vec::new()
+        }
+    };
+
+    ProviderTranslationResult {
+        response: AcceptedTranslation {
+            chapter,
+            new_glossary_terms,
+        },
+        usage,
+    }
 }
 
 fn print_usage_info(usage: &TranslationUsage) {

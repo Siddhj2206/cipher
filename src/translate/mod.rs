@@ -5,9 +5,8 @@ pub mod types;
 
 pub use crate::translate::cmd::{TranslateOptions, translate_book};
 pub use crate::translate::types::{
-    GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult,
-    ProviderTranslationResult, RepairRequest, TranslationRequest, TranslationResponse,
-    TranslationUsage,
+    AcceptedTranslation, GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult,
+    ProviderTranslationResult, RepairRequest, TranslationRequest, TranslationUsage,
 };
 
 use crate::book::OutputConfig;
@@ -34,10 +33,12 @@ impl Translator {
         style_guide: Option<String>,
         output_config: OutputConfig,
     ) -> Result<ProviderTextResult> {
-        let request = TranslationRequest::new(chapter_text.to_string())
-            .with_glossary_terms(glossary_terms.to_vec())
-            .with_style_guide(style_guide)
-            .with_output_config(output_config);
+        let request = TranslationRequest {
+            chapter_markdown: chapter_text.to_string(),
+            glossary_terms: glossary_terms.to_vec(),
+            style_guide,
+            output_config,
+        };
 
         self.provider.translate(request).await
     }
@@ -51,11 +52,14 @@ impl Translator {
         validation_errors: Vec<String>,
         output_config: OutputConfig,
     ) -> Result<ProviderTextResult> {
-        let request = RepairRequest::new(chapter_text.to_string(), failed_translation)
-            .with_glossary_terms(glossary_terms.to_vec())
-            .with_style_guide(style_guide)
-            .with_validation_errors(validation_errors)
-            .with_output_config(output_config);
+        let request = RepairRequest {
+            chapter_markdown: chapter_text.to_string(),
+            glossary_terms: glossary_terms.to_vec(),
+            style_guide,
+            failed_translation,
+            validation_errors,
+            output_config,
+        };
 
         self.provider.repair(request).await
     }
@@ -66,11 +70,11 @@ impl Translator {
         translated_markdown: String,
         existing_glossary_terms: &[GlossaryTerm],
     ) -> Result<ProviderGlossaryResult> {
-        let request = GlossaryExtractionRequest::new(
-            chapter_text.to_string(),
+        let request = GlossaryExtractionRequest {
+            chapter_markdown: chapter_text.to_string(),
             translated_markdown,
-            existing_glossary_terms.to_vec(),
-        );
+            existing_glossary_terms: existing_glossary_terms.to_vec(),
+        };
         self.provider.extract_glossary(request).await
     }
 }

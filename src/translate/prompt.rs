@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_build_translation_prompt_includes_base() {
-        let req = TranslationRequest::new("# Chapter 1\n\nHello".to_string());
+        let req = translation_request("# Chapter 1\n\nHello", Vec::new());
         let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("expert translator"));
         assert!(prompt.contains("Chapter 1"));
@@ -275,25 +275,31 @@ mod tests {
             definition: "Supernatural power".to_string(),
             notes: None,
         }];
-        let req = TranslationRequest::new("Text".to_string()).with_glossary_terms(terms);
+        let req = translation_request("Text", terms);
         let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("Magic [마법]: Supernatural power"));
     }
 
     #[test]
     fn test_build_translation_prompt_without_glossary() {
-        let req = TranslationRequest::new("Text".to_string());
+        let req = translation_request("Text", Vec::new());
         let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("(No glossary terms available)"));
     }
 
     #[test]
     fn test_build_repair_prompt_includes_errors() {
-        let req = RepairRequest::new("Original text".to_string(), "Bad translation".to_string())
-            .with_validation_errors(vec![
+        let req = RepairRequest {
+            chapter_markdown: "Original text".to_string(),
+            glossary_terms: Vec::new(),
+            style_guide: None,
+            failed_translation: "Bad translation".to_string(),
+            validation_errors: vec![
                 "Missing chapter heading".to_string(),
                 "Unbalanced code fences".to_string(),
-            ]);
+            ],
+            output_config: OutputConfig::default(),
+        };
         let prompt = build_repair_prompt(&req, "(No glossary terms available)", "");
 
         assert!(prompt.contains("REPAIR REQUEST"));
@@ -306,21 +312,33 @@ mod tests {
 
     #[test]
     fn test_build_glossary_extraction_prompt_requests_terms_only() {
-        let req = GlossaryExtractionRequest::new(
-            "Source".to_string(),
-            "# Chapter 1\n\nTranslated".to_string(),
-            vec![GlossaryTerm {
+        let req = GlossaryExtractionRequest {
+            chapter_markdown: "Source".to_string(),
+            translated_markdown: "# Chapter 1\n\nTranslated".to_string(),
+            existing_glossary_terms: vec![GlossaryTerm {
                 term: "Magic".to_string(),
                 og_term: Some("마법".to_string()),
                 definition: "Supernatural power".to_string(),
                 notes: None,
             }],
-        );
+        };
         let prompt = build_glossary_extraction_prompt(&req);
         assert!(prompt.contains("Accepted translation"));
         assert!(prompt.contains("Magic [마법]"));
         assert!(prompt.contains("Do not return terms that are already present"));
         assert!(prompt.contains("new_glossary_terms"));
         assert!(!prompt.contains("\"translation\":"));
+    }
+
+    fn translation_request(
+        chapter_markdown: &str,
+        glossary_terms: Vec<GlossaryTerm>,
+    ) -> TranslationRequest {
+        TranslationRequest {
+            chapter_markdown: chapter_markdown.to_string(),
+            glossary_terms,
+            style_guide: None,
+            output_config: OutputConfig::default(),
+        }
     }
 }
