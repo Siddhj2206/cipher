@@ -97,16 +97,26 @@ fn validate_translate_profiles(
     Ok(())
 }
 
-fn print_profile_names(profiles: &TranslateProfiles<'_>) {
-    detail_kv("Translation profile", profiles.translation_name);
+fn print_profile_details(config: &GlobalConfig, profiles: &TranslateProfiles<'_>) {
+    print_profile_detail(config, "Translation profile", profiles.translation_name);
     if profiles.repair_name != profiles.translation_name {
-        detail_kv("Repair profile", profiles.repair_name);
+        print_profile_detail(config, "Repair profile", profiles.repair_name);
     }
     if profiles.glossary_name != profiles.translation_name {
-        detail_kv("Glossary profile", profiles.glossary_name);
+        print_profile_detail(config, "Glossary profile", profiles.glossary_name);
     }
 }
 
+fn print_profile_detail(config: &GlobalConfig, label: &str, name: &str) {
+    detail_kv(label, name);
+    match config.resolve_profile(name) {
+        Some(profile) => {
+            detail_kv("Provider", &profile.provider);
+            detail_kv("Model", &profile.model);
+        }
+        None => detail_kv("Profile status", "not found"),
+    }
+}
 impl TranslateOptions {
     fn rerun_glossary_enabled(&self) -> bool {
         self.rerun || self.rerun_affected_glossary
@@ -313,7 +323,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         if let Some(profile_names) =
             resolve_translate_profiles(&global_config, &book_config, &options)
         {
-            print_profile_names(&profile_names);
+            print_profile_details(&global_config, &profile_names);
         }
         return preview_translation_run(
             &chapters,
@@ -337,9 +347,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_names.translation_name))?;
 
     section("Using profiles");
-    print_profile_names(&profile_names);
-    detail_kv("Provider", &profile.provider);
-    detail_kv("Model", &profile.model);
+    print_profile_details(&global_config, &profile_names);
     if style_guide.is_some() {
         detail_kv("Style guide", layout.paths.style_md.display());
     }
