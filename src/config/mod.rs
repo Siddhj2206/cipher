@@ -14,16 +14,14 @@ pub struct GlobalConfig {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub providers: BTreeMap<String, ProviderConfig>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub keys: BTreeMap<String, Vec<ApiKey>>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub profiles: BTreeMap<String, ProfileConfig>,
 }
 
 impl GlobalConfig {
     pub fn config_path() -> Result<PathBuf> {
-        let dirs = directories::ProjectDirs::from("", "cipher", "cipher")
+        let dirs = directories::ProjectDirs::from("", "", "cipher")
             .context("Failed to determine config directory")?;
-        let path = dirs.config_dir().join("config.json");
+        let path = dirs.config_dir().join("config.toml");
         Ok(path)
     }
 
@@ -34,7 +32,7 @@ impl GlobalConfig {
         }
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: Self = serde_json::from_str(&content)
+        let config: Self = toml::from_str(&content)
             .with_context(|| format!("Failed to parse config from {}", path.display()))?;
         Ok(config)
     }
@@ -46,7 +44,7 @@ impl GlobalConfig {
                 format!("Failed to create config directory {}", parent.display())
             })?;
         }
-        let content = serde_json::to_string_pretty(self)?;
+        let content = toml::to_string_pretty(self)?;
         let temp_path = path.with_extension("tmp");
         fs::write(&temp_path, content)?;
         if let Err(e) = fs::rename(&temp_path, &path) {
@@ -65,7 +63,7 @@ impl GlobalConfig {
     }
 
     pub fn get_provider_key_by_label(&self, provider: &str, label: Option<&str>) -> Option<&str> {
-        let keys = self.keys.get(provider)?;
+        let keys = &self.providers.get(provider)?.keys;
 
         if let Some(label) = label {
             keys.iter()
@@ -103,10 +101,10 @@ impl std::fmt::Display for ProviderKind {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub kind: ProviderKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keys: Vec<ApiKey>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extras: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,7 +193,6 @@ mod tests {
         GlobalConfig {
             default_profile: None,
             providers: BTreeMap::new(),
-            keys: BTreeMap::new(),
             profiles: BTreeMap::new(),
         }
     }
@@ -207,16 +204,12 @@ mod tests {
             "gemini".to_string(),
             ProviderConfig {
                 kind: ProviderKind::Gemini,
+                keys: vec![ApiKey {
+                    value: "test-key".to_string(),
+                    name: Some("default".to_string()),
+                }],
                 base_url: None,
-                extras: None,
             },
-        );
-        config.keys.insert(
-            "gemini".to_string(),
-            vec![ApiKey {
-                value: "test-key".to_string(),
-                name: Some("default".to_string()),
-            }],
         );
         config.profiles.insert(
             "gemini-profile".to_string(),

@@ -2,8 +2,9 @@
 //!
 //! Uses the base prompt and format from Book-Translator-Go
 
+use crate::book::OutputConfig;
 use crate::glossary::GlossaryTerm;
-use crate::translate::TranslationRequest;
+use crate::translate::{GlossaryExtractionRequest, RepairRequest, TranslationRequest};
 
 const BASE_PROMPT: &str = r#"You are an expert translator working on a serialized web novel. Your task is to translate a chapter from its original language (likely Korean or Chinese) into high-quality English prose.
 
@@ -20,10 +21,7 @@ Produce a translation that is both accurate to the source and captivating to rea
 
 const FORMATTING_REQUIREMENTS: &str = r#"**Formatting Requirements: [IMPORTANT]**
 
-  * The final output must be in proper Markdown.
-  * Start with a top-level heading ('#') for the chapter.
-      * If the original has a chapter number and title like 'X: [Chapter Title]', format it as: '# Chapter X: [Chapter Title]'. Even if the original may not have '# Chapter', use it in the translation
-      * If only a number is present, use: '# Chapter X'
+  * The translated prose must remain proper Markdown.
   * Preserve the original paragraph structure and line breaks. Do **not** merge paragraphs into a single block of text.
   * Maintain proper spacing between paragraphs.
   * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker)."#;
@@ -48,56 +46,38 @@ Follow these additional style and tone instructions carefully:
 }
 
 /// Build the full translation prompt for a chapter
-pub fn build_prompt(req: &TranslationRequest) -> String {
+pub fn build_translation_prompt(req: &TranslationRequest) -> String {
     let glossary_section = build_glossary_section(&req.glossary_terms);
     let style_section = build_style_section(&req.style_guide);
-
-    if req.is_repair() {
-        build_repair_prompt(req, &glossary_section, &style_section)
-    } else {
-        build_initial_prompt(req, &glossary_section, &style_section)
-    }
-}
-
-fn build_initial_prompt(
-    req: &TranslationRequest,
-    glossary_section: &str,
-    style_section: &str,
-) -> String {
+    let output_section = build_output_section(&req.output_config);
     format!(
         r#"**Project Overview & Core Task:**
 
 {}
 {}
-**Glossary and New Terms:**
+{}
+**Glossary Requirements:**
 
 Adhere strictly to the established glossary below for consistency.
 
 **Established Glossary:**
 {}
 
-Following the translation, you are to identify any *new*, absolutely essential terms that must be added to the glossary for future chapters. Be **extremely** selective. A term should only be added if it meets **all** of the following criteria:
-
-1.  Has a specific non-English name requiring consistent translation.
-2.  Will definitely appear again (main characters/major locations only).
-3.  Would cause significant reader confusion if translated inconsistently.
-
-When in doubt, **do not** add the term. Format new terms as an array of objects with "term", "og_term", and "definition" fields. The "og_term" field should contain the original language term (e.g., Korean characters), while "term" contains the English name.
-
-{}
+Do not return glossary metadata or new glossary terms in this response. Glossary extraction is handled separately after the translation is accepted.
 
 **Text to Translate:**
 {}
 
-Return your response as a JSON object with exactly two fields:
-- "translation": string containing the translated markdown
-- "new_glossary_terms": array of glossary term objects"#,
-        BASE_PROMPT, style_section, glossary_section, FORMATTING_REQUIREMENTS, req.chapter_markdown
+Return your response as a JSON object with exactly these fields:
+- "chapter_number": string or null
+- "chapter_title": string or null
+- "content": string containing the translated markdown body without the top heading"#,
+        BASE_PROMPT, style_section, output_section, glossary_section, req.chapter_markdown
     )
 }
 
-fn build_repair_prompt(
-    req: &TranslationRequest,
+pub fn build_repair_prompt(
+    req: &RepairRequest,
     glossary_section: &str,
     style_section: &str,
 ) -> String {
@@ -107,15 +87,15 @@ fn build_repair_prompt(
         .map(|e| format!("- {}", e))
         .collect::<Vec<_>>()
         .join("\n");
-
-    let failed = req.failed_translation.as_deref().unwrap_or("");
+    let output_section = build_output_section(&req.output_config);
 
     format!(
         r#"**Project Overview & Core Task:**
 
 {}
 {}
-**Glossary and New Terms:**
+{}
+**Glossary Requirements:**
 
 Adhere strictly to the established glossary below for consistency.
 
@@ -133,21 +113,123 @@ Your previous translation had the following validation errors:
 **Your previous (failed) translation:**
 {}
 
-Please fix the issues above and provide a corrected translation. Pay special attention to the validation errors listed.
+Please fix the issues above and provide a corrected translation. Do not invent glossary entries or return any glossary metadata. Pay special attention to the validation errors listed.
 
 {}
 
-Return your response as a JSON object with exactly two fields:
-- "translation": string containing the translated markdown
-- "new_glossary_terms": array of glossary term objects"#,
+Return your response as a JSON object with exactly these fields:
+- "chapter_number": string or null
+- "chapter_title": string or null
+- "content": string containing the translated markdown body without the top heading"#,
         BASE_PROMPT,
         style_section,
+        output_section,
         glossary_section,
         errors_list,
         req.chapter_markdown,
-        failed,
+        req.failed_translation,
         FORMATTING_REQUIREMENTS
     )
+}
+
+fn build_output_section(config: &OutputConfig) -> String {
+    let chapter_number_desc = config
+        .fields
+        .chapter_number
+        .description
+        .as_deref()
+        .unwrap_or("Chapter number when one is present");
+    let chapter_title_desc = config
+        .fields
+        .chapter_title
+        .description
+        .as_deref()
+        .unwrap_or("Chapter title when one is present");
+    let content_desc = config
+        .fields
+        .content
+        .description
+        .as_deref()
+        .unwrap_or("Main translated chapter body in markdown, excluding the top heading");
+
+    format!(
+        r#"**Structured Output Requirements: [IMPORTANT]**
+
+Return semantic chapter fields, not final rendered markdown.
+
+- `chapter_number`: {}{}
+- `chapter_title`: {}{}
+- `content`: {}{}
+
+The final markdown will be rendered locally using this template:
+
+```text
+{}
+```
+
+`content` must contain only the main chapter body. Do not include the top heading inside `content`."#,
+        chapter_number_desc,
+        required_suffix(config.fields.chapter_number.required),
+        chapter_title_desc,
+        required_suffix(config.fields.chapter_title.required),
+        content_desc,
+        required_suffix(config.fields.content.required),
+        config.render.template
+    )
+}
+
+fn required_suffix(required: bool) -> &'static str {
+    if required {
+        " (required)"
+    } else {
+        " (optional)"
+    }
+}
+
+pub fn build_glossary_extraction_prompt(req: &GlossaryExtractionRequest) -> String {
+    let glossary_section = build_existing_glossary_keys_section(&req.existing_glossary_terms);
+
+    format!(
+        r#"You are reviewing an accepted chapter translation for glossary extraction.
+
+Identify only *new*, absolutely essential glossary terms that should be added for future chapters. Be **extremely** selective. A term should only be added if it meets **all** of the following criteria:
+
+1.  Has a specific non-English name requiring consistent translation.
+2.  Will definitely appear again (main characters/major locations only).
+3.  Would cause significant reader confusion if translated inconsistently.
+
+When in doubt, **do not** add the term. Format every extracted term with "term", "og_term", and "definition" fields. The "og_term" field should contain the original language term when known.
+
+**Existing glossary terms:**
+{}
+
+Do not return terms that are already present in the existing glossary. If a term appears in the existing glossary, omit it even if it appears in this chapter.
+
+**Original source chapter:**
+{}
+
+**Accepted translation:**
+{}
+
+Return your response as a JSON object with exactly one field:
+- "new_glossary_terms": array of glossary term objects"#,
+        glossary_section, req.chapter_markdown, req.translated_markdown
+    )
+}
+
+fn build_existing_glossary_keys_section(terms: &[GlossaryTerm]) -> String {
+    if terms.is_empty() {
+        "(No existing glossary terms)".to_string()
+    } else {
+        terms
+            .iter()
+            .map(|t| match t.og_term.as_deref() {
+                Some(og) => format!("{} [{}]", t.term, og),
+                None => t.term.clone(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 fn build_glossary_section(terms: &[GlossaryTerm]) -> String {
@@ -174,58 +256,89 @@ mod tests {
     use crate::glossary::GlossaryTerm;
 
     #[test]
-    fn test_build_prompt_includes_base() {
-        let req = TranslationRequest::new("# Chapter 1\n\nHello".to_string());
-        let prompt = build_prompt(&req);
+    fn test_build_translation_prompt_includes_base() {
+        let req = translation_request("# Chapter 1\n\nHello", Vec::new());
+        let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("expert translator"));
         assert!(prompt.contains("Chapter 1"));
+        assert!(prompt.contains("chapter_number"));
+        assert!(!prompt.contains("new_glossary_terms"));
+        assert!(!prompt.contains("Following the translation"));
+        assert!(prompt.contains("Glossary extraction is handled separately"));
     }
 
     #[test]
-    fn test_build_prompt_with_glossary() {
+    fn test_build_translation_prompt_with_glossary() {
         let terms = vec![GlossaryTerm {
             term: "Magic".to_string(),
             og_term: Some("마법".to_string()),
             definition: "Supernatural power".to_string(),
             notes: None,
         }];
-        let req = TranslationRequest::new("Text".to_string()).with_glossary_terms(terms);
-        let prompt = build_prompt(&req);
+        let req = translation_request("Text", terms);
+        let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("Magic [마법]: Supernatural power"));
     }
 
     #[test]
-    fn test_build_prompt_without_glossary() {
-        let req = TranslationRequest::new("Text".to_string());
-        let prompt = build_prompt(&req);
+    fn test_build_translation_prompt_without_glossary() {
+        let req = translation_request("Text", Vec::new());
+        let prompt = build_translation_prompt(&req);
         assert!(prompt.contains("(No glossary terms available)"));
     }
 
     #[test]
     fn test_build_repair_prompt_includes_errors() {
-        let req = TranslationRequest::new("Original text".to_string())
-            .with_failed_translation("Bad translation".to_string())
-            .with_validation_errors(vec![
+        let req = RepairRequest {
+            chapter_markdown: "Original text".to_string(),
+            glossary_terms: Vec::new(),
+            style_guide: None,
+            failed_translation: "Bad translation".to_string(),
+            validation_errors: vec![
                 "Missing chapter heading".to_string(),
                 "Unbalanced code fences".to_string(),
-            ]);
-        let prompt = build_prompt(&req);
+            ],
+            output_config: OutputConfig::default(),
+        };
+        let prompt = build_repair_prompt(&req, "(No glossary terms available)", "");
 
         assert!(prompt.contains("REPAIR REQUEST"));
         assert!(prompt.contains("Missing chapter heading"));
         assert!(prompt.contains("Unbalanced code fences"));
         assert!(prompt.contains("Original text"));
         assert!(prompt.contains("Bad translation"));
+        assert!(!prompt.contains("new_glossary_terms"));
     }
 
     #[test]
-    fn test_build_repair_prompt_is_repair() {
-        let req = TranslationRequest::new("Text".to_string())
-            .with_failed_translation("Failed".to_string())
-            .with_validation_errors(vec!["Error".to_string()]);
-        assert!(req.is_repair());
+    fn test_build_glossary_extraction_prompt_requests_terms_only() {
+        let req = GlossaryExtractionRequest {
+            chapter_markdown: "Source".to_string(),
+            translated_markdown: "# Chapter 1\n\nTranslated".to_string(),
+            existing_glossary_terms: vec![GlossaryTerm {
+                term: "Magic".to_string(),
+                og_term: Some("마법".to_string()),
+                definition: "Supernatural power".to_string(),
+                notes: None,
+            }],
+        };
+        let prompt = build_glossary_extraction_prompt(&req);
+        assert!(prompt.contains("Accepted translation"));
+        assert!(prompt.contains("Magic [마법]"));
+        assert!(prompt.contains("Do not return terms that are already present"));
+        assert!(prompt.contains("new_glossary_terms"));
+        assert!(!prompt.contains("\"translation\":"));
+    }
 
-        let normal_req = TranslationRequest::new("Text".to_string());
-        assert!(!normal_req.is_repair());
+    fn translation_request(
+        chapter_markdown: &str,
+        glossary_terms: Vec<GlossaryTerm>,
+    ) -> TranslationRequest {
+        TranslationRequest {
+            chapter_markdown: chapter_markdown.to_string(),
+            glossary_terms,
+            style_guide: None,
+            output_config: OutputConfig::default(),
+        }
     }
 }

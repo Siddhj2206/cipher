@@ -19,6 +19,10 @@ pub struct RunMetadata {
     pub finished_at: Option<String>,
     pub updated_at: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repair_profile: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glossary_profile: Option<String>,
     pub provider: String,
     pub model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -129,6 +133,8 @@ impl RunMetadata {
             finished_at: None,
             updated_at: now,
             profile,
+            repair_profile: None,
+            glossary_profile: None,
             provider,
             model,
             options,
@@ -137,6 +143,16 @@ impl RunMetadata {
 
     pub fn touch(&mut self) {
         self.updated_at = now_rfc3339();
+    }
+
+    pub fn with_task_profiles(
+        mut self,
+        repair_profile: Option<String>,
+        glossary_profile: Option<String>,
+    ) -> Self {
+        self.repair_profile = repair_profile;
+        self.glossary_profile = glossary_profile;
+        self
     }
 
     pub fn mark_finished(&mut self) {

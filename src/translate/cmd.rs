@@ -1,4 +1,7 @@
-use crate::book::{BookLayout, load_book_config};
+use crate::book::{
+    BookLayout, OutputConfig, StructuredChapter, init::BookConfig, load_book_config,
+    render_chapter_markdown, render_requires_heading, validate_structured_chapter,
+};
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{
     GlossaryTerm, InjectionMode, SelectionResult, book_config_injection_mode, glossary_term_key,
@@ -12,8 +15,10 @@ use crate::state::{
     load_glossary_state, normalize_chapter_path, normalized_source_text_hash, save_chapter_state,
     save_glossary_state, save_run_metadata,
 };
-use crate::translate::{ProviderTranslationResult, TranslationUsage, Translator};
-use crate::validate::validate_translation;
+use crate::translate::{
+    AcceptedTranslation, ProviderTranslationResult, TranslationUsage, Translator,
+};
+use crate::validate::{ValidationOptions, validate_translation};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
@@ -21,13 +26,97 @@ use std::time::Instant;
 
 pub struct TranslateOptions {
     pub profile: Option<String>,
+    pub repair_profile: Option<String>,
+    pub glossary_profile: Option<String>,
     pub overwrite: bool,
     pub fail_fast: bool,
     pub rerun: bool,
     pub rerun_affected_glossary: bool,
     pub rerun_affected_chapters: bool,
+    pub dry_run: bool,
 }
 
+struct TranslateProfiles<'a> {
+    translation_name: &'a str,
+    repair_name: &'a str,
+    glossary_name: &'a str,
+}
+
+struct Translators {
+    translation: Translator,
+    repair: Translator,
+    glossary: Translator,
+}
+
+fn resolve_translate_profiles<'a>(
+    global_config: &'a GlobalConfig,
+    book_config: &'a BookConfig,
+    options: &'a TranslateOptions,
+) -> Option<TranslateProfiles<'a>> {
+    let translation_name = options
+        .profile
+        .as_deref()
+        .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()))?;
+    let repair_name = options
+        .repair_profile
+        .as_deref()
+        .or(book_config.repair_profile.as_deref())
+        .unwrap_or(translation_name);
+    let glossary_name = options
+        .glossary_profile
+        .as_deref()
+        .or(book_config.glossary_profile.as_deref())
+        .unwrap_or(translation_name);
+
+    Some(TranslateProfiles {
+        translation_name,
+        repair_name,
+        glossary_name,
+    })
+}
+
+fn validate_translate_profiles(
+    config: &GlobalConfig,
+    profiles: &TranslateProfiles<'_>,
+) -> Result<()> {
+    for (label, name) in [
+        ("translation", profiles.translation_name),
+        ("repair", profiles.repair_name),
+        ("glossary", profiles.glossary_name),
+    ] {
+        let validation = validate_profile(config, name);
+        if !validation.is_valid() {
+            eprintln!("{} profile validation failed", label);
+            for error in &validation.errors {
+                stderr_detail(error);
+            }
+            anyhow::bail!("Cannot translate with invalid {} profile", label);
+        }
+    }
+
+    Ok(())
+}
+
+fn print_profile_details(config: &GlobalConfig, profiles: &TranslateProfiles<'_>) {
+    print_profile_detail(config, "Translation profile", profiles.translation_name);
+    if profiles.repair_name != profiles.translation_name {
+        print_profile_detail(config, "Repair profile", profiles.repair_name);
+    }
+    if profiles.glossary_name != profiles.translation_name {
+        print_profile_detail(config, "Glossary profile", profiles.glossary_name);
+    }
+}
+
+fn print_profile_detail(config: &GlobalConfig, label: &str, name: &str) {
+    detail_kv(label, name);
+    match config.resolve_profile(name) {
+        Some(profile) => {
+            detail_kv("Provider", &profile.provider);
+            detail_kv("Model", &profile.model);
+        }
+        None => detail_kv("Profile status", "not found"),
+    }
+}
 impl TranslateOptions {
     fn rerun_glossary_enabled(&self) -> bool {
         self.rerun || self.rerun_affected_glossary
@@ -45,6 +134,40 @@ struct ChapterResult {
     new_terms_added: usize,
     usage: Option<TranslationUsage>,
     chapter_state: ChapterState,
+}
+
+#[derive(Debug, Clone, Default)]
+struct PreviousChapterArtifacts {
+    translation_usage: Option<TranslationUsage>,
+    glossary_usage: Option<ChapterGlossaryUsage>,
+    exported_terms: Vec<ChapterGlossaryTerm>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PreviewAction {
+    Translate,
+    Retranslate,
+    Skip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ChapterPreview {
+    chapter_path: String,
+    action: PreviewAction,
+    reason: String,
+    approximate: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct PreviewSummary {
+    translate: usize,
+    retranslate: usize,
+    skip: usize,
+    approximate_reruns: usize,
+    exact_reruns: usize,
+    empty_skips: usize,
+    output_exists_skips: usize,
+    output_missing: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -116,35 +239,8 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     // Load global config
     let global_config = GlobalConfig::load().context("Failed to load global config")?;
 
-    // Resolve effective profile (CLI override takes precedence)
-    let book_config = load_book_config(&layout.paths.config_json).unwrap_or_default();
+    let book_config = load_book_config(&layout.paths.config_toml).unwrap_or_default();
     let injection_mode = book_config_injection_mode(&book_config.glossary_injection);
-    let profile_name = options
-        .profile
-        .as_deref()
-        .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()));
-
-    let profile_name = profile_name.ok_or_else(|| {
-        anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
-    })?;
-
-    // Validate profile
-    let validation = validate_profile(&global_config, profile_name);
-    if !validation.is_valid() {
-        eprintln!("Profile validation failed");
-        for error in &validation.errors {
-            stderr_detail(error);
-        }
-        anyhow::bail!("Cannot translate with invalid profile");
-    }
-
-    let profile = global_config
-        .resolve_profile(profile_name)
-        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
-
-    // Create translator
-    let translator = Translator::from_config(&global_config, profile_name)
-        .context("Failed to create translator")?;
 
     // Discover chapters
     let chapters: VecDeque<PathBuf> = discover_chapters(&layout.paths.raw_dir)?
@@ -172,13 +268,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     } else {
         None
     };
-
-    section(format!("Using profile {}", profile_name));
-    detail_kv("Provider", &profile.provider);
-    detail_kv("Model", &profile.model);
-    if style_guide.is_some() {
-        detail_kv("Style guide", layout.paths.style_md.display());
-    }
 
     // Load previous checkpointed state for glossary diffing
     let previous_glossary_state = load_glossary_state(book_dir)?;
@@ -228,6 +317,50 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         SourceRerunPlan::default()
     };
 
+    if options.dry_run {
+        section("Translation preview");
+        detail_kv("Book", book_dir.display());
+        if let Some(profile_names) =
+            resolve_translate_profiles(&global_config, &book_config, &options)
+        {
+            print_profile_details(&global_config, &profile_names);
+        }
+        return preview_translation_run(
+            &chapters,
+            &layout.paths.raw_dir,
+            out_dir,
+            &options,
+            &rerun_plan,
+            &source_rerun_plan,
+        );
+    }
+
+    let profile_names = resolve_translate_profiles(&global_config, &book_config, &options)
+        .ok_or_else(|| {
+            anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
+        })?;
+
+    validate_translate_profiles(&global_config, &profile_names)?;
+
+    let profile = global_config
+        .resolve_profile(profile_names.translation_name)
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_names.translation_name))?;
+
+    section("Using profiles");
+    print_profile_details(&global_config, &profile_names);
+    if style_guide.is_some() {
+        detail_kv("Style guide", layout.paths.style_md.display());
+    }
+
+    let translators = Translators {
+        translation: Translator::from_config(&global_config, profile_names.translation_name)
+            .context("Failed to create translation translator")?,
+        repair: Translator::from_config(&global_config, profile_names.repair_name)
+            .context("Failed to create repair translator")?,
+        glossary: Translator::from_config(&global_config, profile_names.glossary_name)
+            .context("Failed to create glossary translator")?,
+    };
+
     section("Translating chapters");
     detail_kv("Chapters found", chapters.len());
 
@@ -241,10 +374,16 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     let mut run_metadata = RunMetadata::new(
-        profile_name.to_string(),
+        profile_names.translation_name.to_string(),
         profile.provider.clone(),
         profile.model.clone(),
         Some(run_options),
+    )
+    .with_task_profiles(
+        (profile_names.repair_name != profile_names.translation_name)
+            .then(|| profile_names.repair_name.to_string()),
+        (profile_names.glossary_name != profile_names.translation_name)
+            .then(|| profile_names.glossary_name.to_string()),
     );
     save_run_metadata(book_dir, &run_metadata)?;
 
@@ -269,7 +408,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         );
 
         let result = translate_single_chapter(
-            &translator,
+            &translators,
             &chapter_file,
             &out_path,
             &chapter_path,
@@ -278,6 +417,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             rerun_decision.as_ref(),
             &mut glossary,
             &style_guide,
+            &book_config.output,
             injection_mode,
             &layout.paths.glossary_json,
             book_dir,
@@ -386,7 +526,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
 #[allow(clippy::too_many_arguments)]
 async fn translate_single_chapter(
-    translator: &Translator,
+    translators: &Translators,
     raw_path: &Path,
     out_path: &Path,
     chapter_path: &str,
@@ -395,12 +535,14 @@ async fn translate_single_chapter(
     rerun_decision: Option<&ChapterRerunDecision>,
     glossary: &mut Vec<GlossaryTerm>,
     style_guide: &Option<String>,
+    output_config: &OutputConfig,
     injection_mode: InjectionMode,
     glossary_path: &Path,
     book_dir: &Path,
 ) -> Result<ChapterResult> {
     let translation_injection_mode =
         chapter_translation_injection_mode(injection_mode, rerun_decision);
+    let previous_artifacts = previous_chapter_artifacts(previous_chapter_state);
 
     // Check if output exists
     let output_exists = out_path.exists();
@@ -408,25 +550,13 @@ async fn translate_single_chapter(
         let source_text_hash =
             skipped_chapter_source_hash(raw_path, previous_chapter_state, options)?;
 
-        return Ok(ChapterResult {
-            translated: false,
-            failed: false,
-            skipped: true,
-            new_terms_added: 0,
-            usage: None,
-            chapter_state: ChapterState::new(
-                chapter_path.to_string(),
-                ChapterStatus::Skipped,
-                None,
-                None,
-                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
-                previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
-                previous_chapter_state
-                    .map(|s| s.exported_terms.clone())
-                    .unwrap_or_default(),
-                source_text_hash,
-            ),
-        });
+        return Ok(build_skipped_chapter_result(
+            chapter_path,
+            None,
+            None,
+            previous_artifacts,
+            source_text_hash,
+        ));
     }
 
     if let Some(decision) = rerun_decision {
@@ -442,25 +572,13 @@ async fn translate_single_chapter(
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
-        return Ok(ChapterResult {
-            translated: false,
-            failed: false,
-            skipped: true,
-            new_terms_added: 0,
-            usage: None,
-            chapter_state: ChapterState::new(
-                chapter_path.to_string(),
-                ChapterStatus::Skipped,
-                Some("Chapter is empty".to_string()),
-                None,
-                previous_chapter_state.and_then(|state| state.translation_usage.clone()),
-                previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
-                previous_chapter_state
-                    .map(|s| s.exported_terms.clone())
-                    .unwrap_or_default(),
-                Some(source_text_hash),
-            ),
-        });
+        return Ok(build_skipped_chapter_result(
+            chapter_path,
+            Some("Chapter is empty".to_string()),
+            None,
+            previous_artifacts,
+            Some(source_text_hash),
+        ));
     }
 
     // Select glossary terms and display info
@@ -469,8 +587,15 @@ async fn translate_single_chapter(
     print_glossary_info(&selection, translation_injection_mode);
 
     // Attempt translation with retries
-    let (response, last_error) =
-        attempt_translation(translator, &chapter_text, &selection, style_guide).await;
+    let (response, last_error) = attempt_translation(
+        translators,
+        &chapter_text,
+        &selection,
+        glossary,
+        style_guide,
+        output_config,
+    )
+    .await;
 
     let duration = start.elapsed();
 
@@ -483,8 +608,10 @@ async fn translate_single_chapter(
             detail_kv("Backup", backup_path.display());
         }
 
+        let rendered_translation = render_chapter_markdown(&resp.response.chapter, output_config);
+
         // Write output atomically
-        atomic_write(out_path, &resp.response.translation)
+        atomic_write(out_path, &rendered_translation)
             .with_context(|| format!("Failed to write {}", out_path.display()))?;
 
         // Merge glossary terms
@@ -492,26 +619,15 @@ async fn translate_single_chapter(
             merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
 
         detail_kv("Result", "success");
-        return Ok(ChapterResult {
-            translated: true,
-            failed: false,
-            skipped: false,
+        return Ok(build_success_chapter_result(
+            chapter_path,
+            duration.as_millis() as u64,
+            resp.usage,
+            build_chapter_glossary_usage(&selection, translation_injection_mode),
+            exported_terms,
+            source_text_hash,
             new_terms_added,
-            usage: Some(resp.usage.clone()),
-            chapter_state: ChapterState::new(
-                chapter_path.to_string(),
-                ChapterStatus::Success,
-                None,
-                Some(duration.as_millis() as u64),
-                Some(resp.usage),
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    translation_injection_mode,
-                )),
-                exported_terms,
-                Some(source_text_hash),
-            ),
-        });
+        ));
     }
 
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
@@ -522,7 +638,89 @@ async fn translate_single_chapter(
     detail_kv("Error", &error_msg);
     let failed_source_text_hash =
         failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
-    Ok(ChapterResult {
+    Ok(build_failed_chapter_result(
+        chapter_path,
+        error_msg,
+        duration.as_millis() as u64,
+        previous_artifacts,
+        failed_source_text_hash,
+    ))
+}
+
+fn previous_chapter_artifacts(
+    previous_chapter_state: Option<&ChapterState>,
+) -> PreviousChapterArtifacts {
+    PreviousChapterArtifacts {
+        translation_usage: previous_chapter_state.and_then(|state| state.translation_usage.clone()),
+        glossary_usage: previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
+        exported_terms: previous_chapter_state
+            .map(|state| state.exported_terms.clone())
+            .unwrap_or_default(),
+    }
+}
+
+fn build_skipped_chapter_result(
+    chapter_path: &str,
+    message: Option<String>,
+    duration_ms: Option<u64>,
+    previous_artifacts: PreviousChapterArtifacts,
+    source_text_hash: Option<String>,
+) -> ChapterResult {
+    ChapterResult {
+        translated: false,
+        failed: false,
+        skipped: true,
+        new_terms_added: 0,
+        usage: None,
+        chapter_state: ChapterState::new(
+            chapter_path.to_string(),
+            ChapterStatus::Skipped,
+            message,
+            duration_ms,
+            previous_artifacts.translation_usage,
+            previous_artifacts.glossary_usage,
+            previous_artifacts.exported_terms,
+            source_text_hash,
+        ),
+    }
+}
+
+fn build_success_chapter_result(
+    chapter_path: &str,
+    duration_ms: u64,
+    usage: TranslationUsage,
+    glossary_usage: ChapterGlossaryUsage,
+    exported_terms: Vec<ChapterGlossaryTerm>,
+    source_text_hash: String,
+    new_terms_added: usize,
+) -> ChapterResult {
+    ChapterResult {
+        translated: true,
+        failed: false,
+        skipped: false,
+        new_terms_added,
+        usage: Some(usage.clone()),
+        chapter_state: ChapterState::new(
+            chapter_path.to_string(),
+            ChapterStatus::Success,
+            None,
+            Some(duration_ms),
+            Some(usage),
+            Some(glossary_usage),
+            exported_terms,
+            Some(source_text_hash),
+        ),
+    }
+}
+
+fn build_failed_chapter_result(
+    chapter_path: &str,
+    error_msg: String,
+    duration_ms: u64,
+    previous_artifacts: PreviousChapterArtifacts,
+    source_text_hash: Option<String>,
+) -> ChapterResult {
+    ChapterResult {
         translated: false,
         failed: true,
         skipped: false,
@@ -532,15 +730,13 @@ async fn translate_single_chapter(
             chapter_path.to_string(),
             ChapterStatus::Failed,
             Some(error_msg),
-            Some(duration.as_millis() as u64),
+            Some(duration_ms),
             None,
-            previous_chapter_state.and_then(|state| state.glossary_usage.clone()),
-            previous_chapter_state
-                .map(|s| s.exported_terms.clone())
-                .unwrap_or_default(),
-            failed_source_text_hash,
+            previous_artifacts.glossary_usage,
+            previous_artifacts.exported_terms,
+            source_text_hash,
         ),
-    })
+    }
 }
 
 fn skipped_chapter_source_hash(
@@ -948,6 +1144,191 @@ fn combine_rerun_decisions(
             reason: format!("{}; {}", source_reason, glossary_decision.reason),
         }),
     }
+}
+
+fn preview_translation_run(
+    chapters: &VecDeque<PathBuf>,
+    raw_dir: &Path,
+    out_dir: &Path,
+    options: &TranslateOptions,
+    glossary_rerun_plan: &GlossaryRerunPlan,
+    source_rerun_plan: &SourceRerunPlan,
+) -> Result<()> {
+    let previews = build_chapter_previews(
+        chapters,
+        raw_dir,
+        out_dir,
+        options,
+        glossary_rerun_plan,
+        source_rerun_plan,
+    )?;
+    let summary = summarize_previews(&previews);
+
+    section("Planned actions");
+    for preview in &previews {
+        match preview.action {
+            PreviewAction::Translate => {
+                println!("Translate {}", preview.chapter_path);
+                detail_kv("Reason", &preview.reason);
+            }
+            PreviewAction::Retranslate => {
+                println!("Retranslate {}", preview.chapter_path);
+                detail_kv("Reason", &preview.reason);
+            }
+            PreviewAction::Skip => {
+                println!("Skip {}", preview.chapter_path);
+                detail_kv("Reason", &preview.reason);
+            }
+        }
+    }
+
+    section("Preview summary");
+    detail_kv("Translate", summary.translate);
+    detail_kv("Retranslate", summary.retranslate);
+    detail_kv("Skip", summary.skip);
+    if summary.exact_reruns > 0 {
+        detail_kv("Exact reruns", summary.exact_reruns);
+    }
+    if summary.approximate_reruns > 0 {
+        detail_kv("Approximate reruns", summary.approximate_reruns);
+    }
+    if summary.output_missing > 0 {
+        detail_kv("Missing outputs", summary.output_missing);
+    }
+    if summary.output_exists_skips > 0 {
+        detail_kv("Existing-output skips", summary.output_exists_skips);
+    }
+    if summary.empty_skips > 0 {
+        detail_kv("Empty chapters", summary.empty_skips);
+    }
+
+    Ok(())
+}
+
+fn build_chapter_previews(
+    chapters: &VecDeque<PathBuf>,
+    raw_dir: &Path,
+    out_dir: &Path,
+    options: &TranslateOptions,
+    glossary_rerun_plan: &GlossaryRerunPlan,
+    source_rerun_plan: &SourceRerunPlan,
+) -> Result<Vec<ChapterPreview>> {
+    let mut previews = Vec::with_capacity(chapters.len());
+
+    for chapter_file in chapters {
+        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
+        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
+        let rerun_decision = combine_rerun_decisions(
+            glossary_rerun_plan.decision_for(&chapter_path),
+            source_rerun_plan.decision_for(&chapter_path),
+        );
+
+        previews.push(preview_for_chapter(
+            chapter_file,
+            chapter_path,
+            output_exists,
+            options,
+            rerun_decision.as_ref(),
+        )?);
+    }
+
+    Ok(previews)
+}
+
+fn preview_for_chapter(
+    raw_path: &Path,
+    chapter_path: String,
+    output_exists: bool,
+    options: &TranslateOptions,
+    rerun_decision: Option<&ChapterRerunDecision>,
+) -> Result<ChapterPreview> {
+    let chapter_text = std::fs::read_to_string(raw_path)
+        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+
+    if chapter_text.trim().is_empty() {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: PreviewAction::Skip,
+            reason: "Chapter is empty".to_string(),
+            approximate: false,
+        });
+    }
+
+    if options.overwrite {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: if output_exists {
+                PreviewAction::Retranslate
+            } else {
+                PreviewAction::Translate
+            },
+            reason: if output_exists {
+                "Overwrite requested".to_string()
+            } else {
+                "No output exists yet".to_string()
+            },
+            approximate: false,
+        });
+    }
+
+    if let Some(decision) = rerun_decision {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: PreviewAction::Retranslate,
+            reason: decision.reason.clone(),
+            approximate: decision.reason.starts_with("Approximate "),
+        });
+    }
+
+    if !output_exists {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: PreviewAction::Translate,
+            reason: "No output exists yet".to_string(),
+            approximate: false,
+        });
+    }
+
+    Ok(ChapterPreview {
+        chapter_path,
+        action: PreviewAction::Skip,
+        reason: "Output exists and no rerun reason matched".to_string(),
+        approximate: false,
+    })
+}
+
+fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary {
+    let mut summary = PreviewSummary::default();
+
+    for preview in previews {
+        match preview.action {
+            PreviewAction::Translate => {
+                summary.translate += 1;
+                if preview.reason == "No output exists yet" {
+                    summary.output_missing += 1;
+                }
+            }
+            PreviewAction::Retranslate => {
+                summary.retranslate += 1;
+                if preview.approximate {
+                    summary.approximate_reruns += 1;
+                } else {
+                    summary.exact_reruns += 1;
+                }
+            }
+            PreviewAction::Skip => {
+                summary.skip += 1;
+                if preview.reason == "Chapter is empty" {
+                    summary.empty_skips += 1;
+                }
+                if preview.reason == "Output exists and no rerun reason matched" {
+                    summary.output_exists_skips += 1;
+                }
+            }
+        }
+    }
+
+    summary
 }
 
 fn build_chapter_glossary_usage(
@@ -1372,25 +1753,50 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
 const MAX_API_RETRIES: usize = 3;
 
 async fn attempt_translation(
-    translator: &Translator,
+    translators: &Translators,
     chapter_text: &str,
     selection: &SelectionResult,
+    glossary: &[GlossaryTerm],
     style_guide: &Option<String>,
+    output_config: &OutputConfig,
 ) -> (Option<ProviderTranslationResult>, Option<String>) {
     let mut last_error: Option<String> = None;
+    let validation_options = ValidationOptions {
+        require_heading: render_requires_heading(output_config),
+    };
 
     for api_attempt in 1..=MAX_API_RETRIES {
-        match translator
-            .translate_chapter(chapter_text, &selection.terms, style_guide.clone())
+        match translators
+            .translation
+            .translate_chapter(
+                chapter_text,
+                &selection.terms,
+                style_guide.clone(),
+                output_config.clone(),
+            )
             .await
         {
             Ok(resp) => {
-                let validation = validate_translation(&resp.response.translation);
-                if validation.is_valid() {
-                    return (Some(resp), None);
+                let rendered = render_chapter_markdown(&resp.chapter, output_config);
+                let mut validation_errors =
+                    validate_structured_chapter(&resp.chapter, output_config);
+                let rendered_validation = validate_translation(&rendered, validation_options);
+                validation_errors.extend(rendered_validation.errors().iter().cloned());
+                let original_translation_usage = resp.usage.clone();
+
+                if validation_errors.is_empty() {
+                    let result = finish_accepted_translation(
+                        &translators.glossary,
+                        chapter_text,
+                        resp.chapter,
+                        rendered,
+                        glossary,
+                        resp.usage,
+                    )
+                    .await;
+                    return (Some(result), None);
                 }
 
-                let validation_errors = validation.errors();
                 last_error = Some(format!(
                     "Validation failed: {}",
                     validation_errors.join(", ")
@@ -1402,27 +1808,48 @@ async fn attempt_translation(
                         format!("{} Attempting repair.", validation_errors.join(", ")),
                     );
 
-                    let repair_req =
-                        crate::translate::TranslationRequest::new(chapter_text.to_string())
-                            .with_glossary_terms(selection.terms.clone())
-                            .with_style_guide(style_guide.clone())
-                            .with_failed_translation(resp.response.translation)
-                            .with_validation_errors(validation_errors.to_vec());
-
-                    match translator.translate_with_request(&repair_req).await {
+                    match translators
+                        .repair
+                        .repair_chapter(
+                            chapter_text,
+                            rendered,
+                            &selection.terms,
+                            style_guide.clone(),
+                            validation_errors,
+                            output_config.clone(),
+                        )
+                        .await
+                    {
                         Ok(repair_resp) => {
+                            let repaired_rendered =
+                                render_chapter_markdown(&repair_resp.chapter, output_config);
+                            let mut repair_errors =
+                                validate_structured_chapter(&repair_resp.chapter, output_config);
                             let repair_validation =
-                                validate_translation(&repair_resp.response.translation);
-                            if repair_validation.is_valid() {
-                                print_usage_info(&repair_resp.usage);
+                                validate_translation(&repaired_rendered, validation_options);
+                            repair_errors.extend(repair_validation.errors().iter().cloned());
+
+                            if repair_errors.is_empty() {
                                 detail_kv("Repair", "success");
-                                return (Some(repair_resp), None);
+                                let mut usage = original_translation_usage.clone();
+                                usage += repair_resp.usage;
+                                let result = finish_accepted_translation(
+                                    &translators.glossary,
+                                    chapter_text,
+                                    repair_resp.chapter,
+                                    repaired_rendered,
+                                    glossary,
+                                    usage,
+                                )
+                                .await;
+                                return (Some(result), None);
+                            } else {
+                                last_error = Some(format!(
+                                    "Repair failed validation: {}",
+                                    repair_errors.join(", ")
+                                ));
+                                detail_kv("Repair", last_error.as_ref().unwrap());
                             }
-                            last_error = Some(format!(
-                                "Repair failed validation: {}",
-                                repair_validation.errors().join(", ")
-                            ));
-                            detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                         Err(e) => {
                             last_error = Some(format!("Repair request failed: {}", e));
@@ -1454,6 +1881,41 @@ async fn attempt_translation(
     }
 
     (None, last_error)
+}
+
+async fn finish_accepted_translation(
+    translator: &Translator,
+    chapter_text: &str,
+    chapter: StructuredChapter,
+    rendered_markdown: String,
+    glossary: &[GlossaryTerm],
+    mut usage: TranslationUsage,
+) -> ProviderTranslationResult {
+    let new_glossary_terms = match translator
+        .extract_glossary(chapter_text, rendered_markdown, glossary)
+        .await
+    {
+        Ok(glossary_resp) => {
+            usage += glossary_resp.usage;
+            detail_kv("Glossary extraction", "success");
+            glossary_resp.new_glossary_terms
+        }
+        Err(e) => {
+            detail_kv(
+                "Glossary extraction",
+                format!("failed: {}. Continuing without new terms.", e),
+            );
+            Vec::new()
+        }
+    };
+
+    ProviderTranslationResult {
+        response: AcceptedTranslation {
+            chapter,
+            new_glossary_terms,
+        },
+        usage,
+    }
 }
 
 fn print_usage_info(usage: &TranslationUsage) {
@@ -1631,12 +2093,64 @@ mod tests {
     ) -> TranslateOptions {
         TranslateOptions {
             profile: None,
+            repair_profile: None,
+            glossary_profile: None,
             overwrite: false,
             fail_fast: false,
             rerun,
             rerun_affected_glossary,
             rerun_affected_chapters,
+            dry_run: false,
         }
+    }
+
+    fn profile_options(
+        profile: Option<&str>,
+        repair_profile: Option<&str>,
+        glossary_profile: Option<&str>,
+    ) -> TranslateOptions {
+        TranslateOptions {
+            profile: profile.map(str::to_string),
+            repair_profile: repair_profile.map(str::to_string),
+            glossary_profile: glossary_profile.map(str::to_string),
+            overwrite: false,
+            fail_fast: false,
+            rerun: false,
+            rerun_affected_glossary: false,
+            rerun_affected_chapters: false,
+            dry_run: false,
+        }
+    }
+
+    #[test]
+    fn test_resolve_translate_profiles_defaults_to_translation_profile() {
+        let config = GlobalConfig {
+            default_profile: Some("default".to_string()),
+            ..GlobalConfig::default()
+        };
+        let book_config = BookConfig::default();
+        let options = profile_options(None, None, None);
+
+        let profiles = resolve_translate_profiles(&config, &book_config, &options).unwrap();
+
+        assert_eq!(profiles.translation_name, "default");
+        assert_eq!(profiles.repair_name, "default");
+        assert_eq!(profiles.glossary_name, "default");
+    }
+
+    #[test]
+    fn test_resolve_translate_profiles_uses_task_overrides() {
+        let config = GlobalConfig::default();
+        let mut book_config = BookConfig::with_profile("book");
+        book_config.repair_profile = Some("book-repair".to_string());
+        book_config.glossary_profile = Some("book-glossary".to_string());
+        let options = profile_options(Some("cli"), Some("cli-repair"), Some("cli-glossary"));
+
+        let profiles = resolve_translate_profiles(&config, &book_config, &options).unwrap();
+
+        assert_eq!(profiles.translation_name, "cli");
+        assert_eq!(profiles.repair_name, "cli-repair");
+        assert_eq!(profiles.glossary_name, "cli-glossary");
     }
 
     fn assert_glossary_state_matches(
@@ -2391,6 +2905,94 @@ mod tests {
 
         assert!(options.rerun_glossary_enabled());
         assert!(options.rerun_chapters_enabled());
+    }
+
+    #[test]
+    fn test_preview_for_chapter_skips_empty_chapter() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        std::fs::write(&raw_path, " \n\t").unwrap();
+
+        let preview = preview_for_chapter(
+            &raw_path,
+            "chapter1.md".to_string(),
+            false,
+            &translate_options(false, false, false),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(preview.action, PreviewAction::Skip);
+        assert_eq!(preview.reason, "Chapter is empty");
+    }
+
+    #[test]
+    fn test_preview_for_chapter_marks_approximate_rerun() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        std::fs::write(&raw_path, "content").unwrap();
+        let rerun_decision = ChapterRerunDecision {
+            reason: "Approximate smart glossary selection changed: hero".to_string(),
+        };
+
+        let preview = preview_for_chapter(
+            &raw_path,
+            "chapter1.md".to_string(),
+            true,
+            &translate_options(false, true, false),
+            Some(&rerun_decision),
+        )
+        .unwrap();
+
+        assert_eq!(preview.action, PreviewAction::Retranslate);
+        assert!(preview.approximate);
+    }
+
+    #[test]
+    fn test_summarize_previews_counts_categories() {
+        let previews = vec![
+            ChapterPreview {
+                chapter_path: "chapter1.md".to_string(),
+                action: PreviewAction::Translate,
+                reason: "No output exists yet".to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "chapter2.md".to_string(),
+                action: PreviewAction::Retranslate,
+                reason: "Chapter source changed".to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "chapter3.md".to_string(),
+                action: PreviewAction::Retranslate,
+                reason: "Approximate smart glossary selection changed: hero".to_string(),
+                approximate: true,
+            },
+            ChapterPreview {
+                chapter_path: "chapter4.md".to_string(),
+                action: PreviewAction::Skip,
+                reason: "Output exists and no rerun reason matched".to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "chapter5.md".to_string(),
+                action: PreviewAction::Skip,
+                reason: "Chapter is empty".to_string(),
+                approximate: false,
+            },
+        ];
+
+        let summary = summarize_previews(&previews);
+
+        assert_eq!(summary.translate, 1);
+        assert_eq!(summary.retranslate, 2);
+        assert_eq!(summary.skip, 2);
+        assert_eq!(summary.output_missing, 1);
+        assert_eq!(summary.exact_reruns, 1);
+        assert_eq!(summary.approximate_reruns, 1);
+        assert_eq!(summary.output_exists_skips, 1);
+        assert_eq!(summary.empty_skips, 1);
     }
 
     #[test]

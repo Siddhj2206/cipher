@@ -4,6 +4,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 
+use crate::book::output::OutputConfig;
 use crate::book::paths::BookPaths;
 
 #[derive(Debug, Clone)]
@@ -19,23 +20,32 @@ pub struct InitReport {
 pub struct BookConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repair_profile: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glossary_profile: Option<String>,
     pub raw_dir: String,
     pub out_dir: String,
     pub glossary_path: String,
     pub style_path: String,
     #[serde(default = "default_glossary_injection")]
     pub glossary_injection: String,
+    #[serde(default)]
+    pub output: OutputConfig,
 }
 
 impl Default for BookConfig {
     fn default() -> Self {
         Self {
             profile: None,
+            repair_profile: None,
+            glossary_profile: None,
             raw_dir: "raw".to_string(),
             out_dir: "tl".to_string(),
             glossary_path: "glossary.json".to_string(),
             style_path: "style.md".to_string(),
             glossary_injection: default_glossary_injection(),
+            output: OutputConfig::default(),
         }
     }
 }
@@ -75,14 +85,14 @@ pub fn init_book(
     create_dir_if_missing(&paths.out_dir, &mut report)?;
     create_dir_if_missing(&paths.state_dir, &mut report)?;
 
-    // Create config.json
+    // Create cipher.toml
     let config = if let Some(p) = profile {
         BookConfig::with_profile(p)
     } else {
         BookConfig::default()
     };
 
-    write_json_if_missing(&paths.config_json, &config, &mut report)?;
+    write_toml_if_missing(&paths.config_toml, &config, &mut report)?;
 
     // Create glossary.json
     if let Some(src) = import_glossary {
@@ -123,6 +133,25 @@ fn create_dir_if_missing(path: &Path, report: &mut InitReport) -> anyhow::Result
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_dirs.push(name.to_string());
         }
+    }
+    Ok(())
+}
+
+fn write_toml_if_missing<T: Serialize>(
+    path: &Path,
+    value: &T,
+    report: &mut InitReport,
+) -> anyhow::Result<()> {
+    if !path.exists() {
+        let toml = toml::to_string_pretty(value)?;
+        let mut file = File::create_new(path)?;
+        file.write_all(toml.as_bytes())?;
+        file.write_all(b"\n")?;
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            report.created_files.push(name.to_string());
+        }
+    } else if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+        report.skipped_files.push(name.to_string());
     }
     Ok(())
 }
@@ -203,6 +232,7 @@ mod tests {
         assert_eq!(config.style_path, "style.md");
         assert_eq!(config.glossary_injection, "smart");
         assert_eq!(config.profile, None);
+        assert_eq!(config.output, OutputConfig::default());
     }
 
     #[test]
@@ -218,7 +248,7 @@ pub fn load_book_config(path: &Path) -> anyhow::Result<BookConfig> {
     }
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read book config from {}", path.display()))?;
-    let config: BookConfig = serde_json::from_str(&content)
+    let config: BookConfig = toml::from_str(&content)
         .with_context(|| format!("Failed to parse book config from {}", path.display()))?;
     Ok(config)
 }

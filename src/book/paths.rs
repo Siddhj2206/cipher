@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct BookPaths {
     pub root: PathBuf,
-    pub config_json: PathBuf,
+    pub config_toml: PathBuf,
     pub raw_dir: PathBuf,
     pub out_dir: PathBuf,
     pub legacy_out_dir: PathBuf,
@@ -17,7 +17,7 @@ impl BookPaths {
         let root = book_dir.into();
 
         Self {
-            config_json: root.join("config.json"),
+            config_toml: root.join("cipher.toml"),
             raw_dir: root.join("raw"),
             out_dir: root.join("tl"),
             legacy_out_dir: root.join("translated"),
@@ -73,7 +73,7 @@ impl BookPaths {
 #[derive(Debug, Clone)]
 pub struct BookExists {
     pub root_dir: bool,
-    pub config_json: bool,
+    pub config_toml: bool,
     pub raw_dir: bool,
     pub out_dir: bool,
     pub legacy_out_dir: bool,
@@ -86,7 +86,7 @@ impl BookExists {
     pub fn probe(paths: &BookPaths) -> Self {
         Self {
             root_dir: paths.root.is_dir(),
-            config_json: paths.config_json.is_file(),
+            config_toml: paths.config_toml.is_file(),
             raw_dir: paths.raw_dir.is_dir(),
             out_dir: paths.out_dir.is_dir(),
             legacy_out_dir: paths.legacy_out_dir.is_dir(),

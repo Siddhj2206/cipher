@@ -189,8 +189,8 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
                 .entry(name.clone())
                 .or_insert(ProviderConfig {
                     kind: ProviderKind::Gemini,
+                    keys: Vec::new(),
                     base_url: None,
-                    extras: None,
                 });
             Ok(name)
         }
@@ -201,8 +201,8 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
                 .entry(name.clone())
                 .or_insert(ProviderConfig {
                     kind: ProviderKind::Openai,
+                    keys: Vec::new(),
                     base_url: None,
-                    extras: None,
                 });
             Ok(name)
         }
@@ -233,8 +233,8 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
                 name.clone(),
                 ProviderConfig {
                     kind: ProviderKind::OpenaiCompatible,
+                    keys: Vec::new(),
                     base_url: Some(url),
-                    extras: None,
                 },
             );
 
@@ -248,7 +248,11 @@ fn select_or_create_api_key_sectioned(
     config: &mut GlobalConfig,
     provider_name: &str,
 ) -> anyhow::Result<Option<String>> {
-    let provider_keys = config.keys.entry(provider_name.to_string()).or_default();
+    let provider = config
+        .providers
+        .get_mut(provider_name)
+        .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", provider_name))?;
+    let provider_keys = &mut provider.keys;
 
     if provider_keys.is_empty() {
         // No existing keys, go straight to adding new

@@ -20,12 +20,13 @@ For each chapter, `cipher`:
 
 1. loads the raw markdown
 2. selects glossary terms using `smart` or `full` injection
-3. sends the chapter, glossary, and style guide to the configured model
+3. sends the chapter, selected glossary, and style guide to the configured model for translation
 4. validates the returned translation
 5. attempts one repair pass if validation fails
-6. writes accepted output atomically
-7. merges any newly discovered glossary terms
-8. saves run and chapter state under `.cipher/`
+6. sends accepted output through a separate glossary extraction request
+7. writes accepted output atomically
+8. merges any newly discovered glossary terms
+9. saves run and chapter state under `.cipher/`
 
 This makes later runs safer and more explainable, especially when the glossary grows over time.
 
@@ -62,18 +63,12 @@ cipher profile show myprofile
 cipher profile test myprofile
 ```
 
-### 2. Create or import a book
+### 2. Create a book
 
 From scratch:
 
 ```bash
 cipher init my-book
-```
-
-From an EPUB:
-
-```bash
-cipher import my-book.epub
 ```
 
 You can also initialize a book with a profile or imported glossary:
@@ -116,7 +111,7 @@ This shows the latest recorded run metadata and chapter summary.
 
 ```text
 my-book/
-  config.json        # Book configuration
+  cipher.toml        # Book configuration
   glossary.json      # Canonical glossary
   style.md           # Style guide injected into prompts
   raw/               # Source chapters
@@ -140,7 +135,9 @@ Translate a book. If `book_dir` is omitted, the current directory is used.
 cipher translate
 cipher translate my-book
 cipher translate my-book --profile fast
+cipher translate my-book --profile best --repair-profile fast --glossary-profile cheap
 cipher translate my-book --overwrite
+cipher translate my-book --dry-run
 cipher translate my-book --fail-fast
 cipher translate my-book --rerun
 cipher translate my-book --rerun-affected-glossary
@@ -150,7 +147,10 @@ cipher translate my-book --rerun-affected-chapters
 Current translate flags:
 
 - `--profile <name>`: override the book/global profile for this run
+- `--repair-profile <name>`: use a different profile for repair requests
+- `--glossary-profile <name>`: use a different profile for glossary extraction requests
 - `--overwrite`: retranslate even when output already exists
+- `--dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
 - `--fail-fast`: stop on the first failed chapter
 - `--rerun`: retranslate chapters whose tracked source or glossary-relevant inputs changed
 - `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
@@ -194,23 +194,6 @@ cipher init my-book --from other-book
 cipher init my-book --import-glossary terms.json
 ```
 
-### `cipher import <epub_path>`
-
-Import an EPUB into a new book directory.
-
-```bash
-cipher import novel.epub
-cipher import novel.epub --force
-```
-
-Current import behavior:
-
-- creates a book directory alongside the EPUB
-- extracts chapters into `raw/`
-- converts HTML to markdown
-- skips very small/empty chapters
-- initializes the standard book scaffold
-
 ### `cipher glossary <subcommand> <book_dir>`
 
 Manage the canonical glossary.
@@ -252,38 +235,56 @@ With a book directory, it checks book layout and effective profile resolution.
 Global configuration is stored using XDG config directories. On Linux, the current path resolves to:
 
 ```text
-~/.config/cipher/cipher/config.json
+~/.config/cipher/config.toml
 ```
 
 It contains:
 
 - providers
-- API keys
 - profiles
 - default profile
+
+Provider API keys are nested under each provider.
 
 The current implementation stores API keys as plain text in this config. Improving secret storage is planned.
 
 ## Book config
 
-Each book contains a portable `config.json`:
+Each book contains a portable `cipher.toml`:
 
-```json
-{
-  "profile": "",
-  "raw_dir": "raw",
-  "out_dir": "tl",
-  "glossary_path": "glossary.json",
-  "style_path": "style.md",
-  "glossary_injection": "smart"
-}
+```toml
+raw_dir = "raw"
+out_dir = "tl"
+glossary_path = "glossary.json"
+style_path = "style.md"
+glossary_injection = "smart"
+# Optional profile overrides:
+# profile = "best"
+# repair_profile = "fast"
+# glossary_profile = "cheap"
+
+[output.fields.chapter_number]
+description = "Chapter number when one is present"
+
+[output.fields.content]
+required = true
+description = "Main translated chapter body in markdown, excluding the top heading"
+
+[output.render]
+template = """
+# {heading}
+
+{content}
+"""
 ```
 
-Profile resolution order:
+Translation profile resolution order:
 
 1. `--profile`
-2. book `config.json`
+2. book `cipher.toml`
 3. global default profile
+
+Repair and glossary extraction profiles default to the translation profile. They can be overridden with `--repair-profile` / `--glossary-profile` or persistent `repair_profile` / `glossary_profile` values in `cipher.toml`.
 
 ## Glossary
 
@@ -366,6 +367,13 @@ If validation fails:
 3. the repaired output is validated again
 4. if it still fails, the chapter is marked failed
 
+Glossary extraction now runs only after a translation has passed validation.
+
+- translation requests return translated markdown only
+- repair requests return corrected markdown only
+- glossary extraction runs as a separate follow-up call against accepted markdown and existing glossary terms
+- glossary extraction failure does not invalidate an otherwise accepted chapter; it only skips adding new terms for that chapter
+
 ## Reruns and state
 
 `cipher` stores internal state under `.cipher/` so runs are resumable and future rerun decisions can be more informed.
@@ -417,9 +425,8 @@ This keeps runs resumable and reduces the chance of corrupted outputs after inte
 A few areas are intentionally still evolving:
 
 - API keys are not yet stored in a proper secret store
-- dry-run rerun preview is not implemented yet
+- dry-run preview is intentionally narrow and currently reports planned actions from the existing rerun rules
 - status output does not yet expose all tracked-vs-approximate rerun details
-- repair and glossary extraction are still more coupled than they should be long-term
 
 ## Development
 

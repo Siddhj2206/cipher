@@ -12,8 +12,8 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
 
     println!("Configuration");
     detail_kv(
-        "config.json",
-        format_path_status(&layout.paths.config_json, layout.exists.config_json),
+        "cipher.toml",
+        format_path_status(&layout.paths.config_toml, layout.exists.config_toml),
     );
 
     println!("Content");
@@ -78,8 +78,10 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
 
 fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
     println!("Profile configuration");
-    let book_config = crate::book::load_book_config(&layout.paths.config_json).unwrap_or_default();
+    let book_config = crate::book::load_book_config(&layout.paths.config_toml).unwrap_or_default();
     let profile_name = config.effective_profile_name(book_config.profile.as_deref());
+    let repair_profile_name = book_config.repair_profile.as_deref().or(profile_name);
+    let glossary_profile_name = book_config.glossary_profile.as_deref().or(profile_name);
 
     if let Some(name) = profile_name {
         match config.resolve_profile(name) {
@@ -94,6 +96,12 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
                 }
                 detail_kv("Provider", &profile.provider);
                 detail_kv("Model", &profile.model);
+                if repair_profile_name != Some(name) {
+                    detail_kv("Repair profile", repair_profile_name.unwrap_or(name));
+                }
+                if glossary_profile_name != Some(name) {
+                    detail_kv("Glossary profile", glossary_profile_name.unwrap_or(name));
+                }
 
                 let validation = config::validate_profile(config, name);
                 if validation.is_valid() {
@@ -102,6 +110,24 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
                     detail("Profile configuration has errors");
                     for err in &validation.errors {
                         detail(err);
+                    }
+                }
+                for (label, profile_name) in [
+                    ("Repair profile", repair_profile_name),
+                    ("Glossary profile", glossary_profile_name),
+                ] {
+                    if let Some(profile_name) =
+                        profile_name.filter(|profile_name| *profile_name != name)
+                    {
+                        let validation = config::validate_profile(config, profile_name);
+                        if validation.is_valid() {
+                            detail_kv(label, format!("{} is valid", profile_name));
+                        } else {
+                            detail_kv(label, format!("{} has errors", profile_name));
+                            for err in &validation.errors {
+                                detail(err);
+                            }
+                        }
                     }
                 }
             }
