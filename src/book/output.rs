@@ -85,7 +85,7 @@ fn default_required_content_field() -> OutputFieldConfig {
 }
 
 fn default_render_template() -> String {
-    "# {heading}\n\n{content}".to_string()
+    "# Chapter {chapter_number}: {chapter_title}\n\n{content}".to_string()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
