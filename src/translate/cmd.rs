@@ -342,6 +342,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     validate_translate_profiles(&global_config, &profile_names)?;
 
+    std::fs::create_dir_all(out_dir)
+        .with_context(|| format!("Failed to create output directory {}", out_dir.display()))?;
+
     let profile = global_config
         .resolve_profile(profile_names.translation_name)
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_names.translation_name))?;
@@ -587,7 +590,7 @@ async fn translate_single_chapter(
     print_glossary_info(&selection, translation_injection_mode);
 
     // Attempt translation with retries
-    let (response, last_error) = attempt_translation(
+    let (response, last_error, failed_usage) = attempt_translation(
         translators,
         &chapter_text,
         &selection,
@@ -631,10 +634,7 @@ async fn translate_single_chapter(
     }
 
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
-    detail_kv(
-        "Result",
-        format!("failed after {} attempts", MAX_API_RETRIES),
-    );
+    detail_kv("Result", "failed");
     detail_kv("Error", &error_msg);
     let failed_source_text_hash =
         failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
@@ -642,6 +642,7 @@ async fn translate_single_chapter(
         chapter_path,
         error_msg,
         duration.as_millis() as u64,
+        failed_usage,
         previous_artifacts,
         failed_source_text_hash,
     ))
@@ -717,6 +718,7 @@ fn build_failed_chapter_result(
     chapter_path: &str,
     error_msg: String,
     duration_ms: u64,
+    usage: Option<TranslationUsage>,
     previous_artifacts: PreviousChapterArtifacts,
     source_text_hash: Option<String>,
 ) -> ChapterResult {
@@ -725,13 +727,13 @@ fn build_failed_chapter_result(
         failed: true,
         skipped: false,
         new_terms_added: 0,
-        usage: None,
+        usage: usage.clone(),
         chapter_state: ChapterState::new(
             chapter_path.to_string(),
             ChapterStatus::Failed,
             Some(error_msg),
             Some(duration_ms),
-            None,
+            usage,
             previous_artifacts.glossary_usage,
             previous_artifacts.exported_terms,
             source_text_hash,
@@ -1759,8 +1761,13 @@ async fn attempt_translation(
     glossary: &[GlossaryTerm],
     style_guide: &Option<String>,
     output_config: &OutputConfig,
-) -> (Option<ProviderTranslationResult>, Option<String>) {
+) -> (
+    Option<ProviderTranslationResult>,
+    Option<String>,
+    Option<TranslationUsage>,
+) {
     let mut last_error: Option<String> = None;
+    let mut failed_usage: Option<TranslationUsage> = None;
     let validation_options = ValidationOptions {
         require_heading: render_requires_heading(output_config),
     };
@@ -1783,6 +1790,7 @@ async fn attempt_translation(
                 let rendered_validation = validate_translation(&rendered, validation_options);
                 validation_errors.extend(rendered_validation.errors().iter().cloned());
                 let original_translation_usage = resp.usage.clone();
+                failed_usage = Some(original_translation_usage.clone());
 
                 if validation_errors.is_empty() {
                     let result = finish_accepted_translation(
@@ -1794,7 +1802,7 @@ async fn attempt_translation(
                         resp.usage,
                     )
                     .await;
-                    return (Some(result), None);
+                    return (Some(result), None, None);
                 }
 
                 last_error = Some(format!(
@@ -1823,6 +1831,9 @@ async fn attempt_translation(
                         Ok(repair_resp) => {
                             let repaired_rendered =
                                 render_chapter_markdown(&repair_resp.chapter, output_config);
+                            let mut combined_usage = original_translation_usage.clone();
+                            combined_usage += repair_resp.usage.clone();
+                            failed_usage = Some(combined_usage.clone());
                             let mut repair_errors =
                                 validate_structured_chapter(&repair_resp.chapter, output_config);
                             let repair_validation =
@@ -1831,18 +1842,16 @@ async fn attempt_translation(
 
                             if repair_errors.is_empty() {
                                 detail_kv("Repair", "success");
-                                let mut usage = original_translation_usage.clone();
-                                usage += repair_resp.usage;
                                 let result = finish_accepted_translation(
                                     &translators.glossary,
                                     chapter_text,
                                     repair_resp.chapter,
                                     repaired_rendered,
                                     glossary,
-                                    usage,
+                                    combined_usage,
                                 )
                                 .await;
-                                return (Some(result), None);
+                                return (Some(result), None, None);
                             } else {
                                 last_error = Some(format!(
                                     "Repair failed validation: {}",
@@ -1880,7 +1889,7 @@ async fn attempt_translation(
         }
     }
 
-    (None, last_error)
+    (None, last_error, failed_usage)
 }
 
 async fn finish_accepted_translation(
@@ -2897,6 +2906,29 @@ mod tests {
             failed_chapter_source_hash(Some(&previous_chapter_state), "new-source-hash");
 
         assert_eq!(source_text_hash, Some("new-source-hash".to_string()));
+    }
+
+    #[test]
+    fn test_failed_chapter_result_preserves_usage() {
+        let usage = TranslationUsage {
+            input_tokens: 10,
+            output_tokens: 20,
+            total_tokens: 30,
+            cached_input_tokens: 4,
+            cache_creation_input_tokens: 5,
+        };
+
+        let result = build_failed_chapter_result(
+            "chapter1.md",
+            "Validation failed".to_string(),
+            100,
+            Some(usage.clone()),
+            PreviousChapterArtifacts::default(),
+            Some("source-hash".to_string()),
+        );
+
+        assert_eq!(result.usage, Some(usage.clone()));
+        assert_eq!(result.chapter_state.translation_usage, Some(usage));
     }
 
     #[test]

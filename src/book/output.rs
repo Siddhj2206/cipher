@@ -85,7 +85,7 @@ fn default_required_content_field() -> OutputFieldConfig {
 }
 
 fn default_render_template() -> String {
-    "# Chapter {chapter_number}: {chapter_title}\n\n{content}".to_string()
+    "# {heading}\n\n{content}".to_string()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -129,6 +129,13 @@ pub fn validate_structured_chapter(
 
     if config.fields.content.required && chapter.content.trim().is_empty() {
         errors.push("Missing required field: content".to_string());
+    }
+
+    if render_requires_heading(config) && chapter.heading().is_none() {
+        errors.push(
+            "Rendered output requires a heading but no chapter heading fields were provided"
+                .to_string(),
+        );
     }
 
     errors
@@ -194,6 +201,36 @@ mod tests {
 
         let rendered = render_chapter_markdown(&chapter, &OutputConfig::default());
         assert_eq!(rendered, "# Chapter 12: A New Dawn\n\nBody");
+    }
+
+    #[test]
+    fn test_render_default_template_uses_title_without_empty_chapter_prefix() {
+        let chapter = StructuredChapter {
+            chapter_number: None,
+            chapter_title: Some("Prologue".to_string()),
+            content: "Body".to_string(),
+        };
+
+        let rendered = render_chapter_markdown(&chapter, &OutputConfig::default());
+
+        assert_eq!(rendered, "# Prologue\n\nBody");
+    }
+
+    #[test]
+    fn test_validate_requires_heading_fields_when_template_starts_with_heading() {
+        let chapter = StructuredChapter {
+            chapter_number: None,
+            chapter_title: None,
+            content: "Body".to_string(),
+        };
+
+        let errors = validate_structured_chapter(&chapter, &OutputConfig::default());
+
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.contains("requires a heading"))
+        );
     }
 
     #[test]

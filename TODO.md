@@ -88,15 +88,9 @@ Questions to answer:
 
 ### 9. Revisit validation strictness after repair redesign
 
-**Status:** In progress
+**Status:** Done
 
-Follow-up areas:
-
-- separate hard failures from warnings
-- identify cases that can be auto-cleaned locally
-- continue tightening the book-configured output path
-- decide whether chapter metadata fields need stricter validation than free-form strings
-- separate structured-field validation from rendered-markdown warnings where helpful
+Tightened structured-field validation and rendered heading handling.
 
 ### 10. Standardize user config on TOML
 
