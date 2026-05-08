@@ -32,7 +32,7 @@ impl Default for OutputFieldsConfig {
         Self {
             chapter_number: OutputFieldConfig {
                 required: false,
-                description: Some("Chapter number when one is present".to_string()),
+                description: None,
             },
             chapter_title: default_optional_field(),
             content: default_required_content_field(),
@@ -78,9 +78,7 @@ fn default_optional_field() -> OutputFieldConfig {
 fn default_required_content_field() -> OutputFieldConfig {
     OutputFieldConfig {
         required: true,
-        description: Some(
-            "Main translated chapter body in markdown, excluding the top heading".to_string(),
-        ),
+        description: None,
     }
 }
 

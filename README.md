@@ -263,16 +263,9 @@ glossary_injection = "smart"
 # repair_profile = "fast"
 # glossary_profile = "cheap"
 
-[output.fields.chapter_number]
-description = "Chapter number when one is present"
-
-[output.fields.content]
-required = true
-description = "Main translated chapter body in markdown, excluding the top heading"
-
 [output.render]
 template = """
-# {heading}
+# Chapter {chapter_number}: {chapter_title}
 
 {content}
 """
@@ -338,7 +331,7 @@ Current smart-mode behavior:
 
 ## Style guide
 
-If present, `style.md` is injected into every translation request.
+If present, `style.md` is injected into every translation request. Put book-specific formatting guidance there, including how to populate structured output fields for a custom render template.
 
 Use it for:
 

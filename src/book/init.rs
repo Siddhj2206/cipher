@@ -217,6 +217,12 @@ const STYLE_TEMPLATE: &str = r#"# Style Guide
 - Use proper markdown
 - Preserve paragraph structure
 - Maintain dialogue formatting
+
+## Output Fields
+- Put the chapter number or ordinal in `chapter_number` when present
+- Put the translated chapter title in `chapter_title` when present
+- Put only the main translated chapter body in `content`
+- Do not include the top chapter heading inside `content`
 "#;
 
 #[cfg(test)]
