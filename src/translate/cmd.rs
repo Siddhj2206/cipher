@@ -24,6 +24,10 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+const EMPTY_CHAPTER_SKIP_REASON: &str = "Chapter is empty";
+const OUTPUT_EXISTS_SKIP_REASON: &str = "Output exists and no rerun reason matched";
+const OUTPUT_MISSING_REASON: &str = "No output exists yet";
+
 pub struct TranslateOptions {
     pub profile: Option<String>,
     pub repair_profile: Option<String>,
@@ -562,26 +566,27 @@ async fn translate_single_chapter(
         ));
     }
 
-    if let Some(decision) = rerun_decision {
-        println!("Retranslating {}", chapter_path);
-        detail_kv("Rerun reason", &decision.reason);
-    } else {
-        println!("Translating {}", chapter_path);
-    }
-
     // Read chapter
     let chapter_text = std::fs::read_to_string(raw_path)
         .with_context(|| format!("Failed to read {}", raw_path.display()))?;
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
+        println!("Skip {}: chapter is empty", chapter_path);
         return Ok(build_skipped_chapter_result(
             chapter_path,
-            Some("Chapter is empty".to_string()),
+            Some(EMPTY_CHAPTER_SKIP_REASON.to_string()),
             None,
             previous_artifacts,
             Some(source_text_hash),
         ));
+    }
+
+    if let Some(decision) = rerun_decision {
+        println!("Retranslating {}", chapter_path);
+        detail_kv("Rerun reason", &decision.reason);
+    } else {
+        println!("Translating {}", chapter_path);
     }
 
     // Select glossary terms and display info
@@ -1168,20 +1173,8 @@ fn preview_translation_run(
 
     section("Planned actions");
     for preview in &previews {
-        match preview.action {
-            PreviewAction::Translate => {
-                println!("Translate {}", preview.chapter_path);
-                detail_kv("Reason", &preview.reason);
-            }
-            PreviewAction::Retranslate => {
-                println!("Retranslate {}", preview.chapter_path);
-                detail_kv("Reason", &preview.reason);
-            }
-            PreviewAction::Skip => {
-                println!("Skip {}", preview.chapter_path);
-                detail_kv("Reason", &preview.reason);
-            }
-        }
+        println!("{}", preview_display_line(preview));
+        detail_kv("Reason", &preview.reason);
     }
 
     section("Preview summary");
@@ -1251,7 +1244,7 @@ fn preview_for_chapter(
         return Ok(ChapterPreview {
             chapter_path,
             action: PreviewAction::Skip,
-            reason: "Chapter is empty".to_string(),
+            reason: EMPTY_CHAPTER_SKIP_REASON.to_string(),
             approximate: false,
         });
     }
@@ -1267,7 +1260,7 @@ fn preview_for_chapter(
             reason: if output_exists {
                 "Overwrite requested".to_string()
             } else {
-                "No output exists yet".to_string()
+                OUTPUT_MISSING_REASON.to_string()
             },
             approximate: false,
         });
@@ -1286,7 +1279,7 @@ fn preview_for_chapter(
         return Ok(ChapterPreview {
             chapter_path,
             action: PreviewAction::Translate,
-            reason: "No output exists yet".to_string(),
+            reason: OUTPUT_MISSING_REASON.to_string(),
             approximate: false,
         });
     }
@@ -1294,9 +1287,23 @@ fn preview_for_chapter(
     Ok(ChapterPreview {
         chapter_path,
         action: PreviewAction::Skip,
-        reason: "Output exists and no rerun reason matched".to_string(),
+        reason: OUTPUT_EXISTS_SKIP_REASON.to_string(),
         approximate: false,
     })
+}
+
+fn preview_display_line(preview: &ChapterPreview) -> String {
+    let action = match preview.action {
+        PreviewAction::Translate => "Translate",
+        PreviewAction::Retranslate => "Retranslate",
+        PreviewAction::Skip => "Skip",
+    };
+
+    if preview.action == PreviewAction::Skip && preview.reason == EMPTY_CHAPTER_SKIP_REASON {
+        format!("{} {}: chapter is empty", action, preview.chapter_path)
+    } else {
+        format!("{} {}", action, preview.chapter_path)
+    }
 }
 
 fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary {
@@ -1306,7 +1313,7 @@ fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary {
         match preview.action {
             PreviewAction::Translate => {
                 summary.translate += 1;
-                if preview.reason == "No output exists yet" {
+                if preview.reason == OUTPUT_MISSING_REASON {
                     summary.output_missing += 1;
                 }
             }
@@ -1320,10 +1327,10 @@ fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary {
             }
             PreviewAction::Skip => {
                 summary.skip += 1;
-                if preview.reason == "Chapter is empty" {
+                if preview.reason == EMPTY_CHAPTER_SKIP_REASON {
                     summary.empty_skips += 1;
                 }
-                if preview.reason == "Output exists and no rerun reason matched" {
+                if preview.reason == OUTPUT_EXISTS_SKIP_REASON {
                     summary.output_exists_skips += 1;
                 }
             }
@@ -1912,7 +1919,7 @@ async fn finish_accepted_translation(
         Err(e) => {
             detail_kv(
                 "Glossary extraction",
-                format!("failed: {}. Continuing without new terms.", e),
+                format!("failed: {}. Chapter kept without new terms.", e),
             );
             Vec::new()
         }
@@ -2081,6 +2088,31 @@ fn atomic_write(path: &Path, content: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::state::load_chapter_state;
+    use crate::translate::providers::Provider;
+    use crate::translate::{
+        GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
+        TranslationRequest,
+    };
+
+    struct FailingGlossaryProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for FailingGlossaryProvider {
+        async fn translate(&self, _req: TranslationRequest) -> Result<ProviderTextResult> {
+            unreachable!("finish_accepted_translation does not call translate")
+        }
+
+        async fn repair(&self, _req: RepairRequest) -> Result<ProviderTextResult> {
+            unreachable!("finish_accepted_translation does not call repair")
+        }
+
+        async fn extract_glossary(
+            &self,
+            _req: GlossaryExtractionRequest,
+        ) -> Result<ProviderGlossaryResult> {
+            Err(anyhow::anyhow!("extractor unavailable"))
+        }
+    }
 
     fn glossary_term(term: &str, og_term: Option<&str>, definition: &str) -> GlossaryTerm {
         GlossaryTerm {
@@ -2931,6 +2963,39 @@ mod tests {
         assert_eq!(result.chapter_state.translation_usage, Some(usage));
     }
 
+    #[tokio::test]
+    async fn test_glossary_extraction_failure_keeps_accepted_chapter() {
+        let translator = Translator {
+            provider: Box::new(FailingGlossaryProvider),
+        };
+        let chapter = StructuredChapter {
+            chapter_number: Some("1".to_string()),
+            chapter_title: Some("Opening".to_string()),
+            content: "Translated body".to_string(),
+        };
+        let usage = TranslationUsage {
+            input_tokens: 10,
+            output_tokens: 20,
+            total_tokens: 30,
+            cached_input_tokens: 4,
+            cache_creation_input_tokens: 5,
+        };
+
+        let result = finish_accepted_translation(
+            &translator,
+            "# Chapter 1\n\nSource",
+            chapter.clone(),
+            "# Chapter 1: Opening\n\nTranslated body".to_string(),
+            &[],
+            usage.clone(),
+        )
+        .await;
+
+        assert_eq!(result.response.chapter.content, chapter.content);
+        assert!(result.response.new_glossary_terms.is_empty());
+        assert_eq!(result.usage, usage);
+    }
+
     #[test]
     fn test_translate_options_rerun_enables_both_rerun_modes() {
         let options = translate_options(true, false, false);
@@ -2955,7 +3020,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(preview.action, PreviewAction::Skip);
-        assert_eq!(preview.reason, "Chapter is empty");
+        assert_eq!(preview.reason, EMPTY_CHAPTER_SKIP_REASON);
+        assert_eq!(
+            preview_display_line(&preview),
+            "Skip chapter1.md: chapter is empty"
+        );
     }
 
     #[test]
@@ -3004,13 +3073,13 @@ mod tests {
             ChapterPreview {
                 chapter_path: "chapter4.md".to_string(),
                 action: PreviewAction::Skip,
-                reason: "Output exists and no rerun reason matched".to_string(),
+                reason: OUTPUT_EXISTS_SKIP_REASON.to_string(),
                 approximate: false,
             },
             ChapterPreview {
                 chapter_path: "chapter5.md".to_string(),
                 action: PreviewAction::Skip,
-                reason: "Chapter is empty".to_string(),
+                reason: EMPTY_CHAPTER_SKIP_REASON.to_string(),
                 approximate: false,
             },
         ];

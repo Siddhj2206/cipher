@@ -73,14 +73,9 @@ Implemented as `--dry-run` on `translate`.
 
 ### 7. Split glossary extraction from translation response
 
-**Status:** Under discussion
+**Status:** Done
 
-Questions to answer:
-
-- should glossary extraction stay in a second call after accepted translation
-- should glossary extraction be folded back into the main translation response
-- if split, should glossary extraction failure invalidate chapter success or only skip term capture
-- if combined, how should repair avoid taking ownership of `new_glossary_terms`
+Glossary extraction is a second call after accepted translation. Extraction failure keeps the accepted chapter and skips term capture.
 
 ### 8. Narrow repair semantics
 
@@ -90,7 +85,7 @@ Questions to answer:
 
 **Status:** Done
 
-Tightened structured-field validation and rendered heading handling.
+Tightened structured-field validation.
 
 ### 10. Standardize user config on TOML
 
@@ -173,7 +168,7 @@ Useful cases to surface:
 
 ### 22. Fix display for empty chapters
 
-**Status:** Open
+**Status:** Done
 
 ### 23. Revisit glossary matcher caching only if performance becomes a real issue
 
