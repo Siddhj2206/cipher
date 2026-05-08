@@ -1,12 +1,12 @@
 #[derive(Debug, Clone, Copy)]
 pub struct ValidationOptions {
-    pub require_heading: bool,
+    pub require_markdown_heading: bool,
 }
 
 impl Default for ValidationOptions {
     fn default() -> Self {
         Self {
-            require_heading: true,
+            require_markdown_heading: true,
         }
     }
 }
@@ -18,7 +18,7 @@ pub fn validate_translation(text: &str, options: ValidationOptions) -> Validatio
         errors.push("Translation is empty".to_string());
     }
 
-    if options.require_heading {
+    if options.require_markdown_heading {
         let trimmed = text.trim_start();
         if !trimmed.starts_with('#') {
             errors.push("Translation must start with a heading (#)".to_string());
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn test_missing_heading() {
+    fn test_missing_markdown_heading() {
         let result = validate_translation(
             "Just some text without heading.",
             ValidationOptions::default(),
@@ -351,11 +351,11 @@ mod tests {
     }
 
     #[test]
-    fn test_heading_optional() {
+    fn test_markdown_heading_optional() {
         let result = validate_translation(
             "Just some text without heading.",
             ValidationOptions {
-                require_heading: false,
+                require_markdown_heading: false,
             },
         );
         assert!(result.is_valid());

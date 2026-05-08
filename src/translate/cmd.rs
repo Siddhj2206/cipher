@@ -1,6 +1,6 @@
 use crate::book::{
     BookLayout, OutputConfig, StructuredChapter, init::BookConfig, load_book_config,
-    render_chapter_markdown, render_requires_heading, validate_structured_chapter,
+    render_chapter_markdown, render_starts_with_markdown_heading, validate_structured_chapter,
 };
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{
@@ -1776,7 +1776,7 @@ async fn attempt_translation(
     let mut last_error: Option<String> = None;
     let mut failed_usage: Option<TranslationUsage> = None;
     let validation_options = ValidationOptions {
-        require_heading: render_requires_heading(output_config),
+        require_markdown_heading: render_starts_with_markdown_heading(output_config),
     };
 
     for api_attempt in 1..=MAX_API_RETRIES {

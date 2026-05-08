@@ -140,7 +140,7 @@ pub fn render_chapter_markdown(chapter: &StructuredChapter, config: &OutputConfi
         .to_string()
 }
 
-pub fn render_requires_heading(config: &OutputConfig) -> bool {
+pub fn render_starts_with_markdown_heading(config: &OutputConfig) -> bool {
     config.render.template.trim_start().starts_with('#')
 }
 
