@@ -195,15 +195,53 @@ Need to decide:
 
 **Status:** Open
 
-### 27. Better API key storage
+### 27. Auth system redesign (multi-key + rate-limit switching)
 
-**Status:** Open
+**Status:** Planned — deferred until after other work
 
-Ideas to explore:
+**Goals:**
 
-- OS keyring / secret service
-- env-var indirection
-- encrypted local storage
+- Split secrets out of `config.toml` into a dedicated `auth.toml` (0o600 perms)
+- Support env-var (`{env:VAR}`) and file (`{file:path}`) substitution
+- First-class multi-key support with rotation policies (manual, round-robin, priority)
+- Automatic key switching on 429 rate limits
+- Configurable max key switches per request
+- Migration: auto-migrate existing keys from `config.toml` on first load
+
+**Design decisions (confirmed):**
+
+- Per-provider rotation policy with a global fallback option
+- Priority policy skips exhausted keys, uses next lowest priority
+- No parallel translations (glossary constraint) — no Arc/Mutex needed
+- Rate-limit state is runtime-only, never serialized
+- Max key switches is configurable (not hardcoded)
+- No Retry-After header parsing for now (avoid overcomplication)
+- Standard env var names (OPENAI_API_KEY, GEMINI_API_KEY), no CIPHER_ prefix
+
+**Config structure:**
+
+```
+~/.config/cipher/
+├── config.toml    # Portable, no secrets (profiles, providers, models)
+└── auth.toml      # Secrets only, 0o600 perms (keys, rotation policies)
+```
+
+**Phases:**
+
+1. Foundation — `AuthConfig`, `AuthKey`, `ProviderKeys`, load/save with 0o600, `{env:}`/`{file:}` resolution, remove `Debug` from `AuthKey`
+2. Config split & migration — remove keys from `ProviderConfig`, auto-migrate on first load
+3. Key switching logic — `effective_rotation`, `get_next_key`, `mark_exhausted`, `reset_exhausted`, configurable max switches
+4. Provider integration — `translate_with_key_switching`, provider-specific env fallbacks
+5. CLI — `cipher auth` subcommand group (add, list, remove, use, set-rotation, status)
+6. Tests — unit tests for substitution/rotation/migration, integration tests with mock server
+
+**Files touched:**
+
+- `src/config/auth.rs` (new)
+- `src/config/mod.rs` (remove keys from ProviderConfig, migration)
+- `src/config/profile.rs` (use AuthConfig)
+- `src/translate/providers/mod.rs` (key switching logic)
+- `src/cli.rs` (auth subcommands)
 
 ### 28. Evolve `cipher` beyond novel translation
 
