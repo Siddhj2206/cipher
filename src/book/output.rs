@@ -32,7 +32,7 @@ impl Default for OutputFieldsConfig {
         Self {
             chapter_number: OutputFieldConfig {
                 required: false,
-                description: Some("Chapter number when one is present".to_string()),
+                description: None,
             },
             chapter_title: default_optional_field(),
             content: default_required_content_field(),
@@ -78,9 +78,7 @@ fn default_optional_field() -> OutputFieldConfig {
 fn default_required_content_field() -> OutputFieldConfig {
     OutputFieldConfig {
         required: true,
-        description: Some(
-            "Main translated chapter body in markdown, excluding the top heading".to_string(),
-        ),
+        description: None,
     }
 }
 
@@ -101,15 +99,6 @@ impl StructuredChapter {
         self.chapter_title = normalize_optional(self.chapter_title.take());
         self.content = self.content.trim().to_string();
         self
-    }
-
-    pub fn heading(&self) -> Option<String> {
-        match (&self.chapter_number, &self.chapter_title) {
-            (Some(number), Some(title)) => Some(format!("Chapter {}: {}", number, title)),
-            (Some(number), None) => Some(format!("Chapter {}", number)),
-            (None, Some(title)) => Some(title.clone()),
-            (None, None) => None,
-        }
     }
 }
 
@@ -135,12 +124,9 @@ pub fn validate_structured_chapter(
 }
 
 pub fn render_chapter_markdown(chapter: &StructuredChapter, config: &OutputConfig) -> String {
-    let heading = chapter.heading().unwrap_or_default();
-
     config
         .render
         .template
-        .replace("{heading}", &heading)
         .replace(
             "{chapter_number}",
             chapter.chapter_number.as_deref().unwrap_or(""),
@@ -154,7 +140,7 @@ pub fn render_chapter_markdown(chapter: &StructuredChapter, config: &OutputConfi
         .to_string()
 }
 
-pub fn render_requires_heading(config: &OutputConfig) -> bool {
+pub fn render_starts_with_markdown_heading(config: &OutputConfig) -> bool {
     config.render.template.trim_start().starts_with('#')
 }
 
@@ -172,17 +158,6 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_structured_chapter_heading() {
-        let chapter = StructuredChapter {
-            chapter_number: Some("12".to_string()),
-            chapter_title: Some("A New Dawn".to_string()),
-            content: "Body".to_string(),
-        };
-
-        assert_eq!(chapter.heading().as_deref(), Some("Chapter 12: A New Dawn"));
-    }
 
     #[test]
     fn test_render_default_template() {

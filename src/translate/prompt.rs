@@ -69,9 +69,9 @@ Do not return glossary metadata or new glossary terms in this response. Glossary
 {}
 
 Return your response as a JSON object with exactly these fields:
-- "chapter_number": string or null
-- "chapter_title": string or null
-- "content": string containing the translated markdown body without the top heading"#,
+- "chapter_number"
+- "chapter_title"
+- "content""#,
         BASE_PROMPT, style_section, output_section, glossary_section, req.chapter_markdown
     )
 }
@@ -118,9 +118,9 @@ Please fix the issues above and provide a corrected translation. Do not invent g
 {}
 
 Return your response as a JSON object with exactly these fields:
-- "chapter_number": string or null
-- "chapter_title": string or null
-- "content": string containing the translated markdown body without the top heading"#,
+- "chapter_number"
+- "chapter_title"
+- "content""#,
         BASE_PROMPT,
         style_section,
         output_section,
@@ -133,56 +133,37 @@ Return your response as a JSON object with exactly these fields:
 }
 
 fn build_output_section(config: &OutputConfig) -> String {
-    let chapter_number_desc = config
-        .fields
-        .chapter_number
-        .description
-        .as_deref()
-        .unwrap_or("Chapter number when one is present");
-    let chapter_title_desc = config
-        .fields
-        .chapter_title
-        .description
-        .as_deref()
-        .unwrap_or("Chapter title when one is present");
-    let content_desc = config
-        .fields
-        .content
-        .description
-        .as_deref()
-        .unwrap_or("Main translated chapter body in markdown, excluding the top heading");
-
     format!(
         r#"**Structured Output Requirements: [IMPORTANT]**
 
 Return semantic chapter fields, not final rendered markdown.
 
-- `chapter_number`: {}{}
-- `chapter_title`: {}{}
-- `content`: {}{}
+- `chapter_number`{}
+- `chapter_title`{}
+- `content`{}
 
 The final markdown will be rendered locally using this template:
 
 ```text
 {}
-```
-
-`content` must contain only the main chapter body. Do not include the top heading inside `content`."#,
-        chapter_number_desc,
-        required_suffix(config.fields.chapter_number.required),
-        chapter_title_desc,
-        required_suffix(config.fields.chapter_title.required),
-        content_desc,
-        required_suffix(config.fields.content.required),
+```"#,
+        field_suffix(&config.fields.chapter_number),
+        field_suffix(&config.fields.chapter_title),
+        field_suffix(&config.fields.content),
         config.render.template
     )
 }
 
-fn required_suffix(required: bool) -> &'static str {
-    if required {
-        " (required)"
-    } else {
-        " (optional)"
+fn field_suffix(field: &crate::book::output::OutputFieldConfig) -> String {
+    match (field.description.as_deref(), field.required) {
+        (Some(description), true) if !description.trim().is_empty() => {
+            format!(": {} (required)", description.trim())
+        }
+        (Some(description), false) if !description.trim().is_empty() => {
+            format!(": {} (optional)", description.trim())
+        }
+        (_, true) => " (required)".to_string(),
+        (_, false) => " (optional)".to_string(),
     }
 }
 
@@ -262,9 +243,24 @@ mod tests {
         assert!(prompt.contains("expert translator"));
         assert!(prompt.contains("Chapter 1"));
         assert!(prompt.contains("chapter_number"));
+        assert!(!prompt.contains("Chapter number when one is present"));
+        assert!(!prompt.contains("without the top heading"));
         assert!(!prompt.contains("new_glossary_terms"));
         assert!(!prompt.contains("Following the translation"));
         assert!(prompt.contains("Glossary extraction is handled separately"));
+    }
+
+    #[test]
+    fn test_build_translation_prompt_includes_book_field_descriptions() {
+        let mut req = translation_request("Text", Vec::new());
+        req.output_config.fields.chapter_title.description =
+            Some("Use the title format from this book's style guide".to_string());
+
+        let prompt = build_translation_prompt(&req);
+
+        assert!(prompt.contains(
+            "`chapter_title`: Use the title format from this book's style guide (optional)"
+        ));
     }
 
     #[test]
