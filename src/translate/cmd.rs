@@ -8,7 +8,12 @@ use crate::glossary::{
     glossary_term_prompt_fingerprint, load_glossary, merge_terms, save_glossary,
     select_terms_for_text,
 };
-use crate::output::{detail, detail_kv, section, stderr_detail, warn};
+use crate::output::{
+    stderr_detail, stderr_detail_kv, stderr_status as output_status, verbose_detail,
+    verbose_detail_kv, warn,
+};
+use crate::output;
+use indicatif::{ProgressBar, ProgressStyle};
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryInjectionMode,
     GlossaryState, GlossaryStateTerm, RunMetadata, RunOptions, load_all_chapter_states,
@@ -34,9 +39,7 @@ pub struct TranslateOptions {
     pub glossary_profile: Option<String>,
     pub overwrite: bool,
     pub fail_fast: bool,
-    pub rerun: bool,
-    pub rerun_affected_glossary: bool,
-    pub rerun_affected_chapters: bool,
+    pub rerun: Option<crate::RerunMode>,
     pub dry_run: bool,
 }
 
@@ -90,7 +93,7 @@ fn validate_translate_profiles(
     ] {
         let validation = validate_profile(config, name);
         if !validation.is_valid() {
-            eprintln!("{} profile validation failed", label);
+            output_status(format!("{} profile validation failed", label));
             for error in &validation.errors {
                 stderr_detail(error);
             }
@@ -112,22 +115,28 @@ fn print_profile_details(config: &GlobalConfig, profiles: &TranslateProfiles<'_>
 }
 
 fn print_profile_detail(config: &GlobalConfig, label: &str, name: &str) {
-    detail_kv(label, name);
+    verbose_detail_kv(label, name);
     match config.resolve_profile(name) {
         Some(profile) => {
-            detail_kv("Provider", &profile.provider);
-            detail_kv("Model", &profile.model);
+            verbose_detail_kv("Provider", &profile.provider);
+            verbose_detail_kv("Model", &profile.model);
         }
-        None => detail_kv("Profile status", "not found"),
+        None => verbose_detail_kv("Profile status", "not found"),
     }
 }
 impl TranslateOptions {
     fn rerun_glossary_enabled(&self) -> bool {
-        self.rerun || self.rerun_affected_glossary
+        matches!(
+            self.rerun,
+            Some(crate::RerunMode::All) | Some(crate::RerunMode::Glossary)
+        )
     }
 
     fn rerun_chapters_enabled(&self) -> bool {
-        self.rerun || self.rerun_affected_chapters
+        matches!(
+            self.rerun,
+            Some(crate::RerunMode::All) | Some(crate::RerunMode::Source)
+        )
     }
 }
 
@@ -229,7 +238,7 @@ impl SourceRerunPlan {
     }
 }
 
-pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Result<()> {
+pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Result<i32> {
     // Load book layout
     let layout = BookLayout::discover(book_dir);
 
@@ -251,9 +260,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .into_iter()
         .collect();
     if chapters.is_empty() {
-        section("No chapters found");
-        detail_kv("Directory", layout.paths.raw_dir.display());
-        return Ok(());
+        output_status("No chapters found");
+        stderr_detail_kv("Directory", layout.paths.raw_dir.display());
+        return Ok(0);
     }
 
     // Load existing glossary
@@ -278,7 +287,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let mut previous_chapter_states = load_all_chapter_states(book_dir)?;
 
     let rerun_plan = if options.rerun_glossary_enabled() {
-        section("Planning glossary-affected chapter reruns");
+        verbose_detail_kv("Planning", "glossary-affected chapter reruns");
         let plan = build_glossary_rerun_plan(
             &Vec::from(chapters.clone()),
             &layout.paths.raw_dir,
@@ -288,10 +297,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             &glossary,
             injection_mode,
         )?;
-        detail_kv("Changed glossary entries", plan.changed_term_count);
-        detail_kv("Affected chapters", plan.forced_chapters.len());
+        verbose_detail_kv("Changed glossary entries", plan.changed_term_count);
+        verbose_detail_kv("Affected chapters", plan.forced_chapters.len());
         if plan.approximate_smart_checks > 0 {
-            detail_kv(
+            verbose_detail_kv(
                 "Approximate smart rerun checks",
                 plan.approximate_smart_checks,
             );
@@ -305,16 +314,16 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     let source_rerun_plan = if options.rerun_chapters_enabled() {
-        section("Planning source-affected chapter reruns");
+        verbose_detail_kv("Planning", "source-affected chapter reruns");
         let plan = build_source_rerun_plan(
             &Vec::from(chapters.clone()),
             &layout.paths.raw_dir,
             out_dir,
             &previous_chapter_states,
         )?;
-        detail_kv("Affected chapters", plan.forced_chapters.len());
+        verbose_detail_kv("Affected chapters", plan.forced_chapters.len());
         if plan.untracked_chapters > 0 {
-            detail_kv("Untracked chapters", plan.untracked_chapters);
+            verbose_detail_kv("Untracked chapters", plan.untracked_chapters);
         }
         plan
     } else {
@@ -322,8 +331,8 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     if options.dry_run {
-        section("Translation preview");
-        detail_kv("Book", book_dir.display());
+        output_status("Translation preview");
+        stderr_detail_kv("Book", book_dir.display());
         if let Some(profile_names) =
             resolve_translate_profiles(&global_config, &book_config, &options)
         {
@@ -353,10 +362,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .resolve_profile(profile_names.translation_name)
         .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_names.translation_name))?;
 
-    section("Using profiles");
+    verbose_detail_kv("Using profiles", "");
     print_profile_details(&global_config, &profile_names);
     if style_guide.is_some() {
-        detail_kv("Style guide", layout.paths.style_md.display());
+        verbose_detail_kv("Style guide", layout.paths.style_md.display());
     }
 
     let translators = Translators {
@@ -368,16 +377,31 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             .context("Failed to create glossary translator")?,
     };
 
-    section("Translating chapters");
-    detail_kv("Chapters found", chapters.len());
+    output_status("Translating chapters");
+    verbose_detail_kv("Chapters found", chapters.len());
+
+    let pb = if output::is_quiet() {
+        None
+    } else {
+        let bar = ProgressBar::new(chapters.len() as u64);
+        bar.set_style(
+            ProgressStyle::with_template(
+                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({msg})",
+            )
+            .unwrap()
+            .progress_chars("#>-"),
+        );
+        bar.set_message("translating");
+        Some(bar)
+    };
 
     // Create run state with options
     let run_options = RunOptions {
         overwrite: options.overwrite,
         fail_fast: options.fail_fast,
-        rerun: options.rerun,
-        rerun_affected_glossary: options.rerun_affected_glossary,
-        rerun_affected_chapters: options.rerun_affected_chapters,
+        rerun: options.rerun.is_some(),
+        rerun_affected_glossary: options.rerun_glossary_enabled(),
+        rerun_affected_chapters: options.rerun_chapters_enabled(),
     };
 
     let mut run_metadata = RunMetadata::new(
@@ -414,6 +438,10 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             source_rerun_plan.decision_for(&chapter_path),
         );
 
+        if let Some(ref pb) = pb {
+            pb.set_message(chapter_path.clone());
+        }
+
         let result = translate_single_chapter(
             &translators,
             &chapter_file,
@@ -433,6 +461,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
         checkpoint_chapter_progress(book_dir, &mut run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
+        if let Some(ref pb) = pb {
+            pb.inc(1);
+        }
 
         if result.translated {
             translated += 1;
@@ -443,7 +474,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         if result.failed {
             failed += 1;
             if options.fail_fast {
-                detail("Stopping due to --fail-fast");
+                verbose_detail("Stopping due to --fail-fast");
                 break;
             }
         }
@@ -505,30 +536,34 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     run_metadata.mark_finished();
     save_run_metadata(book_dir, &run_metadata)?;
 
+    if let Some(pb) = pb {
+        pb.finish_with_message("done");
+    }
+
     // Print summary
-    section("Translation complete");
-    detail_kv("Translated", translated);
-    detail_kv("Skipped", skipped);
-    detail_kv("Failed", failed);
-    detail_kv("Glossary terms added", new_glossary_terms);
+    output_status("Translation complete");
+    stderr_detail_kv("Translated", translated);
+    stderr_detail_kv("Skipped", skipped);
+    stderr_detail_kv("Failed", failed);
+    stderr_detail_kv("Glossary terms added", new_glossary_terms);
     if legacy_tracking_migration.migrated_chapters > 0 {
-        detail_kv(
+        stderr_detail_kv(
             "Legacy chapters migrated",
             legacy_tracking_migration.migrated_chapters,
         );
     }
     if legacy_tracking_migration.migrated_glossary_baseline {
-        detail("Migrated legacy full-glossary baseline to canonical smart tracking");
+        stderr_detail("Migrated legacy full-glossary baseline to canonical smart tracking");
     }
     if total_usage.total_tokens > 0 {
         print_usage_info_with_label("Token usage", &total_usage);
     }
 
     if failed > 0 {
-        anyhow::bail!("{} chapter(s) failed to translate", failed);
+        return Ok(2);
     }
 
-    Ok(())
+    Ok(0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -572,7 +607,7 @@ async fn translate_single_chapter(
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
-        println!("Skip {}: chapter is empty", chapter_path);
+        output_status(format!("Skip {}: chapter is empty", chapter_path));
         return Ok(build_skipped_chapter_result(
             chapter_path,
             Some(EMPTY_CHAPTER_SKIP_REASON.to_string()),
@@ -583,10 +618,7 @@ async fn translate_single_chapter(
     }
 
     if let Some(decision) = rerun_decision {
-        println!("Retranslating {}", chapter_path);
-        detail_kv("Rerun reason", &decision.reason);
-    } else {
-        println!("Translating {}", chapter_path);
+        verbose_detail_kv("Rerun reason", &decision.reason);
     }
 
     // Select glossary terms and display info
@@ -613,7 +645,7 @@ async fn translate_single_chapter(
         // Backup if overwriting existing file
         if output_exists {
             let backup_path = create_backup(book_dir, out_path)?;
-            detail_kv("Backup", backup_path.display());
+            verbose_detail_kv("Backup", backup_path.display());
         }
 
         let rendered_translation = render_chapter_markdown(&resp.response.chapter, output_config);
@@ -626,7 +658,7 @@ async fn translate_single_chapter(
         let (new_terms_added, exported_terms) =
             merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
 
-        detail_kv("Result", "success");
+        verbose_detail_kv("Result", "success");
         return Ok(build_success_chapter_result(
             chapter_path,
             duration.as_millis() as u64,
@@ -639,8 +671,8 @@ async fn translate_single_chapter(
     }
 
     let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
-    detail_kv("Result", "failed");
-    detail_kv("Error", &error_msg);
+    verbose_detail_kv("Result", "failed");
+    verbose_detail_kv("Error", &error_msg);
     let failed_source_text_hash =
         failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
     Ok(build_failed_chapter_result(
@@ -1160,7 +1192,7 @@ fn preview_translation_run(
     options: &TranslateOptions,
     glossary_rerun_plan: &GlossaryRerunPlan,
     source_rerun_plan: &SourceRerunPlan,
-) -> Result<()> {
+) -> Result<i32> {
     let previews = build_chapter_previews(
         chapters,
         raw_dir,
@@ -1171,33 +1203,33 @@ fn preview_translation_run(
     )?;
     let summary = summarize_previews(&previews);
 
-    section("Planned actions");
+    output_status("Planned actions");
     for preview in &previews {
-        println!("{}", preview_display_line(preview));
-        detail_kv("Reason", &preview.reason);
+        output_status(preview_display_line(preview));
+        verbose_detail_kv("Reason", &preview.reason);
     }
 
-    section("Preview summary");
-    detail_kv("Translate", summary.translate);
-    detail_kv("Retranslate", summary.retranslate);
-    detail_kv("Skip", summary.skip);
+    output_status("Preview summary");
+    stderr_detail_kv("Translate", summary.translate);
+    stderr_detail_kv("Retranslate", summary.retranslate);
+    stderr_detail_kv("Skip", summary.skip);
     if summary.exact_reruns > 0 {
-        detail_kv("Exact reruns", summary.exact_reruns);
+        stderr_detail_kv("Exact reruns", summary.exact_reruns);
     }
     if summary.approximate_reruns > 0 {
-        detail_kv("Approximate reruns", summary.approximate_reruns);
+        stderr_detail_kv("Approximate reruns", summary.approximate_reruns);
     }
     if summary.output_missing > 0 {
-        detail_kv("Missing outputs", summary.output_missing);
+        stderr_detail_kv("Missing outputs", summary.output_missing);
     }
     if summary.output_exists_skips > 0 {
-        detail_kv("Existing-output skips", summary.output_exists_skips);
+        stderr_detail_kv("Existing-output skips", summary.output_exists_skips);
     }
     if summary.empty_skips > 0 {
-        detail_kv("Empty chapters", summary.empty_skips);
+        stderr_detail_kv("Empty chapters", summary.empty_skips);
     }
 
-    Ok(())
+    Ok(0)
 }
 
 fn build_chapter_previews(
@@ -1736,7 +1768,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
     match injection_mode {
         InjectionMode::Smart => {
             if selection.used_fallback_to_full {
-                detail_kv(
+                verbose_detail_kv(
                     "Glossary",
                     format!(
                         "smart fallback to full, {}/{} terms",
@@ -1744,7 +1776,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
                     ),
                 );
             } else {
-                detail_kv(
+                verbose_detail_kv(
                     "Glossary",
                     format!(
                         "smart selection, {}/{} terms",
@@ -1754,7 +1786,7 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
             }
         }
         InjectionMode::Full => {
-            detail_kv("Glossary", format!("full, {} terms", selection.total_count));
+            verbose_detail_kv("Glossary", format!("full, {} terms", selection.total_count));
         }
     }
 }
@@ -1818,7 +1850,7 @@ async fn attempt_translation(
                 ));
 
                 if api_attempt == 1 {
-                    detail_kv(
+                    verbose_detail_kv(
                         "Validation",
                         format!("{} Attempting repair.", validation_errors.join(", ")),
                     );
@@ -1848,7 +1880,7 @@ async fn attempt_translation(
                             repair_errors.extend(repair_validation.errors().iter().cloned());
 
                             if repair_errors.is_empty() {
-                                detail_kv("Repair", "success");
+                                verbose_detail_kv("Repair", "success");
                                 let result = finish_accepted_translation(
                                     &translators.glossary,
                                     chapter_text,
@@ -1864,12 +1896,12 @@ async fn attempt_translation(
                                     "Repair failed validation: {}",
                                     repair_errors.join(", ")
                                 ));
-                                detail_kv("Repair", last_error.as_ref().unwrap());
+                                verbose_detail_kv("Repair", last_error.as_ref().unwrap());
                             }
                         }
                         Err(e) => {
                             last_error = Some(format!("Repair request failed: {}", e));
-                            detail_kv("Repair", last_error.as_ref().unwrap());
+                            verbose_detail_kv("Repair", last_error.as_ref().unwrap());
                         }
                     }
                 }
@@ -1880,7 +1912,7 @@ async fn attempt_translation(
                 last_error = Some(format!("API error: {}", e));
                 if api_attempt < MAX_API_RETRIES {
                     let delay_secs = 2u64.pow(api_attempt as u32);
-                    detail_kv(
+                    verbose_detail_kv(
                         "Attempt",
                         format!(
                             "Attempt {}/{} failed: {}. Retrying in {}s.",
@@ -1913,11 +1945,11 @@ async fn finish_accepted_translation(
     {
         Ok(glossary_resp) => {
             usage += glossary_resp.usage;
-            detail_kv("Glossary extraction", "success");
+            verbose_detail_kv("Glossary extraction", "success");
             glossary_resp.new_glossary_terms
         }
         Err(e) => {
-            detail_kv(
+            verbose_detail_kv(
                 "Glossary extraction",
                 format!("failed: {}. Chapter kept without new terms.", e),
             );
@@ -1939,7 +1971,7 @@ fn print_usage_info(usage: &TranslationUsage) {
 }
 
 fn print_usage_info_with_label(label: &str, usage: &TranslationUsage) {
-    detail_kv(
+    verbose_detail_kv(
         label,
         format!(
             "{} input, {} output, {} total",
@@ -1970,7 +2002,7 @@ fn merge_new_glossary_terms(
 
     if added > 0 {
         if dupes > 0 {
-            detail(format!(
+            verbose_detail(format!(
                 "Added {} glossary {}; skipped {} duplicate{}.",
                 added,
                 pluralize(added, "term", "terms"),
@@ -1978,7 +2010,7 @@ fn merge_new_glossary_terms(
                 pluralize(dupes, "", "s")
             ));
         } else {
-            detail(format!(
+            verbose_detail(format!(
                 "Added {} glossary {}.",
                 added,
                 pluralize(added, "term", "terms")
@@ -1986,7 +2018,7 @@ fn merge_new_glossary_terms(
         }
         save_glossary(glossary_path, glossary)?;
     } else if dupes > 0 {
-        detail(format!(
+        verbose_detail(format!(
             "No glossary terms added; skipped {} duplicate{}.",
             dupes,
             pluralize(dupes, "", "s")
@@ -2128,9 +2160,7 @@ mod tests {
     }
 
     fn translate_options(
-        rerun: bool,
-        rerun_affected_glossary: bool,
-        rerun_affected_chapters: bool,
+        rerun: Option<crate::RerunMode>,
     ) -> TranslateOptions {
         TranslateOptions {
             profile: None,
@@ -2139,8 +2169,6 @@ mod tests {
             overwrite: false,
             fail_fast: false,
             rerun,
-            rerun_affected_glossary,
-            rerun_affected_chapters,
             dry_run: false,
         }
     }
@@ -2156,9 +2184,7 @@ mod tests {
             glossary_profile: glossary_profile.map(str::to_string),
             overwrite: false,
             fail_fast: false,
-            rerun: false,
-            rerun_affected_glossary: false,
-            rerun_affected_chapters: false,
+            rerun: None,
             dry_run: false,
         }
     }
@@ -2387,7 +2413,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, false, false),
+            &translate_options(None),
             None,
             &run_start_state,
             &[],
@@ -2430,7 +2456,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, true, false),
+            &translate_options(Some(crate::RerunMode::Glossary)),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Full),
             &[chapter],
@@ -2495,7 +2521,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, true, false),
+            &translate_options(Some(crate::RerunMode::Glossary)),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[chapter],
@@ -2582,7 +2608,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, true, false),
+            &translate_options(Some(crate::RerunMode::Glossary)),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[chapter1, chapter2],
@@ -2776,7 +2802,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, true, false),
+            &translate_options(Some(crate::RerunMode::Glossary)),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[],
@@ -2816,7 +2842,7 @@ mod tests {
 
         let outcome = finalize_glossary_baseline(
             dir.path(),
-            &translate_options(false, false, false),
+            &translate_options(None),
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart),
             &[],
@@ -2891,7 +2917,7 @@ mod tests {
         let source_text_hash = skipped_chapter_source_hash(
             &raw_path,
             Some(&previous_chapter_state),
-            &translate_options(false, false, true),
+            &translate_options(Some(crate::RerunMode::Source)),
         )
         .unwrap();
 
@@ -2912,7 +2938,7 @@ mod tests {
         let source_text_hash = skipped_chapter_source_hash(
             &raw_path,
             Some(&previous_chapter_state),
-            &translate_options(false, false, false),
+            &translate_options(None),
         )
         .unwrap();
 
@@ -2998,7 +3024,7 @@ mod tests {
 
     #[test]
     fn test_translate_options_rerun_enables_both_rerun_modes() {
-        let options = translate_options(true, false, false);
+        let options = translate_options(Some(crate::RerunMode::All));
 
         assert!(options.rerun_glossary_enabled());
         assert!(options.rerun_chapters_enabled());
@@ -3014,7 +3040,7 @@ mod tests {
             &raw_path,
             "chapter1.md".to_string(),
             false,
-            &translate_options(false, false, false),
+            &translate_options(None),
             None,
         )
         .unwrap();
@@ -3040,7 +3066,7 @@ mod tests {
             &raw_path,
             "chapter1.md".to_string(),
             true,
-            &translate_options(false, true, false),
+            &translate_options(Some(crate::RerunMode::Glossary)),
             Some(&rerun_decision),
         )
         .unwrap();
@@ -3108,7 +3134,7 @@ mod tests {
         let source_text_hash = skipped_chapter_source_hash(
             &raw_path,
             Some(&previous_chapter_state),
-            &translate_options(true, false, false),
+            &translate_options(Some(crate::RerunMode::All)),
         )
         .unwrap();
 

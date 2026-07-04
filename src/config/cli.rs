@@ -3,16 +3,37 @@ use anyhow::Result;
 use crate::ProfileCommands;
 use crate::config::GlobalConfig;
 
-pub fn run_profile_command(config: &mut GlobalConfig, command: ProfileCommands) -> Result<()> {
+pub fn run_profile_command(
+    config: &mut GlobalConfig,
+    command: ProfileCommands,
+    no_input: bool,
+) -> Result<()> {
     match command {
-        ProfileCommands::New => {
-            super::profile::create_profile_interactive()?;
+        ProfileCommands::New {
+            name,
+            provider,
+            model,
+            key_label,
+            api_key_file,
+            set_default,
+            ..
+        } => {
+            super::profile::create_profile(
+                config,
+                name,
+                provider,
+                model,
+                key_label,
+                api_key_file,
+                set_default,
+                no_input,
+            )?;
         }
-        ProfileCommands::List => {
-            super::profile::list_profiles(config);
+        ProfileCommands::List { json } => {
+            super::profile::list_profiles(config, json);
         }
-        ProfileCommands::Show { name } => {
-            super::profile::show_profile(config, &name)?;
+        ProfileCommands::Show { name, json } => {
+            super::profile::show_profile(config, &name, json)?;
         }
         ProfileCommands::SetDefault { name } => {
             super::profile::set_default_profile(config, &name)?;
