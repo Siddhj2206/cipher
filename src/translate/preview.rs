@@ -1,9 +1,9 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key};
 use crate::output::{stderr_detail_kv, stderr_status as output_status, verbose_detail_kv};
 use crate::translate::rerun::{
-    ChapterRerunDecision, ChapterPreview, GlossaryRerunPlan, PreviewAction, PreviewSummary,
-    SourceRerunPlan, EMPTY_CHAPTER_SKIP_REASON, OUTPUT_EXISTS_SKIP_REASON, OUTPUT_MISSING_REASON,
-    combine_rerun_decisions,
+    ChapterPreview, ChapterRerunDecision, EMPTY_CHAPTER_SKIP_REASON, GlossaryRerunPlan,
+    OUTPUT_EXISTS_SKIP_REASON, OUTPUT_MISSING_REASON, PreviewAction, PreviewSummary,
+    SourceRerunPlan, combine_rerun_decisions,
 };
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
@@ -194,4 +194,105 @@ pub(crate) fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary 
     }
 
     summary
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::translate::rerun::{
+        ChapterRerunDecision, EMPTY_CHAPTER_SKIP_REASON, OUTPUT_EXISTS_SKIP_REASON,
+    };
+    use crate::translate::test_helpers::translate_options;
+
+    #[test]
+    fn test_preview_for_chapter_skips_empty_chapter() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        std::fs::write(&raw_path, " \n\t").unwrap();
+
+        let preview = preview_for_chapter(
+            &raw_path,
+            "chapter1.md".to_string(),
+            false,
+            &translate_options(None),
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(preview.action, PreviewAction::Skip);
+        assert_eq!(preview.reason, EMPTY_CHAPTER_SKIP_REASON);
+        assert_eq!(
+            preview_display_line(&preview),
+            "Skip chapter1.md: chapter is empty"
+        );
+    }
+
+    #[test]
+    fn test_preview_for_chapter_marks_approximate_rerun() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("chapter1.md");
+        std::fs::write(&raw_path, "content").unwrap();
+        let rerun_decision = ChapterRerunDecision {
+            reason: "Approximate smart glossary selection changed: hero".to_string(),
+        };
+
+        let preview = preview_for_chapter(
+            &raw_path,
+            "chapter1.md".to_string(),
+            true,
+            &translate_options(Some(crate::RerunMode::Glossary)),
+            Some(&rerun_decision),
+        )
+        .unwrap();
+
+        assert_eq!(preview.action, PreviewAction::Retranslate);
+        assert!(preview.approximate);
+    }
+
+    #[test]
+    fn test_summarize_previews_counts_categories() {
+        let previews = vec![
+            ChapterPreview {
+                chapter_path: "chapter1.md".to_string(),
+                action: PreviewAction::Translate,
+                reason: "No output exists yet".to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "chapter2.md".to_string(),
+                action: PreviewAction::Retranslate,
+                reason: "Chapter source changed".to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "chapter3.md".to_string(),
+                action: PreviewAction::Retranslate,
+                reason: "Approximate smart glossary selection changed: hero".to_string(),
+                approximate: true,
+            },
+            ChapterPreview {
+                chapter_path: "chapter4.md".to_string(),
+                action: PreviewAction::Skip,
+                reason: OUTPUT_EXISTS_SKIP_REASON.to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "chapter5.md".to_string(),
+                action: PreviewAction::Skip,
+                reason: EMPTY_CHAPTER_SKIP_REASON.to_string(),
+                approximate: false,
+            },
+        ];
+
+        let summary = summarize_previews(&previews);
+
+        assert_eq!(summary.translate, 1);
+        assert_eq!(summary.retranslate, 2);
+        assert_eq!(summary.skip, 2);
+        assert_eq!(summary.output_missing, 1);
+        assert_eq!(summary.exact_reruns, 1);
+        assert_eq!(summary.approximate_reruns, 1);
+        assert_eq!(summary.output_exists_skips, 1);
+        assert_eq!(summary.empty_skips, 1);
+    }
 }

@@ -1,9 +1,9 @@
 use crate::book::BookLayout;
-use crate::output::{detail_kv, section, status};
+use crate::glossary::InjectionMode;
 use crate::output;
+use crate::output::{detail_kv, section, status};
 use crate::state::{
-    ChapterState, GlossaryInjectionMode, failed_chapters, load_all_chapter_states,
-    load_run_metadata, summarize_chapters,
+    ChapterState, failed_chapters, load_all_chapter_states, load_run_metadata, summarize_chapters,
 };
 use anyhow::Result;
 use serde::Serialize;
@@ -147,13 +147,13 @@ fn summarize_tracking(chapters: &BTreeMap<String, ChapterState>) -> TrackingSumm
             Some(usage) => {
                 summary.exported_terms_recorded += 1;
                 match usage.injection_mode {
-                    GlossaryInjectionMode::Smart if !usage.used_fallback_to_full => {
+                    InjectionMode::Smart if !usage.used_fallback_to_full => {
                         summary.tracked_smart_selection += 1;
                     }
-                    GlossaryInjectionMode::Smart => {
+                    InjectionMode::Smart => {
                         summary.tracked_fallback_to_full += 1;
                     }
-                    GlossaryInjectionMode::Full => {
+                    InjectionMode::Full => {
                         summary.legacy_tracked_full_selection += 1;
                     }
                 }
@@ -264,9 +264,7 @@ fn build_status_output(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{
-        ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterStatus, GlossaryInjectionMode,
-    };
+    use crate::state::{ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterStatus, InjectionMode};
 
     fn sample_chapter_state(path: &str) -> ChapterState {
         ChapterState {
@@ -286,7 +284,7 @@ mod tests {
     fn test_summarize_tracking_categorizes_tracked_and_legacy_chapters() {
         let mut tracked_smart = sample_chapter_state("001.md");
         tracked_smart.glossary_usage = Some(ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Smart,
+            injection_mode: InjectionMode::Smart,
             used_fallback_to_full: false,
             terms: vec![ChapterGlossaryTerm {
                 key: "hero".into(),
@@ -297,7 +295,7 @@ mod tests {
 
         let mut tracked_full = sample_chapter_state("002.md");
         tracked_full.glossary_usage = Some(ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Full,
+            injection_mode: InjectionMode::Full,
             used_fallback_to_full: false,
             terms: vec![],
         });
@@ -305,7 +303,7 @@ mod tests {
 
         let mut tracked_fallback = sample_chapter_state("003.md");
         tracked_fallback.glossary_usage = Some(ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Smart,
+            injection_mode: InjectionMode::Smart,
             used_fallback_to_full: true,
             terms: vec![],
         });

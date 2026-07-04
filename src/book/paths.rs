@@ -193,3 +193,83 @@ pub(crate) fn extract_number(filename: &str) -> Option<u32> {
         digits.parse().ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_number() {
+        assert_eq!(extract_number("chapter01"), Some(1));
+        assert_eq!(extract_number("chapter1"), Some(1));
+        assert_eq!(extract_number("chapter10"), Some(10));
+        assert_eq!(extract_number("01-chapter"), Some(1));
+        assert_eq!(extract_number("no-number"), None);
+        assert_eq!(extract_number(""), None);
+    }
+
+    #[test]
+    fn test_extract_number_multiple_groups() {
+        assert_eq!(extract_number("ch3_part2"), Some(3));
+        assert_eq!(extract_number("v2_chapter10"), Some(2));
+    }
+
+    #[test]
+    fn test_discover_chapters_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let chapters = discover_chapters(dir.path()).unwrap();
+        assert!(chapters.is_empty());
+    }
+
+    #[test]
+    fn test_discover_chapters_nonexistent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let non_existent = dir.path().join("does_not_exist");
+        let chapters = discover_chapters(&non_existent).unwrap();
+        assert!(chapters.is_empty());
+    }
+
+    #[test]
+    fn test_discover_chapters_filters_non_md() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chapter01.md"), "# Ch 1").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "notes").unwrap();
+        std::fs::write(dir.path().join("image.png"), "binary").unwrap();
+
+        let chapters = discover_chapters(dir.path()).unwrap();
+        assert_eq!(chapters.len(), 1);
+        assert!(chapters[0].file_name().unwrap().to_str().unwrap() == "chapter01.md");
+    }
+
+    #[test]
+    fn test_discover_chapters_sorted_by_number() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chapter10.md"), "# Ch 10").unwrap();
+        std::fs::write(dir.path().join("chapter2.md"), "# Ch 2").unwrap();
+        std::fs::write(dir.path().join("chapter1.md"), "# Ch 1").unwrap();
+
+        let chapters = discover_chapters(dir.path()).unwrap();
+        let names: Vec<_> = chapters
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["chapter1.md", "chapter2.md", "chapter10.md"]);
+    }
+
+    #[test]
+    fn test_discover_chapters_non_numeric_sorted_alpha() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("prologue.md"), "# Prologue").unwrap();
+        std::fs::write(dir.path().join("epilogue.md"), "# Epilogue").unwrap();
+        std::fs::write(dir.path().join("chapter1.md"), "# Ch 1").unwrap();
+
+        let chapters = discover_chapters(dir.path()).unwrap();
+        let names: Vec<_> = chapters
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names[0], "chapter1.md");
+        assert_eq!(names[1], "epilogue.md");
+        assert_eq!(names[2], "prologue.md");
+    }
+}

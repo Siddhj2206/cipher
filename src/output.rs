@@ -70,13 +70,6 @@ pub fn stderr_status(message: impl Display) {
     eprintln!("{}", message);
 }
 
-pub fn warn(message: impl Display) {
-    if is_quiet() {
-        return;
-    }
-    eprintln!("- Warning: {}", message);
-}
-
 pub fn stderr_warn(message: impl Display) {
     eprintln!("- Warning: {}", message);
 }

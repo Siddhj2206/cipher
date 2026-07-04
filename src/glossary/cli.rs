@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::book::BookLayout;
 use crate::glossary::{load_glossary, merge_terms, save_glossary};
-use crate::output::{detail, detail_kv, stderr_detail, stderr_detail_kv, stderr_status, status};
+use crate::output::{detail, detail_kv, status, stderr_detail, stderr_detail_kv, stderr_status};
 
 pub fn list_glossary(book_dir: &Path, json: bool) -> Result<()> {
     let layout = BookLayout::discover(book_dir);

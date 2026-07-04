@@ -5,8 +5,7 @@ use std::path::PathBuf;
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
 use crate::output::{
-    detail, detail_kv, section, stderr_detail, stderr_detail_kv, stderr_section,
-    status,
+    detail, detail_kv, section, status, stderr_detail, stderr_detail_kv, stderr_section,
 };
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
@@ -96,7 +95,15 @@ pub fn create_profile(
         || api_key_file.is_some();
 
     if has_any_flag {
-        create_profile_noninteractive(config, name, provider, model, key_label, api_key_file, set_default)
+        create_profile_noninteractive(
+            config,
+            name,
+            provider,
+            model,
+            key_label,
+            api_key_file,
+            set_default,
+        )
     } else if no_input {
         anyhow::bail!(
             "Interactive input required. Provide flags: --name, --provider, --model, --api-key-file"
@@ -115,8 +122,12 @@ fn create_profile_noninteractive(
     api_key_file: Option<PathBuf>,
     set_default: Option<bool>,
 ) -> Result<()> {
-    let profile_name = name.ok_or_else(|| anyhow::anyhow!("--name is required for non-interactive profile creation"))?;
-    let provider = provider_name.ok_or_else(|| anyhow::anyhow!("--provider is required for non-interactive profile creation"))?;
+    let profile_name = name.ok_or_else(|| {
+        anyhow::anyhow!("--name is required for non-interactive profile creation")
+    })?;
+    let provider = provider_name.ok_or_else(|| {
+        anyhow::anyhow!("--provider is required for non-interactive profile creation")
+    })?;
 
     if profile_name.is_empty() {
         anyhow::bail!("Profile name cannot be empty");
@@ -164,7 +175,8 @@ fn create_profile_noninteractive(
         );
     }
 
-    let resolved_key_label = key_label.or_else(|| Some(generate_unique_key_label(&config.providers[&provider].keys)));
+    let resolved_key_label =
+        key_label.or_else(|| Some(generate_unique_key_label(&config.providers[&provider].keys)));
 
     let provider_cfg = config.providers.get_mut(&provider).unwrap();
     provider_cfg.keys.push(ApiKey {

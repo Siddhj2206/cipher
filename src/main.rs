@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 mod book;
 mod config;
 mod glossary;
+mod io;
 mod output;
 mod state;
 mod translate;
@@ -40,7 +41,9 @@ impl std::fmt::Display for RerunMode {
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize a new book project
-    #[command(after_long_help = "Examples:\n  cipher init my-book\n  cipher init my-book --from other-book\n  cipher init my-book --import-glossary glossary.json")]
+    #[command(
+        after_long_help = "Examples:\n  cipher init my-book\n  cipher init my-book --from other-book\n  cipher init my-book --import-glossary glossary.json"
+    )]
     Init {
         /// Directory to initialize
         book_dir: PathBuf,
@@ -55,7 +58,9 @@ enum Commands {
         import_glossary: Option<PathBuf>,
     },
     /// Translate a book
-    #[command(after_long_help = "Examples:\n  cipher translate\n  cipher translate --dry-run\n  cipher translate --rerun=glossary\n  cipher translate --overwrite")]
+    #[command(
+        after_long_help = "Examples:\n  cipher translate\n  cipher translate --dry-run\n  cipher translate --rerun=glossary\n  cipher translate --overwrite"
+    )]
     Translate {
         /// Directory containing the book (defaults to current directory)
         #[arg(default_value = ".")]
@@ -144,7 +149,9 @@ enum GlossaryCommands {
         file: PathBuf,
     },
     /// Export glossary to file
-    #[command(after_long_help = "Examples:\n  cipher glossary export --output glossary-backup.json")]
+    #[command(
+        after_long_help = "Examples:\n  cipher glossary export --output glossary-backup.json"
+    )]
     Export {
         /// Directory containing the book (defaults to current directory)
         #[arg(default_value = ".")]
@@ -160,7 +167,9 @@ enum ProfileCommands {
     /// Create a new profile
     ///
     /// Interactive by default. Use flags for non-interactive/scripted creation.
-    #[command(after_long_help = "Examples:\n  cipher profile new\n  cipher profile new --name my-profile --provider gemini --model gemini-2.5-flash --api-key-file key.txt")]
+    #[command(
+        after_long_help = "Examples:\n  cipher profile new\n  cipher profile new --name my-profile --provider gemini --model gemini-2.5-flash --api-key-file key.txt"
+    )]
     New {
         /// Profile name (skips interactive prompt)
         #[arg(long)]
@@ -192,7 +201,9 @@ enum ProfileCommands {
         json: bool,
     },
     /// Show profile details
-    #[command(after_long_help = "Examples:\n  cipher profile show my-profile\n  cipher profile show my-profile --json")]
+    #[command(
+        after_long_help = "Examples:\n  cipher profile show my-profile\n  cipher profile show my-profile --json"
+    )]
     Show {
         /// Profile name
         name: String,
@@ -295,7 +306,9 @@ fn run_status_command(book_dir: PathBuf, json: bool) -> anyhow::Result<()> {
 fn run_glossary_command(command: GlossaryCommands) -> anyhow::Result<()> {
     match command {
         GlossaryCommands::List { book_dir, json } => glossary::cli::list_glossary(&book_dir, json),
-        GlossaryCommands::Import { book_dir, file } => glossary::cli::import_glossary(&book_dir, &file),
+        GlossaryCommands::Import { book_dir, file } => {
+            glossary::cli::import_glossary(&book_dir, &file)
+        }
         GlossaryCommands::Export { book_dir, output } => {
             glossary::cli::export_glossary(&book_dir, &output)
         }
