@@ -1,6 +1,8 @@
 pub mod cmd;
+pub mod preview;
 pub mod prompt;
 pub mod providers;
+pub mod rerun;
 pub mod types;
 
 pub use crate::translate::cmd::{TranslateOptions, translate_book};

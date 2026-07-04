@@ -1,3 +1,5 @@
+use crate::state::normalize_chapter_path;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -121,5 +123,73 @@ impl BookLayout {
 
     pub fn is_using_legacy_out(&self) -> bool {
         self.paths.is_using_legacy_out()
+    }
+}
+
+pub fn chapter_state_key(raw_dir: &Path, chapter_file: &Path) -> Result<String> {
+    let relative_path = chapter_file
+        .strip_prefix(raw_dir)
+        .with_context(|| format!("Failed to relativize {}", chapter_file.display()))?;
+    Ok(normalize_chapter_path(relative_path))
+}
+
+pub fn chapter_output_path(out_dir: &Path, chapter_file: &Path) -> Result<PathBuf> {
+    let filename = chapter_file
+        .file_name()
+        .context("Invalid chapter filename")?;
+    Ok(out_dir.join(filename))
+}
+
+pub(crate) fn discover_chapters(raw_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut chapters = Vec::new();
+
+    if !raw_dir.exists() {
+        return Ok(chapters);
+    }
+
+    for entry in std::fs::read_dir(raw_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension().map(|e| e == "md").unwrap_or(false) {
+            chapters.push(path);
+        }
+    }
+
+    chapters.sort_by(|a, b| {
+        let a_name = a
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+        let b_name = b
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+
+        let a_num = extract_number(&a_name);
+        let b_num = extract_number(&b_name);
+
+        match (a_num, b_num) {
+            (Some(n1), Some(n2)) => n1.cmp(&n2),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a_name.cmp(&b_name),
+        }
+    });
+
+    Ok(chapters)
+}
+
+pub(crate) fn extract_number(filename: &str) -> Option<u32> {
+    let digits: String = filename
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
     }
 }

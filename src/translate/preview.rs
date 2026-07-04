@@ -1,0 +1,197 @@
+use crate::book::paths::{chapter_output_path, chapter_state_key};
+use crate::output::{stderr_detail_kv, stderr_status as output_status, verbose_detail_kv};
+use crate::translate::rerun::{
+    ChapterRerunDecision, ChapterPreview, GlossaryRerunPlan, PreviewAction, PreviewSummary,
+    SourceRerunPlan, EMPTY_CHAPTER_SKIP_REASON, OUTPUT_EXISTS_SKIP_REASON, OUTPUT_MISSING_REASON,
+    combine_rerun_decisions,
+};
+use anyhow::{Context, Result};
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+
+pub(crate) fn preview_translation_run(
+    chapters: &VecDeque<PathBuf>,
+    raw_dir: &Path,
+    out_dir: &Path,
+    options: &crate::translate::cmd::TranslateOptions,
+    glossary_rerun_plan: &GlossaryRerunPlan,
+    source_rerun_plan: &SourceRerunPlan,
+) -> Result<i32> {
+    let previews = build_chapter_previews(
+        chapters,
+        raw_dir,
+        out_dir,
+        options,
+        glossary_rerun_plan,
+        source_rerun_plan,
+    )?;
+    let summary = summarize_previews(&previews);
+
+    output_status("Planned actions");
+    for preview in &previews {
+        output_status(preview_display_line(preview));
+        verbose_detail_kv("Reason", &preview.reason);
+    }
+
+    output_status("Preview summary");
+    stderr_detail_kv("Translate", summary.translate);
+    stderr_detail_kv("Retranslate", summary.retranslate);
+    stderr_detail_kv("Skip", summary.skip);
+    if summary.exact_reruns > 0 {
+        stderr_detail_kv("Exact reruns", summary.exact_reruns);
+    }
+    if summary.approximate_reruns > 0 {
+        stderr_detail_kv("Approximate reruns", summary.approximate_reruns);
+    }
+    if summary.output_missing > 0 {
+        stderr_detail_kv("Missing outputs", summary.output_missing);
+    }
+    if summary.output_exists_skips > 0 {
+        stderr_detail_kv("Existing-output skips", summary.output_exists_skips);
+    }
+    if summary.empty_skips > 0 {
+        stderr_detail_kv("Empty chapters", summary.empty_skips);
+    }
+
+    Ok(0)
+}
+
+fn build_chapter_previews(
+    chapters: &VecDeque<PathBuf>,
+    raw_dir: &Path,
+    out_dir: &Path,
+    options: &crate::translate::cmd::TranslateOptions,
+    glossary_rerun_plan: &GlossaryRerunPlan,
+    source_rerun_plan: &SourceRerunPlan,
+) -> Result<Vec<ChapterPreview>> {
+    let mut previews = Vec::with_capacity(chapters.len());
+
+    for chapter_file in chapters {
+        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
+        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
+        let rerun_decision = combine_rerun_decisions(
+            glossary_rerun_plan.decision_for(&chapter_path),
+            source_rerun_plan.decision_for(&chapter_path),
+        );
+
+        previews.push(preview_for_chapter(
+            chapter_file,
+            chapter_path,
+            output_exists,
+            options,
+            rerun_decision.as_ref(),
+        )?);
+    }
+
+    Ok(previews)
+}
+
+pub(crate) fn preview_for_chapter(
+    raw_path: &Path,
+    chapter_path: String,
+    output_exists: bool,
+    options: &crate::translate::cmd::TranslateOptions,
+    rerun_decision: Option<&ChapterRerunDecision>,
+) -> Result<ChapterPreview> {
+    let chapter_text = std::fs::read_to_string(raw_path)
+        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+
+    if chapter_text.trim().is_empty() {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: PreviewAction::Skip,
+            reason: EMPTY_CHAPTER_SKIP_REASON.to_string(),
+            approximate: false,
+        });
+    }
+
+    if options.overwrite {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: if output_exists {
+                PreviewAction::Retranslate
+            } else {
+                PreviewAction::Translate
+            },
+            reason: if output_exists {
+                "Overwrite requested".to_string()
+            } else {
+                OUTPUT_MISSING_REASON.to_string()
+            },
+            approximate: false,
+        });
+    }
+
+    if let Some(decision) = rerun_decision {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: PreviewAction::Retranslate,
+            reason: decision.reason.clone(),
+            approximate: decision.reason.starts_with("Approximate "),
+        });
+    }
+
+    if !output_exists {
+        return Ok(ChapterPreview {
+            chapter_path,
+            action: PreviewAction::Translate,
+            reason: OUTPUT_MISSING_REASON.to_string(),
+            approximate: false,
+        });
+    }
+
+    Ok(ChapterPreview {
+        chapter_path,
+        action: PreviewAction::Skip,
+        reason: OUTPUT_EXISTS_SKIP_REASON.to_string(),
+        approximate: false,
+    })
+}
+
+pub(crate) fn preview_display_line(preview: &ChapterPreview) -> String {
+    let action = match preview.action {
+        PreviewAction::Translate => "Translate",
+        PreviewAction::Retranslate => "Retranslate",
+        PreviewAction::Skip => "Skip",
+    };
+
+    if preview.action == PreviewAction::Skip && preview.reason == EMPTY_CHAPTER_SKIP_REASON {
+        format!("{} {}: chapter is empty", action, preview.chapter_path)
+    } else {
+        format!("{} {}", action, preview.chapter_path)
+    }
+}
+
+pub(crate) fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary {
+    let mut summary = PreviewSummary::default();
+
+    for preview in previews {
+        match preview.action {
+            PreviewAction::Translate => {
+                summary.translate += 1;
+                if preview.reason == OUTPUT_MISSING_REASON {
+                    summary.output_missing += 1;
+                }
+            }
+            PreviewAction::Retranslate => {
+                summary.retranslate += 1;
+                if preview.approximate {
+                    summary.approximate_reruns += 1;
+                } else {
+                    summary.exact_reruns += 1;
+                }
+            }
+            PreviewAction::Skip => {
+                summary.skip += 1;
+                if preview.reason == EMPTY_CHAPTER_SKIP_REASON {
+                    summary.empty_skips += 1;
+                }
+                if preview.reason == OUTPUT_EXISTS_SKIP_REASON {
+                    summary.output_exists_skips += 1;
+                }
+            }
+        }
+    }
+
+    summary
+}
