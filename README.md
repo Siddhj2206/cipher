@@ -134,27 +134,29 @@ Translate a book. If `book_dir` is omitted, the current directory is used.
 ```bash
 cipher translate
 cipher translate my-book
-cipher translate my-book --profile fast
-cipher translate my-book --profile best --repair-profile fast --glossary-profile cheap
-cipher translate my-book --overwrite
-cipher translate my-book --dry-run
+cipher translate my-book -p fast
+cipher translate my-book -p best --repair-profile fast --glossary-profile cheap
+cipher translate my-book -o
+cipher translate my-book -d
 cipher translate my-book --fail-fast
 cipher translate my-book --rerun
-cipher translate my-book --rerun-affected-glossary
-cipher translate my-book --rerun-affected-chapters
+cipher translate my-book --rerun=glossary
+cipher translate my-book --rerun=source
+cipher translate my-book -q
+cipher translate my-book -v
 ```
 
 Current translate flags:
 
-- `--profile <name>`: override the book/global profile for this run
+- `-p, --profile <name>`: override the book/global profile for this run
 - `--repair-profile <name>`: use a different profile for repair requests
 - `--glossary-profile <name>`: use a different profile for glossary extraction requests
-- `--overwrite`: retranslate even when output already exists
-- `--dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
+- `-o, --overwrite`: retranslate even when output already exists
+- `-d, --dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
 - `--fail-fast`: stop on the first failed chapter
-- `--rerun`: retranslate chapters whose tracked source or glossary-relevant inputs changed
-- `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
-- `--rerun-affected-chapters`: retranslate chapters whose raw markdown changed since the last tracked chapter state
+- `--rerun[=MODE]`: retranslate chapters affected by tracked changes. Modes: `all` (glossary + source, default), `glossary`, or `source`
+- `-q, --quiet`: suppress non-essential output (progress bar and detail lines)
+- `-v, --verbose`: show detailed per-chapter progress and glossary info
 
 Default behavior:
 
@@ -166,6 +168,7 @@ Default behavior:
 - validation failures get one repair attempt
 - accepted outputs are written atomically
 - overwriting creates timestamped backups in `.cipher/backups/`
+- a progress bar shows translation progress (hidden with `--quiet`)
 
 ### `cipher status <book_dir>`
 
@@ -173,6 +176,7 @@ Show the latest recorded run state for a book.
 
 ```bash
 cipher status my-book
+cipher status --json
 ```
 
 Status currently includes:
@@ -189,7 +193,7 @@ Create a new book scaffold.
 
 ```bash
 cipher init my-book
-cipher init my-book --profile myprofile
+cipher init my-book -p myprofile
 cipher init my-book --from other-book
 cipher init my-book --import-glossary terms.json
 ```
@@ -200,8 +204,9 @@ Manage the canonical glossary.
 
 ```bash
 cipher glossary list my-book
-cipher glossary import my-book new-terms.json
-cipher glossary export my-book backup.json
+cipher glossary list my-book --json
+cipher glossary import my-book --file new-terms.json
+cipher glossary export my-book --output backup.json
 ```
 
 ### `cipher profile <subcommand>`
@@ -210,11 +215,25 @@ Manage profiles.
 
 ```bash
 cipher profile new
+cipher profile new --name my-profile --provider gemini --model gemini-2.5-flash --api-key-file key.txt
+cipher profile new --name my-profile --no-input
 cipher profile list
+cipher profile list --json
 cipher profile show myprofile
+cipher profile show myprofile --json
 cipher profile set-default myprofile
 cipher profile test myprofile
 ```
+
+Non-interactive profile creation flags (all optional; omit for interactive prompts):
+
+- `--name <name>`: profile name (skips interactive prompt)
+- `--provider <name>`: provider name (skips interactive selection)
+- `--model <name>`: model name (skips interactive prompt)
+- `--key-label <label>`: key label to assign (skips interactive key selection)
+- `--api-key-file <path>`: read API key from file (skips key input)
+- `--set-default`: set as default profile
+- `--no-input`: fail if required flags are missing (for scripting)
 
 ### `cipher doctor [book_dir]`
 

@@ -36,6 +36,11 @@ What we are not doing right now:
 - TOML config, structured book output, `--dry-run`
 - `main()` cleanup, `translate_single_chapter` cleanup
 - EPUB import removed
+- CLI redesign: short flags (`-p`, `-o`, `-d`, `-q`, `-v`), `--quiet`/`--verbose` output gating, `--json` on display commands, consolidated `--rerun=MODE` flag
+- Non-interactive `profile new` flags for scripting
+- Progress bar during translation
+- Module extraction: preview types to `preview.rs`, status display to `ui/`, rerun planning to `rerun.rs`
+- Code-review findings: RerunPlanner removed, duplicated code extracted, alias fixed, ChapterPipeline collapsed, rerun mode preserved in state
 
 ---
 
