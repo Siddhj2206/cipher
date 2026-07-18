@@ -55,15 +55,6 @@ impl ClosestMatch {
         Some(&self.original_terms[best.0])
     }
 
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.original_terms.len()
-    }
-
-    #[allow(dead_code)]
-    pub fn is_empty(&self) -> bool {
-        self.original_terms.is_empty()
-    }
 }
 
 fn build_ngrams(s: &str, bag_sizes: &[usize]) -> Vec<String> {

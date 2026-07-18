@@ -14,7 +14,7 @@ Project-specific guidance for contributors working on `cipher`.
 ## Translation and Reruns
 - Chapter flow is: load raw markdown, select glossary terms, translate, validate, repair if needed, write output atomically, merge glossary terms, save state.
 - `smart` glossary injection is the canonical/default direction.
-- Current rerun inputs are chapter source hashing and glossary-relevant tracked state.
+- Rerun inputs are chapter source hashing and glossary-relevant tracked state.
 - When changing rerun logic:
   - preserve determinism
   - preserve explainability

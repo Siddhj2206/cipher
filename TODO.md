@@ -1,25 +1,19 @@
 # TODO
 
-This file is the current working roadmap for `cipher`.
-
-It is intentionally narrower than the old backlog:
-
-- keep items that still matter
-- mark what is already done elsewhere instead of leaving stale tasks around
-- separate near-term work from longer-term design questions
-- acknowledge that a full rerun-engine rewrite is a later decision, not current work
+Working roadmap for `cipher`. Intentionally narrower than the old backlog:
+keep items that still matter, mark what is done, separate near-term from deferred.
 
 ---
 
-## Current direction
+## Direction
 
 - `smart` glossary injection is the canonical/default mode
-- books are initialized from markdown-first scaffolds; EPUB import is removed for now
+- books are initialized from markdown-first scaffolds; EPUB import is removed
 - reruns should be understandable before they become more ambitious
 - `--overwrite` remains the "redo everything under a new regime" option
 - repair and glossary extraction should eventually become separate concerns
 - orchestration code should get simpler before rerun logic gets more ambitious
-- a full rerun-engine rewrite is explicitly deferred for now
+- a full rerun-engine rewrite is explicitly deferred
 
 What we are not doing right now:
 
@@ -29,258 +23,95 @@ What we are not doing right now:
 
 ---
 
-## Done recently
+## Done
 
 - `rig-core 0.34`, Gemini provider, extractor retries, usage tracking
 - rerun reason text, smart rerun detection, incremental replanning
 - TOML config, structured book output, `--dry-run`
 - `main()` cleanup, `translate_single_chapter` cleanup
 - EPUB import removed
-- CLI redesign: short flags (`-p`, `-o`, `-d`, `-q`, `-v`), `--quiet`/`--verbose` output gating, `--json` on display commands, consolidated `--rerun=MODE` flag
+- CLI redesign: short flags (`-p`, `-o`, `-d`, `-q`, `-v`), `--quiet`/`--verbose`, `--json`, consolidated `--rerun=MODE`
 - Non-interactive `profile new` flags for scripting
 - Progress bar during translation
 - Module extraction: preview types to `preview.rs`, status display to `ui/`, rerun planning to `rerun.rs`
 - Code-review findings: RerunPlanner removed, duplicated code extracted, alias fixed, ChapterPipeline collapsed, rerun mode preserved in state
+- Chapter source hashing
+- `--rerun` (initially `--rerun-affected-chapters` / `--rerun-affected-glossary`, now consolidated to `--rerun=MODE`)
+- Rerun preview as `--dry-run`
+- Validation/repair pipeline redesign, glossary extraction split from translation, repair narrowed to re-translate with feedback
+- Global config migrated to TOML, structured output format in book config
+- `main()` refactored into command-specific runners, `translate_single_chapter` simplified
+- Domain glossary (CONTEXT.md) and ADRs created
+- README and TODO documented; final cleanup pass
 
 ---
 
-## Active priorities
+## Short-term
 
-### 1. Add chapter source hashing
+### Simplify interactive profile flows
 
-**Status:** Done
-
-### 2. Implement `--rerun-affected-chapters`
-
-**Status:** Done
-
-### 3. Design `--rerun`
-
-**Status:** Done
-
-### 4. Add rerun preview mode
-
-**Status:** Done
-
-Implemented as `--dry-run` on `translate`.
-
-### 5. Improve tracked/untracked visibility in `status`
-
-**Status:** Done
-
----
-
-## Active design work
-
-### 6. Redesign validation/repair into a cleaner pipeline
-
-**Status:** Done
-
-### 7. Split glossary extraction from translation response
-
-**Status:** Done
-
-Glossary extraction is a second call after accepted translation. Extraction failure keeps the accepted chapter and skips term capture.
-
-### 8. Narrow repair semantics
-
-**Status:** Done
-
-### 9. Revisit validation strictness after repair redesign
-
-**Status:** Done
-
-Tightened structured-field validation.
-
-### 10. Standardize user config on TOML
-
-**Status:** Done
-
-### 11. Redesign global config schema while switching to TOML
-
-**Status:** Done
-
-### 12. Add book-configured structured output format
-
-**Status:** Done
-
----
-
-## Simplification and cleanup
-
-These are worthwhile because they reduce cognitive load without changing product direction.
-
-### 13. Refactor `main` into command-specific runners
-
-**Status:** Done
-
-### 14. Simplify `translate_single_chapter`
-
-**Status:** Done
-
-### 16. Simplify interactive profile flows
-
-**Status:** Medium-value cleanup
-
-Targets:
-
+Medium-value cleanup. Targets:
 - `select_or_create_provider_sectioned`
 - `select_or_create_api_key_sectioned`
 
-Goal:
+Goal: separate menu branching from config mutation logic.
 
-- separate menu branching from config mutation logic
+### Keep polishing `profile new`
 
-### 17. Keep polishing `profile new`
-
-**Status:** Follow-up polish
-
-Potential follow-ons:
-
+Follow-on polish:
 - clearer defaults
 - cleaner summaries before saving
 - better distinction between provider creation and provider reuse
 - more obvious key-selection flow
 
-### 18. Revisit `translate_book` structure after smaller cleanups
+### Revisit `translate_book` structure after smaller cleanups
 
-**Status:** Later cleanup
+Later cleanup.
 
-### 19. Do not rewrite the rerun engine yet
+### Do not rewrite the rerun engine yet
 
-**Status:** Deferred intentionally
-
----
-
-## UX and config follow-ups
-
-### 20. Improve status/reporting for skipped-but-previously-successful chapters
-
-**Status:** Future
-
-### 21. Add more detailed skip output
-
-**Status:** Planned
-
-Useful cases to surface:
-
-- skipped because output exists
-- skipped because chapter content is unchanged
-- skipped because glossary inputs are unchanged
-- skipped because no rerun reason matched
-- skipped because the chapter is empty
-- skipped because of the current flag combination
-
-### 22. Fix display for empty chapters
-
-**Status:** Done
-
-### 23. Revisit glossary matcher caching only if performance becomes a real issue
-
-**Status:** Deferred unless needed
+Deferred intentionally.
 
 ---
 
 ## Product and policy decisions
 
-### 24. Decide the long-term role of `full` mode
+### Decide long-term role of `full` mode
 
-**Status:** Open
+Open.
 
-### 25. Review mode-switch behavior explicitly
-
-**Status:** Open
+### Review mode-switch behavior
 
 Need to decide:
-
 - should switching `smart <-> full` trigger reruns?
 - should full-mode runs advance canonical baseline?
 
-### 26. Revisit exported-term tracking semantics
+### Revisit exported-term tracking semantics
 
-**Status:** Open
+Open.
 
-### 27. Auth system redesign (multi-key + rate-limit switching)
+### Auth system redesign (multi-key + rate-limit switching)
 
-**Status:** Planned — deferred until after other work
+Planned — deferred until after other work.
 
 **Goals:**
-
 - Split secrets out of `config.toml` into a dedicated `auth.toml` (0o600 perms)
 - Support env-var (`{env:VAR}`) and file (`{file:path}`) substitution
-- First-class multi-key support with rotation policies (manual, round-robin, priority)
+- First-class multi-key support with rotation policies
 - Automatic key switching on 429 rate limits
-- Configurable max key switches per request
-- Migration: auto-migrate existing keys from `config.toml` on first load
+- Migrate existing keys from `config.toml` on first load
 
-**Design decisions (confirmed):**
+### Evolve `cipher` beyond novel translation
 
-- Per-provider rotation policy with a global fallback option
-- Priority policy skips exhausted keys, uses next lowest priority
-- No parallel translations (glossary constraint) — no Arc/Mutex needed
-- Rate-limit state is runtime-only, never serialized
-- Max key switches is configurable (not hardcoded)
-- No Retry-After header parsing for now (avoid overcomplication)
-- Standard env var names (OPENAI_API_KEY, GEMINI_API_KEY), no CIPHER_ prefix
-
-**Config structure:**
-
-```
-~/.config/cipher/
-├── config.toml    # Portable, no secrets (profiles, providers, models)
-└── auth.toml      # Secrets only, 0o600 perms (keys, rotation policies)
-```
-
-**Phases:**
-
-1. Foundation — `AuthConfig`, `AuthKey`, `ProviderKeys`, load/save with 0o600, `{env:}`/`{file:}` resolution, remove `Debug` from `AuthKey`
-2. Config split & migration — remove keys from `ProviderConfig`, auto-migrate on first load
-3. Key switching logic — `effective_rotation`, `get_next_key`, `mark_exhausted`, `reset_exhausted`, configurable max switches
-4. Provider integration — `translate_with_key_switching`, provider-specific env fallbacks
-5. CLI — `cipher auth` subcommand group (add, list, remove, use, set-rotation, status)
-6. Tests — unit tests for substitution/rotation/migration, integration tests with mock server
-
-**Files touched:**
-
-- `src/config/auth.rs` (new)
-- `src/config/mod.rs` (remove keys from ProviderConfig, migration)
-- `src/config/profile.rs` (use AuthConfig)
-- `src/translate/providers/mod.rs` (key switching logic)
-- `src/cli.rs` (auth subcommands)
-
-### 28. Evolve `cipher` beyond novel translation
-
-**Status:** Open
+Open.
 
 ---
 
-## Optional follow-up fixes
+## Optional
 
-These are real but not core roadmap items.
-
-### 29. Flatten structured-output schema for Nvidia / OpenAI-compatible providers
-
-**Status:** Optional
-
-### 30. Surface persisted usage in `status`
-
-**Status:** Nice to have
-
-### 31. Revisit first-class OpenRouter support only if the structured-output story changes
-
-**Status:** Deferred
-
----
-
-## Suggested order
-
-1. add chapter source hashing
-2. implement `--rerun-affected-chapters`
-3. design a first useful `--rerun`
-4. improve status/reporting for skipped-but-previously-successful chapters
-5. add more detailed skip output
-6. tighten validation/reporting around structured output
-7. simplify interactive profile flows
-8. revisit `translate_book` structure after smaller cleanups
-9. revisit `full` mode and exported-term policy questions
-10. only then consider whether a larger rerun-engine rewrite is still worth it
+- Flatten structured-output schema for Nvidia / OpenAI-compatible providers
+- Surface persisted usage in `status`
+- Revisit first-class OpenRouter support if structured-output story changes
+- Revisit glossary matcher caching only if performance becomes a real issue
+- Improve status/reporting for skipped-but-previously-successful chapters
+- Add more detailed skip output display

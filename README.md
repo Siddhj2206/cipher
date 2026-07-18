@@ -334,14 +334,9 @@ Glossary behavior:
 
 ## Glossary injection behavior
 
-Book config now treats `smart` as the canonical mode.
+`smart` is the canonical/default mode. Legacy `full` config values are treated as `smart`.
 
-- `smart` - select relevant glossary terms for the current chapter
-- legacy `full` config values are deprecated and treated as `smart`
-
-`smart` is the default.
-
-Current smart-mode behavior:
+Smart-mode behavior:
 
 - matches glossary terms against the chapter text using deterministic selection logic
 - always includes terms with empty `og_term`
@@ -364,7 +359,7 @@ Use it for:
 
 Before output is accepted, `cipher` validates it.
 
-Current checks include:
+Validation checks include:
 
 - non-empty output
 - heading presence/shape
@@ -390,7 +385,7 @@ Glossary extraction now runs only after a translation has passed validation.
 
 `cipher` stores internal state under `.cipher/` so runs are resumable and future rerun decisions can be more informed.
 
-Current tracked state includes:
+Tracked state includes:
 
 - run metadata
 - per-chapter result state
@@ -400,27 +395,18 @@ Current tracked state includes:
 
 ### Glossary-aware reruns
 
-`--rerun-affected-glossary` uses tracked state to detect when a chapter should be rerun because glossary-relevant inputs changed.
+`--rerun=glossary` uses tracked state to detect when a chapter should be rerun because glossary-relevant inputs changed.
 
-Current support includes:
-
-- direct comparison between saved chapter glossary state and the current expected glossary usage for tracked chapters
-- changed glossary fingerprints for previously selected terms
-- changed fingerprints for exported terms
-- smart-selection changes when newly relevant or removed terms alter the effective injected set
-- fallback-to-full behavior changes when smart selection now recovers or degrades
-- forward-only incremental replanning for remaining chapters when new glossary terms are discovered mid-run
-
-For tracked chapters, the global glossary baseline is no longer the primary rerun decision input. It is kept mainly for legacy untracked approximation and run-level baseline commits.
+Rerun detection compares saved chapter glossary state against the current expected glossary usage, including changed term fingerprints, smart-selection changes when newly relevant or removed terms alter the effective injected set, and fallback-to-full behavior changes. Forward-only incremental replanning for remaining chapters runs when new glossary terms are discovered mid-run.
 
 ### Overwrite vs rerun
 
 These are different tools:
 
 - `--overwrite` means redo outputs regardless of tracked equivalence
-- `--rerun` means rerun chapters whose tracked source or glossary inputs changed
-- `--rerun-affected-glossary` means rerun chapters whose tracked glossary inputs became stale
-- `--rerun-affected-chapters` means rerun chapters whose tracked raw source became stale
+- `--rerun` (or `--rerun=all`) means rerun chapters whose tracked source or glossary inputs changed
+- `--rerun=glossary` means rerun chapters whose tracked glossary inputs became stale
+- `--rerun=source` means rerun chapters whose tracked raw source became stale
 
 ## Safety guarantees
 
@@ -432,13 +418,11 @@ Current file-safety behavior:
 
 This keeps runs resumable and reduces the chance of corrupted outputs after interruptions.
 
-## Current limitations
+## Limitations
 
-A few areas are intentionally still evolving:
-
-- API keys are not yet stored in a proper secret store
-- dry-run preview is intentionally narrow and currently reports planned actions from the existing rerun rules
-- status output does not yet expose all tracked-vs-approximate rerun details
+- API keys are stored as plain text in global config; a proper secret store is planned
+- dry-run preview reports planned actions from the existing rerun rules
+- status output does not expose all tracked-vs-approximate rerun details
 
 ## Development
 
