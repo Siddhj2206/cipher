@@ -91,7 +91,6 @@ impl Translator {
 mod tests {
     use super::*;
     use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
-    use std::collections::BTreeMap;
 
     fn config_with_valid_profile() -> GlobalConfig {
         let mut config = GlobalConfig::default();
