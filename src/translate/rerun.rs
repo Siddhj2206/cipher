@@ -172,7 +172,9 @@ pub(crate) fn changed_prompt_relevant_keys(
     previous_terms: &BTreeMap<String, GlossaryStateTerm>,
     current_terms: &BTreeMap<String, GlossaryStateTerm>,
 ) -> BTreeSet<String> {
-    changed_keys(previous_terms, current_terms, |a, b| a.fingerprint == b.fingerprint)
+    changed_keys(previous_terms, current_terms, |a, b| {
+        a.fingerprint == b.fingerprint
+    })
 }
 
 pub(crate) fn changed_selected_term_keys(
@@ -386,7 +388,11 @@ pub(crate) fn approximate_smart_rerun_decision(
         return Ok(Some(RerunDecision {
             reason: format!(
                 "Approximate rerun after smart fallback matched: Full glossary changed: {}",
-                changed_term_keys.iter().cloned().collect::<Vec<_>>().join(", ")
+                changed_term_keys
+                    .iter()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ),
             is_approximate: true,
         }));
@@ -445,18 +451,18 @@ pub(crate) fn build_glossary_rerun_plan(
             continue;
         }
 
-        if let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path) {
-            if previous_chapter_state.glossary_usage.is_some() {
-                if let Some(decision) = exact_rerun_decision(
-                    chapter_file,
-                    previous_chapter_state,
-                    current_glossary,
-                    injection_mode,
-                )? {
-                    plan.forced_chapters.insert(chapter_path, decision);
-                }
-                continue;
+        if let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path)
+            && previous_chapter_state.glossary_usage.is_some()
+        {
+            if let Some(decision) = exact_rerun_decision(
+                chapter_file,
+                previous_chapter_state,
+                current_glossary,
+                injection_mode,
+            )? {
+                plan.forced_chapters.insert(chapter_path, decision);
             }
+            continue;
         }
 
         let Some(previous_glossary_state) = previous_glossary_state else {
@@ -468,11 +474,18 @@ pub(crate) fn build_glossary_rerun_plan(
                 if !changed_term_keys.is_empty() {
                     let reason = format!(
                         "Full glossary changed: {}",
-                        changed_term_keys.iter().cloned().collect::<Vec<_>>().join(", ")
+                        changed_term_keys
+                            .iter()
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join(", ")
                     );
                     plan.forced_chapters.insert(
                         chapter_path,
-                        RerunDecision { reason, is_approximate: false },
+                        RerunDecision {
+                            reason,
+                            is_approximate: false,
+                        },
                     );
                 }
             }
@@ -559,6 +572,7 @@ pub(crate) fn combine_rerun_decisions(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn finalize_glossary_baseline(
     book_dir: &Path,
     rerun_glossary_enabled: bool,
@@ -633,6 +647,7 @@ pub(crate) fn finalize_glossary_baseline(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn migrate_legacy_full_tracking(
     book_dir: &Path,
     previous_glossary_state: Option<&GlossaryState>,
@@ -1324,7 +1339,9 @@ mod tests {
 
         assert_eq!(plan.forced_chapters.len(), 1);
         assert_eq!(
-            plan.forced_chapters.get("chapter1.md").map(|d| d.reason.as_str()),
+            plan.forced_chapters
+                .get("chapter1.md")
+                .map(|d| d.reason.as_str()),
             Some("Chapter source changed")
         );
         assert_eq!(plan.untracked_chapters, 0);

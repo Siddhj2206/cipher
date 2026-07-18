@@ -3,6 +3,10 @@ name = "cipher"
 version = "0.2.1"
 edition = "2024"
 
+[lib]
+name = "cipher"
+path = "src/lib.rs"
+
 [dependencies]
 anyhow = "1.0.101"
 async-trait = "0.1.89"

@@ -54,7 +54,6 @@ impl ClosestMatch {
 
         Some(&self.original_terms[best.0])
     }
-
 }
 
 fn build_ngrams(s: &str, bag_sizes: &[usize]) -> Vec<String> {

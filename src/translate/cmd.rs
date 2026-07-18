@@ -11,20 +11,18 @@ use crate::glossary::{
 };
 use crate::output;
 use crate::output::{
-    stderr_detail, stderr_detail_kv, stderr_status, stderr_warn, verbose_detail,
-    verbose_detail_kv,
+    stderr_detail, stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
 };
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, RunMetadata,
     RunOptions, load_all_chapter_states, load_glossary_state, normalized_source_text_hash,
     save_chapter_state, save_run_metadata,
 };
-use crate::translate::preview::{preview_translation_run, EMPTY_CHAPTER_SKIP_REASON};
+use crate::translate::preview::{EMPTY_CHAPTER_SKIP_REASON, preview_translation_run};
 use crate::translate::rerun::{
-    GlossaryRerunPlan, RerunDecision, SourceRerunPlan,
-    build_chapter_glossary_usage, build_glossary_rerun_plan, build_glossary_state,
-    build_source_rerun_plan, combine_rerun_decisions,
-    finalize_glossary_baseline, migrate_legacy_full_tracking,
+    GlossaryRerunPlan, RerunDecision, SourceRerunPlan, build_chapter_glossary_usage,
+    build_glossary_rerun_plan, build_glossary_state, build_source_rerun_plan,
+    combine_rerun_decisions, finalize_glossary_baseline, migrate_legacy_full_tracking,
 };
 use crate::translate::{
     AcceptedTranslation, ProviderTranslationResult, TranslationUsage, Translator,
@@ -351,7 +349,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     let mut remaining_chapters = chapters.clone();
     let mut rerun_plan = rerun_plan;
-    let source_rerun_plan = source_rerun_plan;
 
     while let Some(chapter_file) = remaining_chapters.pop_front() {
         let chapter_path = chapter_state_key(&layout.paths.raw_dir, &chapter_file)?;

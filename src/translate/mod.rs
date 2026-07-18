@@ -23,6 +23,10 @@ pub struct Translator {
 }
 
 impl Translator {
+    pub fn new(provider: Box<dyn providers::Provider>) -> Self {
+        Self { provider }
+    }
+
     pub fn from_config(config: &GlobalConfig, profile_name: &str) -> Result<Self> {
         let provider = providers::build_provider(config, profile_name)
             .with_context(|| format!("Failed to build provider for profile '{}'", profile_name))?;

@@ -168,6 +168,7 @@ impl GlossaryState {
 }
 
 impl ChapterState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         chapter_path: String,
         status: ChapterStatus,

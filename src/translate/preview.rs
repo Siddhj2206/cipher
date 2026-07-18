@@ -1,6 +1,8 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key};
 use crate::output::{stderr_detail_kv, stderr_status, verbose_detail_kv};
-use crate::translate::rerun::{GlossaryRerunPlan, RerunDecision, SourceRerunPlan, combine_rerun_decisions};
+use crate::translate::rerun::{
+    GlossaryRerunPlan, RerunDecision, SourceRerunPlan, combine_rerun_decisions,
+};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

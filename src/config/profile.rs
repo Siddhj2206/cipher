@@ -78,6 +78,7 @@ fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Op
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn create_profile(
     config: &mut GlobalConfig,
     name: Option<String>,
