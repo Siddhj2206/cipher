@@ -10,7 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::book::StructuredChapter;
 use crate::glossary::GlossaryTerm;
 use crate::translate::prompt::{
-    build_glossary_extraction_prompt, build_repair_prompt, build_translation_prompt,
+    build_glossary_extraction_prompt, build_glossary_section, build_repair_prompt,
+    build_style_section, build_translation_prompt,
 };
 use crate::translate::providers::{Provider, ProviderParams};
 use crate::translate::{
@@ -129,35 +130,8 @@ impl Provider for GeminiProvider {
     }
 
     async fn repair(&self, req: RepairRequest) -> Result<ProviderTextResult> {
-        let glossary_section = if req.glossary_terms.is_empty() {
-            "(No glossary terms available)".to_string()
-        } else {
-            req.glossary_terms
-                .iter()
-                .map(|t| {
-                    if let Some(ref og) = t.og_term {
-                        format!("{} [{}]: {}", t.term, og, t.definition)
-                    } else {
-                        format!("{}: {}", t.term, t.definition)
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join("\n")
-        };
-        let style_section = match &req.style_guide {
-            Some(guide) if !guide.trim().is_empty() => format!(
-                r#"
-
-**Style Guide:**
-
-Follow these additional style and tone instructions carefully:
-
-{}
-"#,
-                guide.trim()
-            ),
-            _ => String::new(),
-        };
+        let glossary_section = build_glossary_section(&req.glossary_terms);
+        let style_section = build_style_section(&req.style_guide);
         let prompt = build_repair_prompt(&req, &glossary_section, &style_section);
         let extractor = self
             .client

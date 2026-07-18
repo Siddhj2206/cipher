@@ -30,6 +30,20 @@ Project-specific guidance for contributors working on `cipher`.
 - If you change rerun or state behavior, add targeted tests for it.
 - Update `README.md` or `TODO.md` when behavior changes materially.
 
+## Agent skills
+
+### Issue tracker
+
+Issues are tracked on GitHub. External PRs are not treated as a triage surface. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Uses the default label vocabulary (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`). See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context — one `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+
 ## Git
 - Do not commit or push unless explicitly asked.
 - Never commit secrets or API keys.

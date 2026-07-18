@@ -39,19 +39,8 @@ impl GlobalConfig {
 
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create config directory {}", parent.display())
-            })?;
-        }
         let content = toml::to_string_pretty(self)?;
-        let temp_path = path.with_extension("tmp");
-        fs::write(&temp_path, content)?;
-        if let Err(e) = fs::rename(&temp_path, &path) {
-            let _ = fs::remove_file(&temp_path);
-            return Err(e).with_context(|| format!("Failed to write config to {}", path.display()));
-        }
-        Ok(())
+        crate::io::atomic_write(&path, &content)
     }
 
     pub fn resolve_profile(&self, name: &str) -> Option<&ProfileConfig> {

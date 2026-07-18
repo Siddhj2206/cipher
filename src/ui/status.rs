@@ -1,29 +1,37 @@
 use crate::book::BookLayout;
-use crate::output::{detail, detail_kv, section};
+use crate::glossary::InjectionMode;
+use crate::output;
+use crate::output::{detail_kv, section, status};
 use crate::state::{
-    ChapterState, GlossaryInjectionMode, failed_chapters, load_all_chapter_states,
-    load_run_metadata, summarize_chapters,
+    ChapterState, failed_chapters, load_all_chapter_states, load_run_metadata, summarize_chapters,
 };
 use anyhow::Result;
+use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;
 
-pub fn show_status(book_dir: &Path) -> Result<()> {
+pub fn show_status(book_dir: &Path, json: bool) -> Result<()> {
     let layout = BookLayout::discover(book_dir);
 
     let metadata = load_run_metadata(book_dir)?;
     let chapters = load_all_chapter_states(book_dir)?;
 
+    if json {
+        let output = build_status_output(&layout, metadata.as_ref(), &chapters);
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
+    }
+
     match metadata {
         Some(metadata) => {
-            println!("Book status");
+            status("Book status");
             detail_kv("Book", layout.paths.root.display());
             print_run_state(&metadata, &chapters);
         }
         None => {
-            println!("No translation runs recorded yet.");
+            status("No translation runs recorded yet.");
             detail_kv("Book", layout.paths.root.display());
-            detail(format!("Run: cipher translate {}", book_dir.display()));
+            output::detail(format!("Run: cipher translate {}", book_dir.display()));
         }
     }
 
@@ -50,7 +58,7 @@ fn print_run_state(
     }
 
     let summary = summarize_chapters(chapters);
-    println!("Chapter summary");
+    status("Chapter summary");
     detail_kv("Total", summary.total);
     detail_kv("Translated", summary.success);
     detail_kv("Skipped", summary.skipped);
@@ -78,19 +86,19 @@ fn print_run_state(
     detail_kv("Source hash recorded", tracking.source_hash_recorded);
 
     if tracking.approximate_legacy_fallback > 0 {
-        detail(format!(
+        output::detail(format!(
             "{} chapter(s) still rely on approximate glossary rerun checks.",
             tracking.approximate_legacy_fallback
         ));
     }
     if tracking.legacy_tracked_full_selection > 0 {
-        detail(format!(
+        output::detail(format!(
             "{} chapter(s) still use legacy primary full-glossary tracking; an equivalent successful smart-era run can rewrite them as smart fallback state.",
             tracking.legacy_tracked_full_selection
         ));
     }
     if tracking.missing_source_hash > 0 {
-        detail(format!(
+        output::detail(format!(
             "{} chapter(s) are missing source hashes, so chapter-content reruns are not fully tracked.",
             tracking.missing_source_hash
         ));
@@ -106,9 +114,9 @@ fn print_run_state(
                 } else {
                     error.clone()
                 };
-                detail(format!("{}: {}", filename, error_preview));
+                output::detail(format!("{}: {}", filename, error_preview));
             } else {
-                detail(filename);
+                output::detail(filename);
             }
         }
     }
@@ -139,13 +147,13 @@ fn summarize_tracking(chapters: &BTreeMap<String, ChapterState>) -> TrackingSumm
             Some(usage) => {
                 summary.exported_terms_recorded += 1;
                 match usage.injection_mode {
-                    GlossaryInjectionMode::Smart if !usage.used_fallback_to_full => {
+                    InjectionMode::Smart if !usage.used_fallback_to_full => {
                         summary.tracked_smart_selection += 1;
                     }
-                    GlossaryInjectionMode::Smart => {
+                    InjectionMode::Smart => {
                         summary.tracked_fallback_to_full += 1;
                     }
-                    GlossaryInjectionMode::Full => {
+                    InjectionMode::Full => {
                         summary.legacy_tracked_full_selection += 1;
                     }
                 }
@@ -159,12 +167,105 @@ fn summarize_tracking(chapters: &BTreeMap<String, ChapterState>) -> TrackingSumm
     summary
 }
 
+#[derive(Serialize)]
+struct StatusOutput {
+    book: String,
+    run: Option<RunOutput>,
+    chapters: ChapterSummaryOutput,
+    tracking: TrackingOutput,
+    failed_chapters: Vec<FailedChapterOutput>,
+}
+
+#[derive(Serialize)]
+struct RunOutput {
+    profile: String,
+    repair_profile: Option<String>,
+    glossary_profile: Option<String>,
+    provider: String,
+    model: String,
+    started_at: String,
+    updated_at: String,
+    finished_at: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ChapterSummaryOutput {
+    total: usize,
+    translated: usize,
+    skipped: usize,
+    failed: usize,
+    pending: usize,
+}
+
+#[derive(Serialize)]
+struct TrackingOutput {
+    tracked_smart_selection: usize,
+    tracked_fallback_to_full: usize,
+    legacy_tracked_full_selection: usize,
+    approximate_legacy_fallback: usize,
+    exported_terms_recorded: usize,
+    source_hash_recorded: usize,
+    missing_source_hash: usize,
+}
+
+#[derive(Serialize)]
+struct FailedChapterOutput {
+    path: String,
+    error: Option<String>,
+}
+
+fn build_status_output(
+    layout: &BookLayout,
+    metadata: Option<&crate::state::RunMetadata>,
+    chapters: &BTreeMap<String, ChapterState>,
+) -> StatusOutput {
+    let chapter_summary = summarize_chapters(chapters);
+    let tracking = summarize_tracking(chapters);
+    let failed = failed_chapters(chapters);
+
+    StatusOutput {
+        book: layout.paths.root.display().to_string(),
+        run: metadata.map(|m| RunOutput {
+            profile: m.profile.clone(),
+            repair_profile: m.repair_profile.clone(),
+            glossary_profile: m.glossary_profile.clone(),
+            provider: m.provider.clone(),
+            model: m.model.clone(),
+            started_at: m.started_at.clone(),
+            updated_at: m.updated_at.clone(),
+            finished_at: m.finished_at.clone(),
+        }),
+        chapters: ChapterSummaryOutput {
+            total: chapter_summary.total,
+            translated: chapter_summary.success,
+            skipped: chapter_summary.skipped,
+            failed: chapter_summary.failed,
+            pending: chapter_summary.pending,
+        },
+        tracking: TrackingOutput {
+            tracked_smart_selection: tracking.tracked_smart_selection,
+            tracked_fallback_to_full: tracking.tracked_fallback_to_full,
+            legacy_tracked_full_selection: tracking.legacy_tracked_full_selection,
+            approximate_legacy_fallback: tracking.approximate_legacy_fallback,
+            exported_terms_recorded: tracking.exported_terms_recorded,
+            source_hash_recorded: tracking.source_hash_recorded,
+            missing_source_hash: tracking.missing_source_hash,
+        },
+        failed_chapters: failed
+            .into_iter()
+            .map(|(path, state)| FailedChapterOutput {
+                path: path.clone(),
+                error: state.error.clone(),
+            })
+            .collect(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{
-        ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterStatus, GlossaryInjectionMode,
-    };
+    use crate::glossary::InjectionMode;
+    use crate::state::{ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterStatus};
 
     fn sample_chapter_state(path: &str) -> ChapterState {
         ChapterState {
@@ -184,7 +285,7 @@ mod tests {
     fn test_summarize_tracking_categorizes_tracked_and_legacy_chapters() {
         let mut tracked_smart = sample_chapter_state("001.md");
         tracked_smart.glossary_usage = Some(ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Smart,
+            injection_mode: InjectionMode::Smart,
             used_fallback_to_full: false,
             terms: vec![ChapterGlossaryTerm {
                 key: "hero".into(),
@@ -195,7 +296,7 @@ mod tests {
 
         let mut tracked_full = sample_chapter_state("002.md");
         tracked_full.glossary_usage = Some(ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Full,
+            injection_mode: InjectionMode::Full,
             used_fallback_to_full: false,
             terms: vec![],
         });
@@ -203,7 +304,7 @@ mod tests {
 
         let mut tracked_fallback = sample_chapter_state("003.md");
         tracked_fallback.glossary_usage = Some(ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Smart,
+            injection_mode: InjectionMode::Smart,
             used_fallback_to_full: true,
             terms: vec![],
         });

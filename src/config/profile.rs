@@ -1,8 +1,12 @@
 use anyhow::{Context, Result};
 use dialoguer::{Confirm, Input, Password, Select};
+use serde::Serialize;
+use std::path::PathBuf;
 
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
-use crate::output::{detail, detail_kv, section, stderr_detail};
+use crate::output::{
+    detail, detail_kv, section, status, stderr_detail, stderr_detail_kv, stderr_section,
+};
 
 fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
@@ -44,7 +48,6 @@ fn generate_unique_key_label(existing: &[ApiKey]) -> String {
             return candidate;
         }
     }
-    // Extremely unlikely fallback.
     "key".to_string()
 }
 
@@ -75,19 +78,152 @@ fn prompt_key_label(existing: &[ApiKey], allow_empty: bool) -> anyhow::Result<Op
     }
 }
 
+pub fn create_profile(
+    config: &mut GlobalConfig,
+    name: Option<String>,
+    provider: Option<String>,
+    model: Option<String>,
+    key_label: Option<String>,
+    api_key_file: Option<PathBuf>,
+    set_default: Option<bool>,
+    no_input: bool,
+) -> Result<()> {
+    let has_any_flag = name.is_some()
+        || provider.is_some()
+        || model.is_some()
+        || key_label.is_some()
+        || api_key_file.is_some();
+
+    if has_any_flag {
+        create_profile_noninteractive(
+            config,
+            name,
+            provider,
+            model,
+            key_label,
+            api_key_file,
+            set_default,
+        )
+    } else if no_input {
+        anyhow::bail!(
+            "Interactive input required. Provide flags: --name, --provider, --model, --api-key-file"
+        );
+    } else {
+        create_profile_interactive()
+    }
+}
+
+fn create_profile_noninteractive(
+    config: &mut GlobalConfig,
+    name: Option<String>,
+    provider_name: Option<String>,
+    model: Option<String>,
+    key_label: Option<String>,
+    api_key_file: Option<PathBuf>,
+    set_default: Option<bool>,
+) -> Result<()> {
+    let profile_name = name.ok_or_else(|| {
+        anyhow::anyhow!("--name is required for non-interactive profile creation")
+    })?;
+    let provider = provider_name.ok_or_else(|| {
+        anyhow::anyhow!("--provider is required for non-interactive profile creation")
+    })?;
+
+    if profile_name.is_empty() {
+        anyhow::bail!("Profile name cannot be empty");
+    }
+    if provider.is_empty() {
+        anyhow::bail!("Provider name cannot be empty");
+    }
+
+    let model_name = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
+
+    let api_key = if let Some(ref key_file) = api_key_file {
+        std::fs::read_to_string(key_file)
+            .with_context(|| format!("Failed to read API key from {}", key_file.display()))?
+            .trim()
+            .to_string()
+    } else {
+        anyhow::bail!("--api-key-file is required for non-interactive profile creation");
+    };
+
+    if !config.providers.contains_key(&provider) {
+        let kind = if provider == "gemini" {
+            ProviderKind::Gemini
+        } else if provider == "openai" {
+            ProviderKind::Openai
+        } else {
+            ProviderKind::OpenaiCompatible
+        };
+
+        let base_url = if kind == ProviderKind::OpenaiCompatible {
+            anyhow::bail!(
+                "Provider '{}' not found. Create it first or use 'gemini'/'openai'.",
+                provider
+            );
+        } else {
+            None
+        };
+
+        config.providers.insert(
+            provider.clone(),
+            ProviderConfig {
+                kind,
+                keys: Vec::new(),
+                base_url,
+            },
+        );
+    }
+
+    let resolved_key_label =
+        key_label.or_else(|| Some(generate_unique_key_label(&config.providers[&provider].keys)));
+
+    let provider_cfg = config.providers.get_mut(&provider).unwrap();
+    provider_cfg.keys.push(ApiKey {
+        value: api_key,
+        name: resolved_key_label.clone(),
+    });
+
+    let profile = ProfileConfig {
+        provider,
+        model: model_name,
+        key: resolved_key_label,
+    };
+
+    let is_default = set_default.unwrap_or_else(|| config.default_profile.is_none());
+    if is_default {
+        config.default_profile = Some(profile_name.clone());
+    }
+
+    config.profiles.insert(profile_name.clone(), profile);
+    config.save()?;
+
+    stderr_section("Profile created");
+    stderr_detail_kv("Name", &profile_name);
+    if is_default {
+        stderr_detail("Default profile");
+    }
+    stderr_detail(format!(
+        "Use it with: cipher translate --profile {}",
+        profile_name
+    ));
+
+    Ok(())
+}
+
 pub fn create_profile_interactive() -> Result<()> {
     let mut config = GlobalConfig::load()?;
 
-    section("Profile configuration");
+    stderr_section("Profile configuration");
     let profile_name = prompt_profile_name(&config)?;
 
-    section("Provider");
+    stderr_section("Provider");
     let provider_name = select_or_create_provider_sectioned(&mut config)?;
 
-    section("API key");
+    stderr_section("API key");
     let selected_key_label = select_or_create_api_key_sectioned(&mut config, &provider_name)?;
 
-    section("Model");
+    stderr_section("Model");
     let model = prompt_model()?;
 
     let profile = ProfileConfig {
@@ -98,18 +234,18 @@ pub fn create_profile_interactive() -> Result<()> {
 
     config.profiles.insert(profile_name.clone(), profile);
 
-    println!();
+    eprintln!();
     let is_default = prompt_default_profile(&mut config, &profile_name)?;
 
     config.save()?;
 
-    section("Profile created");
-    detail_kv("Name", &profile_name);
+    stderr_section("Profile created");
+    stderr_detail_kv("Name", &profile_name);
     if is_default {
-        detail("Default profile");
+        stderr_detail("Default profile");
     }
-    detail(format!(
-        "Use it with: cipher translate <bookDir> --profile {}",
+    stderr_detail(format!(
+        "Use it with: cipher translate --profile {}",
         profile_name
     ));
 
@@ -169,7 +305,6 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
         return Ok(existing_provider_names[selection].clone());
     }
 
-    // Create new provider submenu
     let creation_options = vec![
         "Gemini (built-in)",
         "OpenAI (built-in)",
@@ -255,11 +390,9 @@ fn select_or_create_api_key_sectioned(
     let provider_keys = &mut provider.keys;
 
     if provider_keys.is_empty() {
-        // No existing keys, go straight to adding new
         return add_new_api_key(provider_keys);
     }
 
-    // Build list of existing keys
     let mut key_items: Vec<String> = provider_keys
         .iter()
         .enumerate()
@@ -278,10 +411,8 @@ fn select_or_create_api_key_sectioned(
         .context("Failed to select API key")?;
 
     if selection < provider_keys.len() {
-        // Existing key selected
         let key = &provider_keys[selection];
         if key.name.is_none() {
-            // Unnamed key - prompt for label
             let label = loop {
                 let label: String = Input::new()
                     .with_prompt("Assign a label to this key")
@@ -309,7 +440,6 @@ fn select_or_create_api_key_sectioned(
             Ok(key.name.clone())
         }
     } else {
-        // Add new key
         add_new_api_key(provider_keys)
     }
 }
@@ -324,7 +454,7 @@ fn add_new_api_key(provider_keys: &mut Vec<ApiKey>) -> anyhow::Result<Option<Str
         .or_else(|| Some(generate_unique_key_label(provider_keys)));
 
     if label.is_some() {
-        detail_kv("Assigned key label", label.as_deref().unwrap_or(""));
+        stderr_detail_kv("Assigned key label", label.as_deref().unwrap_or(""));
     }
 
     provider_keys.push(ApiKey {
@@ -369,7 +499,48 @@ fn prompt_default_profile(config: &mut GlobalConfig, profile_name: &str) -> Resu
     }
 }
 
-pub fn list_profiles(config: &GlobalConfig) {
+#[derive(Serialize)]
+struct ProfileListOutput {
+    profiles: Vec<ProfileListEntry>,
+}
+
+#[derive(Serialize)]
+struct ProfileListEntry {
+    name: String,
+    is_default: bool,
+    provider: String,
+    model: String,
+}
+
+#[derive(Serialize)]
+struct ProfileShowOutput {
+    name: String,
+    is_default: bool,
+    provider: String,
+    model: String,
+    provider_kind: Option<String>,
+    base_url: Option<String>,
+    key_label: Option<String>,
+}
+
+pub fn list_profiles(config: &GlobalConfig, json: bool) {
+    if json {
+        let output = ProfileListOutput {
+            profiles: config
+                .profiles
+                .iter()
+                .map(|(name, profile)| ProfileListEntry {
+                    name: name.clone(),
+                    is_default: config.default_profile.as_deref() == Some(name),
+                    provider: profile.provider.clone(),
+                    model: profile.model.clone(),
+                })
+                .collect(),
+        };
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        return;
+    }
+
     if config.profiles.is_empty() {
         section("No profiles configured");
         detail("Run: cipher profile new");
@@ -378,7 +549,7 @@ pub fn list_profiles(config: &GlobalConfig) {
 
     section("Profiles");
     for (name, profile) in &config.profiles {
-        println!("{}", name);
+        status(name);
         if config.default_profile.as_deref() == Some(name) {
             detail("Default profile");
         }
@@ -387,10 +558,30 @@ pub fn list_profiles(config: &GlobalConfig) {
     }
 }
 
-pub fn show_profile(config: &GlobalConfig, name: &str) -> Result<()> {
+pub fn show_profile(config: &GlobalConfig, name: &str, json: bool) -> Result<()> {
     let Some(profile) = config.resolve_profile(name) else {
         anyhow::bail!("Profile '{}' not found", name);
     };
+
+    if json {
+        let provider_kind = config
+            .resolve_provider(&profile.provider)
+            .map(|p| p.kind.to_string());
+        let base_url = config
+            .resolve_provider(&profile.provider)
+            .and_then(|p| p.base_url.clone());
+        let output = ProfileShowOutput {
+            name: name.to_string(),
+            is_default: config.default_profile.as_deref() == Some(name),
+            provider: profile.provider.clone(),
+            model: profile.model.clone(),
+            provider_kind,
+            base_url,
+            key_label: profile.key.clone(),
+        };
+        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        return Ok(());
+    }
 
     section(format!("Profile {}", name));
     if config.default_profile.as_deref() == Some(name) {
@@ -419,20 +610,20 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
     }
     config.default_profile = Some(name.to_string());
     config.save()?;
-    section("Default profile updated");
-    detail_kv("Profile", name);
+    stderr_section("Default profile updated");
+    stderr_detail_kv("Profile", name);
     Ok(())
 }
 
 pub fn test_profile(config: &GlobalConfig, name: &str) {
     use crate::config::validate_profile;
 
-    section("Profile test");
-    detail_kv("Name", name);
+    stderr_section("Profile test");
+    stderr_detail_kv("Name", name);
 
     let validation = validate_profile(config, name);
 
-    detail_kv(
+    stderr_detail_kv(
         "Profile",
         if validation.profile_exists {
             "found"
@@ -440,7 +631,7 @@ pub fn test_profile(config: &GlobalConfig, name: &str) {
             "missing"
         },
     );
-    detail_kv(
+    stderr_detail_kv(
         "Provider",
         if validation.provider_exists {
             "configured"
@@ -448,7 +639,7 @@ pub fn test_profile(config: &GlobalConfig, name: &str) {
             "missing"
         },
     );
-    detail_kv(
+    stderr_detail_kv(
         "API key",
         if validation.has_key {
             "configured"
@@ -458,16 +649,16 @@ pub fn test_profile(config: &GlobalConfig, name: &str) {
     );
 
     if !validation.errors.is_empty() {
-        section("Validation errors");
+        stderr_section("Validation errors");
         for err in &validation.errors {
-            detail(err);
+            stderr_detail(err);
         }
     }
 
     if validation.is_valid() {
-        detail("Profile configuration is valid");
+        stderr_detail("Profile configuration is valid");
     } else {
-        detail("Profile configuration has errors");
+        stderr_detail("Profile configuration has errors");
     }
 }
 

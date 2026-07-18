@@ -2,14 +2,15 @@ use std::path::PathBuf;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use output::{detail, detail_kv, stderr_error};
 
 mod book;
 mod config;
 mod glossary;
+mod io;
 mod output;
 mod state;
 mod translate;
+mod ui;
 mod validate;
 
 #[derive(Parser)]
@@ -21,29 +22,52 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum RerunMode {
+    All,
+    Glossary,
+    Source,
+}
+
+impl std::fmt::Display for RerunMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RerunMode::All => write!(f, "all"),
+            RerunMode::Glossary => write!(f, "glossary"),
+            RerunMode::Source => write!(f, "source"),
+        }
+    }
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Initialize a new book project
+    #[command(
+        after_long_help = "Examples:\n  cipher init my-book\n  cipher init my-book --from other-book\n  cipher init my-book --import-glossary glossary.json"
+    )]
     Init {
         /// Directory to initialize
         book_dir: PathBuf,
         /// Profile to use (defaults to global default)
-        #[arg(long)]
+        #[arg(long, short)]
         profile: Option<String>,
         /// Import glossary from an existing book
-        #[arg(long)]
-        from: Option<PathBuf>,
+        #[arg(long = "from")]
+        from_book: Option<PathBuf>,
         /// Import glossary from a file
         #[arg(long)]
         import_glossary: Option<PathBuf>,
     },
     /// Translate a book
+    #[command(
+        after_long_help = "Examples:\n  cipher translate\n  cipher translate --dry-run\n  cipher translate --rerun=glossary\n  cipher translate --overwrite"
+    )]
     Translate {
         /// Directory containing the book (defaults to current directory)
         #[arg(default_value = ".")]
         book_dir: PathBuf,
         /// Profile to use (overrides book config and global default)
-        #[arg(long)]
+        #[arg(long, short)]
         profile: Option<String>,
         /// Profile to use for repair requests (defaults to translation profile)
         #[arg(long)]
@@ -52,28 +76,36 @@ enum Commands {
         #[arg(long)]
         glossary_profile: Option<String>,
         /// Overwrite existing translations (creates backups automatically)
-        #[arg(long)]
+        #[arg(long, short)]
         overwrite: bool,
         /// Stop on first error
         #[arg(long)]
         fail_fast: bool,
-        /// Re-translate chapters affected by tracked source or glossary changes
-        #[arg(long)]
-        rerun: bool,
-        /// Re-translate chapters affected by glossary changes since the last run
-        #[arg(long)]
-        rerun_affected_glossary: bool,
-        /// Re-translate chapters whose raw source changed since the last run
-        #[arg(long)]
-        rerun_affected_chapters: bool,
+        /// Re-translate chapters affected by tracked changes
+        ///
+        /// Modes: "all" (glossary + source), "glossary", or "source".
+        /// Passing --rerun with no value defaults to "all".
+        #[arg(long, value_name = "MODE", default_missing_value = "all", num_args = 0..=1)]
+        rerun: Option<RerunMode>,
         /// Preview translate/rerun decisions without calling providers or writing state
-        #[arg(long)]
+        #[arg(long, short)]
         dry_run: bool,
+        /// Suppress non-essential output (progress and detail lines)
+        #[arg(long, short)]
+        quiet: bool,
+        /// Show detailed per-chapter progress and glossary info
+        #[arg(long, short)]
+        verbose: bool,
     },
     /// Show book translation status
+    #[command(after_long_help = "Examples:\n  cipher status\n  cipher status --json")]
     Status {
-        /// Directory containing the book
+        /// Directory containing the book (defaults to current directory)
+        #[arg(default_value = ".")]
         book_dir: PathBuf,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Manage glossary
     Glossary {
@@ -81,8 +113,11 @@ enum Commands {
         command: GlossaryCommands,
     },
     /// Run diagnostics
+    ///
+    /// Without a book directory, checks global configuration.
+    /// With a book directory, checks both global and book configuration.
     Doctor {
-        /// Directory containing the book (optional)
+        #[arg(default_value = None)]
         book_dir: Option<PathBuf>,
     },
     /// Manage profiles
@@ -95,36 +130,87 @@ enum Commands {
 #[derive(Subcommand)]
 enum GlossaryCommands {
     /// List glossary entries
+    #[command(after_long_help = "Examples:\n  cipher glossary list\n  cipher glossary list --json")]
     List {
-        /// Directory containing the book
+        /// Directory containing the book (defaults to current directory)
+        #[arg(default_value = ".")]
         book_dir: PathBuf,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Import glossary from file (merges into existing)
+    #[command(after_long_help = "Examples:\n  cipher glossary import --file glossary.json")]
     Import {
-        /// Directory containing the book
+        /// Directory containing the book (defaults to current directory)
+        #[arg(default_value = ".")]
         book_dir: PathBuf,
         /// Path to glossary file (json)
-        path: PathBuf,
+        #[arg(long, short)]
+        file: PathBuf,
     },
     /// Export glossary to file
+    #[command(
+        after_long_help = "Examples:\n  cipher glossary export --output glossary-backup.json"
+    )]
     Export {
-        /// Directory containing the book
+        /// Directory containing the book (defaults to current directory)
+        #[arg(default_value = ".")]
         book_dir: PathBuf,
         /// Output path
-        path: PathBuf,
+        #[arg(long, short)]
+        output: PathBuf,
     },
 }
 
 #[derive(Subcommand)]
 enum ProfileCommands {
-    /// Create a new profile (interactive)
-    New,
+    /// Create a new profile
+    ///
+    /// Interactive by default. Use flags for non-interactive/scripted creation.
+    #[command(
+        after_long_help = "Examples:\n  cipher profile new\n  cipher profile new --name my-profile --provider gemini --model gemini-2.5-flash --api-key-file key.txt"
+    )]
+    New {
+        /// Profile name (skips interactive prompt)
+        #[arg(long)]
+        name: Option<String>,
+        /// Provider name (skips interactive provider selection)
+        #[arg(long)]
+        provider: Option<String>,
+        /// Model name (skips interactive model prompt)
+        #[arg(long)]
+        model: Option<String>,
+        /// Key label to assign (skips interactive key selection)
+        #[arg(long)]
+        key_label: Option<String>,
+        /// Read API key from file (skips interactive key input)
+        #[arg(long)]
+        api_key_file: Option<PathBuf>,
+        /// Set as default profile
+        #[arg(long)]
+        set_default: Option<bool>,
+        /// Disable interactive prompts (fail if required flags are missing)
+        #[arg(long = "no-input")]
+        no_input: bool,
+    },
     /// List available profiles
-    List,
+    #[command(after_long_help = "Examples:\n  cipher profile list\n  cipher profile list --json")]
+    List {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Show profile details
+    #[command(
+        after_long_help = "Examples:\n  cipher profile show my-profile\n  cipher profile show my-profile --json"
+    )]
     Show {
         /// Profile name
         name: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Set the default profile
     SetDefault {
@@ -141,8 +227,9 @@ enum ProfileCommands {
 fn run_profile_command(
     config: &mut config::GlobalConfig,
     command: ProfileCommands,
+    no_input: bool,
 ) -> anyhow::Result<()> {
-    config::cli::run_profile_command(config, command)
+    config::cli::run_profile_command(config, command, no_input)
 }
 
 fn load_global_config() -> anyhow::Result<config::GlobalConfig> {
@@ -152,39 +239,39 @@ fn load_global_config() -> anyhow::Result<config::GlobalConfig> {
 fn run_init_command(
     book_dir: PathBuf,
     profile: Option<String>,
-    from: Option<PathBuf>,
+    from_book: Option<PathBuf>,
     import_glossary: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let report = book::init_book(
         &book_dir,
         profile.as_deref(),
-        from.as_deref(),
+        from_book.as_deref(),
         import_glossary.as_deref(),
     )
     .with_context(|| format!("Failed to initialize book at {}", book_dir.display()))?;
 
-    println!("Book initialized");
-    detail_kv("Directory", report.book_dir.display());
+    output::stderr_status("Book initialized");
+    output::stderr_detail_kv("Directory", report.book_dir.display());
     if !report.created_dirs.is_empty() {
-        println!("Created directories:");
+        output::stderr_status("Created directories:");
         for dir in &report.created_dirs {
-            detail(format!("{}/", dir));
+            output::stderr_detail(format!("{}/", dir));
         }
     }
     if !report.created_files.is_empty() {
-        println!("Created files:");
+        output::stderr_status("Created files:");
         for file in &report.created_files {
-            detail(file);
+            output::stderr_detail(file);
         }
     }
     if !report.skipped_files.is_empty() {
-        println!("Already present:");
+        output::stderr_status("Already present:");
         for file in &report.skipped_files {
-            detail(file);
+            output::stderr_detail(file);
         }
     }
     if let Some(src) = report.imported_glossary {
-        detail_kv("Imported glossary", src.display());
+        output::stderr_detail_kv("Imported glossary", src.display());
     }
 
     Ok(())
@@ -197,11 +284,9 @@ async fn run_translate_command(
     glossary_profile: Option<String>,
     overwrite: bool,
     fail_fast: bool,
-    rerun: bool,
-    rerun_affected_glossary: bool,
-    rerun_affected_chapters: bool,
+    rerun: Option<RerunMode>,
     dry_run: bool,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<i32> {
     let options = translate::TranslateOptions {
         profile,
         repair_profile,
@@ -209,26 +294,24 @@ async fn run_translate_command(
         overwrite,
         fail_fast,
         rerun,
-        rerun_affected_glossary,
-        rerun_affected_chapters,
         dry_run,
     };
 
     translate::translate_book(&book_dir, options).await
 }
 
-fn run_status_command(book_dir: PathBuf) -> anyhow::Result<()> {
-    state::status::show_status(&book_dir)
+fn run_status_command(book_dir: PathBuf, json: bool) -> anyhow::Result<()> {
+    ui::status::show_status(&book_dir, json)
 }
 
 fn run_glossary_command(command: GlossaryCommands) -> anyhow::Result<()> {
     match command {
-        GlossaryCommands::List { book_dir } => glossary::cli::list_glossary(&book_dir),
-        GlossaryCommands::Import { book_dir, path } => {
-            glossary::cli::import_glossary(&book_dir, &path)
+        GlossaryCommands::List { book_dir, json } => glossary::cli::list_glossary(&book_dir, json),
+        GlossaryCommands::Import { book_dir, file } => {
+            glossary::cli::import_glossary(&book_dir, &file)
         }
-        GlossaryCommands::Export { book_dir, path } => {
-            glossary::cli::export_glossary(&book_dir, &path)
+        GlossaryCommands::Export { book_dir, output } => {
+            glossary::cli::export_glossary(&book_dir, &output)
         }
     }
 }
@@ -244,19 +327,22 @@ fn run_doctor_command(book_dir: Option<PathBuf>) -> anyhow::Result<()> {
     }
 }
 
-fn run_profile_subcommand(command: ProfileCommands) -> anyhow::Result<()> {
+fn run_profile_subcommand(command: ProfileCommands, no_input: bool) -> anyhow::Result<()> {
     let mut config = load_global_config()?;
-    run_profile_command(&mut config, command)
+    run_profile_command(&mut config, command, no_input)
 }
 
-async fn run_command(command: Commands) -> anyhow::Result<()> {
+async fn run_command(command: Commands) -> anyhow::Result<i32> {
     match command {
         Commands::Init {
             book_dir,
             profile,
-            from,
+            from_book,
             import_glossary,
-        } => run_init_command(book_dir, profile, from, import_glossary),
+        } => {
+            run_init_command(book_dir, profile, from_book, import_glossary)?;
+            Ok(0)
+        }
         Commands::Translate {
             book_dir,
             profile,
@@ -265,10 +351,12 @@ async fn run_command(command: Commands) -> anyhow::Result<()> {
             overwrite,
             fail_fast,
             rerun,
-            rerun_affected_glossary,
-            rerun_affected_chapters,
             dry_run,
+            quiet,
+            verbose,
         } => {
+            output::set_quiet(quiet);
+            output::set_verbose(verbose);
             run_translate_command(
                 book_dir,
                 profile,
@@ -277,28 +365,43 @@ async fn run_command(command: Commands) -> anyhow::Result<()> {
                 overwrite,
                 fail_fast,
                 rerun,
-                rerun_affected_glossary,
-                rerun_affected_chapters,
                 dry_run,
             )
             .await
         }
-        Commands::Status { book_dir } => run_status_command(book_dir),
-        Commands::Glossary { command } => run_glossary_command(command),
-        Commands::Doctor { book_dir } => run_doctor_command(book_dir),
-        Commands::Profile { command } => run_profile_subcommand(command),
+        Commands::Status { book_dir, json } => {
+            run_status_command(book_dir, json)?;
+            Ok(0)
+        }
+        Commands::Glossary { command } => {
+            run_glossary_command(command)?;
+            Ok(0)
+        }
+        Commands::Doctor { book_dir } => {
+            run_doctor_command(book_dir)?;
+            Ok(0)
+        }
+        Commands::Profile { command } => {
+            let no_input = match &command {
+                ProfileCommands::New { no_input, .. } => *no_input,
+                _ => false,
+            };
+            run_profile_subcommand(command, no_input)?;
+            Ok(0)
+        }
     }
 }
 
 fn exit_with_error(message: impl std::fmt::Display) -> ! {
-    stderr_error(message);
-    std::process::exit(1);
+    output::stderr_error(message);
+    std::process::exit(1)
 }
 
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
-    if let Err(e) = run_command(cli.command).await {
-        exit_with_error(e);
+    match run_command(cli.command).await {
+        Ok(code) => std::process::exit(code),
+        Err(e) => exit_with_error(e),
     }
 }

@@ -1,6 +1,11 @@
 pub mod cmd;
+pub mod pipeline;
+pub mod preview;
 pub mod prompt;
 pub mod providers;
+pub mod rerun;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod types;
 
 pub use crate::translate::cmd::{TranslateOptions, translate_book};
