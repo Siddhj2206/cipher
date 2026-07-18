@@ -97,3 +97,157 @@ fn status_on_nonexistent_dir_does_not_crash() {
         "status should indicate no runs, got: {stdout}"
     );
 }
+
+#[test]
+fn doctor_on_initialized_book_succeeds() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("doctor-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+
+    let output = cipher_binary()
+        .arg("doctor")
+        .arg(&book_path)
+        .output()
+        .expect("doctor failed");
+
+    assert!(
+        output.status.success(),
+        "doctor on book should succeed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Book layout looks valid"), "got: {stdout}");
+}
+
+#[test]
+fn glossary_list_on_initialized_book_is_empty() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("glossary-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+
+    let output = cipher_binary()
+        .arg("glossary")
+        .arg("list")
+        .arg(&book_path)
+        .output()
+        .expect("glossary list failed");
+
+    assert!(output.status.success(), "glossary list: {:?}", output);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("No glossary entries found"),
+        "got: {stdout}"
+    );
+}
+
+#[test]
+fn glossary_import_adds_entries() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("import-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+
+    let import_file = dir.path().join("import.json");
+    let import_data = r#"[
+        {"term": "foo", "og_term": null, "definition": "the foo", "notes": null},
+        {"term": "bar", "og_term": "bar", "definition": "the bar", "notes": "a note"}
+    ]"#;
+    std::fs::write(&import_file, import_data).expect("write import file");
+
+    let output = cipher_binary()
+        .arg("glossary")
+        .arg("import")
+        .arg("--file")
+        .arg(&import_file)
+        .arg(&book_path)
+        .output()
+        .expect("glossary import failed");
+    assert!(
+        output.status.success(),
+        "import failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Added"), "got: {stderr}");
+
+    let list = cipher_binary()
+        .arg("glossary")
+        .arg("list")
+        .arg(&book_path)
+        .output()
+        .expect("glossary list failed");
+    assert!(list.status.success());
+    let stdout = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        stdout.contains("foo"),
+        "list should show foo, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("bar"),
+        "list should show bar, got: {stdout}"
+    );
+}
+
+#[test]
+fn glossary_export_writes_file() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("export-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+
+    let import_file = dir.path().join("import.json");
+    let import_data = r#"[
+        {"term": "foo", "og_term": null, "definition": "the foo", "notes": null}
+    ]"#;
+    std::fs::write(&import_file, import_data).expect("write import file");
+
+    cipher_binary()
+        .arg("glossary")
+        .arg("import")
+        .arg("--file")
+        .arg(&import_file)
+        .arg(&book_path)
+        .output()
+        .expect("import failed");
+
+    let export_file = dir.path().join("exported.json");
+    let output = cipher_binary()
+        .arg("glossary")
+        .arg("export")
+        .arg("--output")
+        .arg(&export_file)
+        .arg(&book_path)
+        .output()
+        .expect("glossary export failed");
+
+    assert!(
+        output.status.success(),
+        "export failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(export_file.exists(), "export file should exist");
+    let content = std::fs::read_to_string(&export_file).expect("read export");
+    assert!(content.contains("foo"), "export should contain foo");
+}

@@ -616,6 +616,228 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Res
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    fn empty_config() -> GlobalConfig {
+        GlobalConfig {
+            default_profile: None,
+            providers: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+        }
+    }
+
+    // -- generate_unique_key_label --
+
+    #[test]
+    fn key_label_no_existing() {
+        assert_eq!(generate_unique_key_label(&[]), "key-1");
+    }
+
+    #[test]
+    fn key_label_skips_existing_labels() {
+        let keys = vec![
+            ApiKey {
+                value: "v1".into(),
+                name: Some("key-1".into()),
+            },
+            ApiKey {
+                value: "v2".into(),
+                name: Some("key-2".into()),
+            },
+        ];
+        assert_eq!(generate_unique_key_label(&keys), "key-3");
+    }
+
+    #[test]
+    fn key_label_ignores_unnamed_keys() {
+        let keys = vec![ApiKey {
+            value: "v1".into(),
+            name: None,
+        }];
+        assert_eq!(generate_unique_key_label(&keys), "key-1");
+    }
+
+    #[test]
+    fn key_label_fills_gap() {
+        let keys = vec![ApiKey {
+            value: "v1".into(),
+            name: Some("key-1".into()),
+        }];
+        assert_eq!(generate_unique_key_label(&keys), "key-2");
+    }
+
+    // -- create_profile non-interactive error paths (no config.save) --
+
+    #[test]
+    fn create_noninteractive_requires_name() {
+        let mut cfg = empty_config();
+        let err = create_profile(
+            &mut cfg,
+            None,
+            Some("gemini".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("--name is required"), "got: {err}");
+    }
+
+    #[test]
+    fn create_noninteractive_requires_provider() {
+        let mut cfg = empty_config();
+        let err = create_profile(
+            &mut cfg,
+            Some("p".into()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("--provider is required"), "got: {err}");
+    }
+
+    #[test]
+    fn create_noninteractive_rejects_empty_name() {
+        let mut cfg = empty_config();
+        let err = create_profile(
+            &mut cfg,
+            Some("".into()),
+            Some("gemini".to_string()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("cannot be empty"), "got: {err}");
+    }
+
+    #[test]
+    fn create_noninteractive_rejects_empty_provider() {
+        let mut cfg = empty_config();
+        let err = create_profile(
+            &mut cfg,
+            Some("p".into()),
+            Some("".into()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("cannot be empty"), "got: {err}");
+    }
+
+    #[test]
+    fn create_noninteractive_requires_api_key_file() {
+        let mut cfg = empty_config();
+        let err = create_profile(
+            &mut cfg,
+            Some("p".into()),
+            Some("gemini".into()),
+            None,
+            None,
+            None,
+            None,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("--api-key-file is required"), "got: {err}");
+    }
+
+    #[test]
+    fn create_noninteractive_rejects_unknown_provider() {
+        let mut cfg = empty_config();
+        let err = create_profile(
+            &mut cfg,
+            Some("p".into()),
+            Some("custom".into()),
+            None,
+            None,
+            Some(PathBuf::from("/dev/null")),
+            None,
+            false,
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+    }
+
+    // -- smoke tests for output / query functions (no filesystem writes) --
+
+    #[test]
+    fn list_profiles_empty_does_not_panic() {
+        list_profiles(&empty_config(), false);
+        list_profiles(&empty_config(), true);
+    }
+
+    #[test]
+    fn show_profile_not_found_errors() {
+        let err = show_profile(&empty_config(), "nope", false)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+    }
+
+    #[test]
+    fn set_default_profile_not_found_errors_without_saving() {
+        let mut cfg = empty_config();
+        let err = set_default_profile(&mut cfg, "nope")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not found"), "got: {err}");
+        // config was not modified and save() was not called
+        assert!(cfg.default_profile.is_none());
+    }
+
+    #[test]
+    fn test_profile_nonexistent_does_not_panic() {
+        let mut cfg = empty_config();
+        cfg.providers.insert(
+            "gemini".into(),
+            ProviderConfig {
+                kind: ProviderKind::Gemini,
+                keys: vec![ApiKey {
+                    value: "k".into(),
+                    name: Some("key-1".into()),
+                }],
+                base_url: None,
+            },
+        );
+        cfg.profiles.insert(
+            "my-profile".into(),
+            ProfileConfig {
+                provider: "gemini".into(),
+                model: "m".into(),
+                key: Some("key-1".into()),
+            },
+        );
+        test_profile(&cfg, "my-profile");
+    }
+
+    #[test]
+    fn run_global_doctor_empty_does_not_panic() {
+        let result = run_global_doctor(&empty_config());
+        assert!(result.is_ok());
+    }
+}
+
 pub fn test_profile(config: &GlobalConfig, name: &str) {
     use crate::config::validate_profile;
 

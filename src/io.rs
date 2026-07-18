@@ -15,3 +15,26 @@ pub(crate) fn atomic_write(path: &Path, content: &str) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_write_creates_file_with_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a").join("b").join("out.txt");
+        atomic_write(&path, "hello").unwrap();
+        assert!(path.exists());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
+    }
+
+    #[test]
+    fn atomic_write_overwrites_existing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.txt");
+        std::fs::write(&path, "old").unwrap();
+        atomic_write(&path, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    }
+}

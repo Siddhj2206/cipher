@@ -148,3 +148,20 @@ fn format_path_status(path: &Path, exists: bool) -> String {
     let status = if exists { "exists" } else { "missing" };
     format!("{} ({})", status, path.display())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_path_status_exists() {
+        let result = format_path_status(Path::new("/a/b.md"), true);
+        assert_eq!(result, "exists (/a/b.md)");
+    }
+
+    #[test]
+    fn format_path_status_missing() {
+        let result = format_path_status(Path::new("/a/b.md"), false);
+        assert_eq!(result, "missing (/a/b.md)");
+    }
+}
