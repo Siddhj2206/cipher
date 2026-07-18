@@ -256,9 +256,10 @@ fn tracked_usage_state_label(usage: &ChapterGlossaryUsage) -> &'static str {
     }
 }
 
-pub(crate) fn changed_prompt_relevant_keys(
-    previous_terms: &BTreeMap<String, GlossaryStateTerm>,
-    current_terms: &BTreeMap<String, GlossaryStateTerm>,
+fn changed_keys<V>(
+    previous_terms: &BTreeMap<String, V>,
+    current_terms: &BTreeMap<String, V>,
+    is_equal: impl Fn(&V, &V) -> bool,
 ) -> BTreeSet<String> {
     let all_keys: BTreeSet<String> = previous_terms
         .keys()
@@ -269,29 +270,28 @@ pub(crate) fn changed_prompt_relevant_keys(
     all_keys
         .into_iter()
         .filter(|key| {
-            let previous = previous_terms
-                .get(key)
-                .map(|term| term.fingerprint.as_str());
-            let current = current_terms.get(key).map(|term| term.fingerprint.as_str());
-            previous != current
+            let previous = previous_terms.get(key);
+            let current = current_terms.get(key);
+            match (previous, current) {
+                (Some(a), Some(b)) => !is_equal(a, b),
+                _ => true,
+            }
         })
         .collect()
+}
+
+pub(crate) fn changed_prompt_relevant_keys(
+    previous_terms: &BTreeMap<String, GlossaryStateTerm>,
+    current_terms: &BTreeMap<String, GlossaryStateTerm>,
+) -> BTreeSet<String> {
+    changed_keys(previous_terms, current_terms, |a, b| a.fingerprint == b.fingerprint)
 }
 
 pub(crate) fn changed_selected_term_keys(
     previous_terms: &BTreeMap<String, String>,
     current_terms: &BTreeMap<String, String>,
 ) -> BTreeSet<String> {
-    let all_keys: BTreeSet<String> = previous_terms
-        .keys()
-        .chain(current_terms.keys())
-        .cloned()
-        .collect();
-
-    all_keys
-        .into_iter()
-        .filter(|key| previous_terms.get(key) != current_terms.get(key))
-        .collect()
+    changed_keys(previous_terms, current_terms, |a, b| a == b)
 }
 
 pub(crate) fn current_expected_glossary_usage(
