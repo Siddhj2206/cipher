@@ -251,3 +251,67 @@ fn glossary_export_writes_file() {
     let content = std::fs::read_to_string(&export_file).expect("read export");
     assert!(content.contains("foo"), "export should contain foo");
 }
+
+#[test]
+fn translate_quiet_and_verbose_flags_parse() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("quiet-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+
+    for flag in &["--quiet", "--verbose"] {
+        let output = cipher_binary()
+            .arg("translate")
+            .arg(flag)
+            .arg("--dry-run")
+            .arg(&book_path)
+            .output()
+            .expect("translate command failed");
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("unexpected argument"),
+            "flag {flag} was not recognized: {stderr}"
+        );
+    }
+}
+
+#[test]
+fn status_json_output_is_valid() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("json-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+
+    let output = cipher_binary()
+        .arg("status")
+        .arg("--json")
+        .arg(&book_path)
+        .output()
+        .expect("status --json failed");
+
+    assert!(
+        output.status.success(),
+        "status --json: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should be parseable JSON with expected keys
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("status --json should be valid JSON");
+    assert!(
+        parsed.get("book").is_some() && parsed.get("chapters").is_some(),
+        "json output should contain 'book' and 'chapters', got keys: {:?}",
+        parsed.as_object().map(|o| o.keys().collect::<Vec<_>>())
+    );
+}

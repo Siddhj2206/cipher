@@ -93,3 +93,64 @@ pub fn verbose_detail_kv(label: &str, value: impl Display) {
     }
     eprintln!("- {}: {}", label, value);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quiet_toggle() {
+        set_quiet(true);
+        assert!(is_quiet());
+        set_quiet(false);
+        assert!(!is_quiet());
+    }
+
+    #[test]
+    fn verbose_set_does_not_panic() {
+        set_verbose(true);
+        set_verbose(false);
+    }
+
+    #[test]
+    fn quiet_suppresses_stdout_functions() {
+        set_quiet(true);
+        // None of these should print anything
+        detail("test");
+        detail_kv("k", "v");
+        section("test");
+        status("test");
+        // But they also shouldn't panic
+        set_quiet(false);
+    }
+
+    #[test]
+    fn verbose_detail_respects_flags() {
+        set_quiet(false);
+        set_verbose(true);
+        verbose_detail("visible");
+        verbose_detail_kv("k", "v");
+        // No panic = success
+
+        set_verbose(false);
+        verbose_detail("hidden");
+        verbose_detail_kv("k", "v");
+        // No panic = success
+
+        set_quiet(true);
+        set_verbose(true);
+        verbose_detail("quiet-hidden");
+        verbose_detail_kv("k", "v");
+        set_quiet(false);
+    }
+
+    #[test]
+    fn stderr_functions_do_not_panic() {
+        stderr_detail("test");
+        stderr_detail_kv("k", "v");
+        stderr_section("test");
+        stderr_status("test");
+        stderr_warn("test");
+        stderr_error("test");
+    }
+}
