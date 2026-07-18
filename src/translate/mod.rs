@@ -1,5 +1,4 @@
 pub mod cmd;
-pub mod pipeline;
 pub mod preview;
 pub mod prompt;
 pub mod providers;
