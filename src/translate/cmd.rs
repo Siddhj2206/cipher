@@ -54,10 +54,10 @@ struct TranslateProfiles<'a> {
     glossary_name: &'a str,
 }
 
-pub(crate) struct Translators {
-    pub(crate) translation: Translator,
-    pub(crate) repair: Translator,
-    pub(crate) glossary: Translator,
+struct Translators {
+    translation: Translator,
+    repair: Translator,
+    glossary: Translator,
 }
 
 fn resolve_translate_profiles<'a>(
