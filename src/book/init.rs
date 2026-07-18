@@ -246,6 +246,32 @@ mod tests {
         let config = BookConfig::with_profile("default");
         assert_eq!(config.profile, Some("default".to_string()));
     }
+
+    #[test]
+    fn load_book_config_returns_default_for_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cipher.toml");
+        let config = load_book_config(&path).unwrap();
+        assert_eq!(config.raw_dir, "raw");
+    }
+
+    #[test]
+    fn load_book_config_parses_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cipher.toml");
+        std::fs::write(
+            &path,
+            r#"raw_dir = "source"
+out_dir = "target"
+glossary_path = "glossary.json"
+style_path = "style.md"
+"#,
+        )
+        .unwrap();
+        let config = load_book_config(&path).unwrap();
+        assert_eq!(config.raw_dir, "source");
+        assert_eq!(config.out_dir, "target");
+    }
 }
 
 pub fn load_book_config(path: &Path) -> anyhow::Result<BookConfig> {

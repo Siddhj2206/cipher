@@ -1259,6 +1259,50 @@ mod tests {
         assert_eq!(result.usage, usage);
     }
 
+    fn rerun_opts(rerun: Option<crate::RerunMode>) -> TranslateOptions {
+        translate_options(rerun)
+    }
+
+    #[test]
+    fn rerun_glossary_enabled_for_all() {
+        assert!(rerun_opts(Some(crate::RerunMode::All)).rerun_glossary_enabled());
+    }
+
+    #[test]
+    fn rerun_glossary_enabled_for_glossary() {
+        assert!(rerun_opts(Some(crate::RerunMode::Glossary)).rerun_glossary_enabled());
+    }
+
+    #[test]
+    fn rerun_glossary_disabled_for_source() {
+        assert!(!rerun_opts(Some(crate::RerunMode::Source)).rerun_glossary_enabled());
+    }
+
+    #[test]
+    fn rerun_glossary_disabled_for_none() {
+        assert!(!rerun_opts(None).rerun_glossary_enabled());
+    }
+
+    #[test]
+    fn rerun_chapters_enabled_for_all() {
+        assert!(rerun_opts(Some(crate::RerunMode::All)).rerun_chapters_enabled());
+    }
+
+    #[test]
+    fn rerun_chapters_enabled_for_source() {
+        assert!(rerun_opts(Some(crate::RerunMode::Source)).rerun_chapters_enabled());
+    }
+
+    #[test]
+    fn rerun_chapters_disabled_for_glossary() {
+        assert!(!rerun_opts(Some(crate::RerunMode::Glossary)).rerun_chapters_enabled());
+    }
+
+    #[test]
+    fn rerun_chapters_disabled_for_none() {
+        assert!(!rerun_opts(None).rerun_chapters_enabled());
+    }
+
     #[test]
     fn test_translate_options_rerun_enables_both_rerun_modes() {
         let options = translate_options(Some(crate::RerunMode::All));

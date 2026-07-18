@@ -207,3 +207,36 @@ impl Provider for OpenAiProvider {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn openai_new_without_base_url_constructs() {
+        let params = ProviderParams {
+            api_key: "test-key-12345".to_string(),
+            model: "gpt-4o-mini".to_string(),
+        };
+        let provider = OpenAiProvider::new(params, None);
+        assert!(
+            provider.is_ok(),
+            "OpenAiProvider::new should succeed: {:?}",
+            provider.err()
+        );
+    }
+
+    #[test]
+    fn openai_new_with_base_url_constructs() {
+        let params = ProviderParams {
+            api_key: "test-key-12345".to_string(),
+            model: "gpt-4o-mini".to_string(),
+        };
+        let provider = OpenAiProvider::new(params, Some("https://api.example.com/v1"));
+        assert!(
+            provider.is_ok(),
+            "OpenAiProvider::new with base_url should succeed: {:?}",
+            provider.err()
+        );
+    }
+}

@@ -177,4 +177,21 @@ mod tests {
         assert!(errors.iter().any(|e| e.contains("chapter_number")));
         assert!(errors.iter().any(|e| e.contains("content")));
     }
+
+    #[test]
+    fn render_starts_with_markdown_heading_true() {
+        let config = OutputConfig::default();
+        assert!(render_starts_with_markdown_heading(&config));
+    }
+
+    #[test]
+    fn render_starts_with_markdown_heading_false() {
+        let config = OutputConfig {
+            render: OutputRenderConfig {
+                template: "plain text".to_string(),
+            },
+            ..OutputConfig::default()
+        };
+        assert!(!render_starts_with_markdown_heading(&config));
+    }
 }

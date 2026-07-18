@@ -214,4 +214,36 @@ mod tests {
         assert!(validation.is_valid(), "expected Gemini profile to be valid");
         assert!(validation.errors.is_empty());
     }
+
+    #[test]
+    fn effective_profile_name_prefers_book_profile() {
+        let config = base_config();
+        assert_eq!(
+            config.effective_profile_name(Some("book-profile")),
+            Some("book-profile")
+        );
+    }
+
+    #[test]
+    fn effective_profile_name_falls_back_to_default() {
+        let mut config = base_config();
+        config.default_profile = Some("default-profile".to_string());
+        assert_eq!(config.effective_profile_name(None), Some("default-profile"));
+    }
+
+    #[test]
+    fn effective_profile_name_filters_empty_book_profile() {
+        let mut config = base_config();
+        config.default_profile = Some("default-profile".to_string());
+        assert_eq!(
+            config.effective_profile_name(Some("")),
+            Some("default-profile")
+        );
+    }
+
+    #[test]
+    fn effective_profile_name_returns_none_when_no_profile_available() {
+        let config = base_config();
+        assert_eq!(config.effective_profile_name(None), None);
+    }
 }

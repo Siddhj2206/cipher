@@ -181,3 +181,22 @@ impl Provider for GeminiProvider {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gemini_new_constructs() {
+        let params = ProviderParams {
+            api_key: "test-key-12345".to_string(),
+            model: "gemini-2.5-flash".to_string(),
+        };
+        let provider = GeminiProvider::new(params);
+        assert!(
+            provider.is_ok(),
+            "GeminiProvider::new should succeed: {:?}",
+            provider.err()
+        );
+    }
+}

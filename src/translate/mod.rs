@@ -86,3 +86,55 @@ impl Translator {
         self.provider.extract_glossary(request).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
+    use std::collections::BTreeMap;
+
+    fn config_with_valid_profile() -> GlobalConfig {
+        let mut config = GlobalConfig::default();
+        config.providers.insert(
+            "gemini".to_string(),
+            ProviderConfig {
+                kind: ProviderKind::Gemini,
+                keys: vec![ApiKey {
+                    value: "test-key".to_string(),
+                    name: Some("default".to_string()),
+                }],
+                base_url: None,
+            },
+        );
+        config.profiles.insert(
+            "valid".to_string(),
+            ProfileConfig {
+                provider: "gemini".to_string(),
+                model: "gemini-2.5-flash".to_string(),
+                key: Some("default".to_string()),
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn translator_from_config_constructs_for_valid_profile() {
+        let config = config_with_valid_profile();
+        match Translator::from_config(&config, "valid") {
+            Ok(_) => {} // success
+            Err(e) => panic!("from_config should succeed: {e}"),
+        }
+    }
+
+    #[test]
+    fn translator_from_config_fails_for_missing_profile() {
+        let config = GlobalConfig::default();
+        match Translator::from_config(&config, "nonexistent") {
+            Err(e) => {
+                let msg = format!("{e:#}");
+                assert!(msg.contains("not found"), "expected 'not found' in '{msg}'");
+            }
+            Ok(_) => panic!("expected error"),
+        }
+    }
+}

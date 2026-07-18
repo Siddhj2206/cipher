@@ -809,6 +809,144 @@ mod tests {
         );
     }
 
+    fn test_term(key: &str, term: &str, definition: &str) -> GlossaryTerm {
+        GlossaryTerm {
+            term: term.to_string(),
+            og_term: Some(key.to_string()),
+            definition: definition.to_string(),
+            notes: None,
+        }
+    }
+
+    fn usage_term(key: &str, fingerprint: &str) -> ChapterGlossaryTerm {
+        ChapterGlossaryTerm {
+            key: key.to_string(),
+            fingerprint: fingerprint.to_string(),
+        }
+    }
+
+    #[test]
+    fn selection_fingerprints_empty() {
+        assert!(selection_fingerprints(&[]).is_empty());
+    }
+
+    #[test]
+    fn selection_fingerprints_maps_keys() {
+        use crate::glossary::{glossary_term_key, glossary_term_prompt_fingerprint};
+        let terms = vec![
+            test_term("hero", "Hero", "A hero"),
+            test_term("city", "City", "A city"),
+        ];
+        let result = selection_fingerprints(&terms);
+        let key0 = glossary_term_key(&terms[0]);
+        let key1 = glossary_term_key(&terms[1]);
+        assert_eq!(
+            result.get(&key0).unwrap(),
+            &glossary_term_prompt_fingerprint(&terms[0])
+        );
+        assert_eq!(
+            result.get(&key1).unwrap(),
+            &glossary_term_prompt_fingerprint(&terms[1])
+        );
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn usage_fingerprint_map_empty() {
+        let usage = ChapterGlossaryUsage {
+            injection_mode: InjectionMode::Smart,
+            used_fallback_to_full: false,
+            terms: vec![],
+        };
+        assert!(usage_fingerprint_map(&usage).is_empty());
+    }
+
+    #[test]
+    fn usage_fingerprint_map_maps_terms() {
+        let usage = ChapterGlossaryUsage {
+            injection_mode: InjectionMode::Smart,
+            used_fallback_to_full: false,
+            terms: vec![usage_term("hero", "fp1"), usage_term("city", "fp2")],
+        };
+        let result = usage_fingerprint_map(&usage);
+        assert_eq!(result.get("hero").unwrap(), "fp1");
+        assert_eq!(result.get("city").unwrap(), "fp2");
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn glossary_terms_from_state_converts_state_terms() {
+        let mut state_terms = BTreeMap::new();
+        state_terms.insert(
+            "hero".to_string(),
+            GlossaryStateTerm {
+                term: "Hero".to_string(),
+                og_term: Some("hero".to_string()),
+                definition: "def".to_string(),
+                fingerprint: "fp".to_string(),
+            },
+        );
+        let state = GlossaryState::new(InjectionMode::Smart, state_terms);
+        let result = glossary_terms_from_state(&state);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].term, "Hero");
+        assert_eq!(result[0].og_term, Some("hero".to_string()));
+        assert_eq!(result[0].definition, "def");
+        assert!(result[0].notes.is_none());
+    }
+
+    #[test]
+    fn changed_prompt_relevant_keys_detects_changes() {
+        use std::collections::BTreeMap;
+        let mut prev = BTreeMap::new();
+        let mut curr = BTreeMap::new();
+        prev.insert(
+            "a".to_string(),
+            GlossaryStateTerm {
+                term: "A".into(),
+                og_term: None,
+                definition: "d1".into(),
+                fingerprint: "fp1".into(),
+            },
+        );
+        curr.insert(
+            "a".to_string(),
+            GlossaryStateTerm {
+                term: "A".into(),
+                og_term: None,
+                definition: "d1".into(),
+                fingerprint: "fp2".into(),
+            },
+        );
+        curr.insert(
+            "b".to_string(),
+            GlossaryStateTerm {
+                term: "B".into(),
+                og_term: None,
+                definition: "d2".into(),
+                fingerprint: "fp3".into(),
+            },
+        );
+        let changed = changed_prompt_relevant_keys(&prev, &curr);
+        assert!(changed.contains("a"), "fingerprint changed");
+        assert!(changed.contains("b"), "new key added");
+        assert_eq!(changed.len(), 2);
+    }
+
+    #[test]
+    fn changed_selected_term_keys_detects_changes() {
+        use std::collections::BTreeMap;
+        let mut prev = BTreeMap::new();
+        let mut curr = BTreeMap::new();
+        prev.insert("hero".to_string(), "fp1".to_string());
+        curr.insert("hero".to_string(), "fp2".to_string());
+        curr.insert("city".to_string(), "fp3".to_string());
+        let changed = changed_selected_term_keys(&prev, &curr);
+        assert!(changed.contains("hero"), "fingerprint changed");
+        assert!(changed.contains("city"), "new key added");
+        assert_eq!(changed.len(), 2);
+    }
+
     #[test]
     fn test_checkpoint_chapter_progress_does_not_advance_glossary_baseline() {
         let dir = tempfile::tempdir().unwrap();
@@ -2134,5 +2272,76 @@ mod tests {
         assert_eq!(plan.forced_chapters.len(), 2);
         assert!(plan.forced_chapters.contains_key("chapter2.md"));
         assert!(plan.forced_chapters.contains_key("chapter3.md"));
+    }
+
+    // -- current_expected_glossary_usage --
+
+    #[test]
+    fn current_expected_glossary_usage_returns_none_for_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.md");
+        std::fs::write(&path, "  \n  ").unwrap();
+        let result = current_expected_glossary_usage(&path, &[], InjectionMode::Smart).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn current_expected_glossary_usage_computes_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ch.md");
+        std::fs::write(&path, "勇者が登場").unwrap();
+        let glossary = vec![glossary_term("Hero", Some("勇者"), "definition")];
+        let result = current_expected_glossary_usage(&path, &glossary, InjectionMode::Smart)
+            .unwrap()
+            .unwrap();
+        assert_eq!(result.injection_mode, InjectionMode::Smart);
+        assert!(!result.terms.is_empty());
+    }
+
+    // -- chapter_matches_current_glossary --
+
+    #[test]
+    fn chapter_matches_glossary_when_usage_is_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ch.md");
+        std::fs::write(&path, "勇者が登場").unwrap();
+        let state = ChapterState::new(
+            "ch.md".to_string(),
+            ChapterStatus::Success,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            None,
+        );
+        let result =
+            chapter_matches_current_glossary(&path, &state, &[], InjectionMode::Smart).unwrap();
+        assert!(!result, "no usage should not match");
+    }
+
+    // -- migrated_legacy_full_usage --
+
+    #[test]
+    fn migrated_legacy_full_usage_returns_none_for_non_full() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ch.md");
+        std::fs::write(&path, "content").unwrap();
+        let state = ChapterState::new(
+            "ch.md".to_string(),
+            ChapterStatus::Success,
+            None,
+            None,
+            None,
+            Some(ChapterGlossaryUsage {
+                injection_mode: InjectionMode::Smart,
+                used_fallback_to_full: false,
+                terms: vec![],
+            }),
+            vec![],
+            None,
+        );
+        let result = migrated_legacy_full_usage(&path, &state, &[]).unwrap();
+        assert!(result.is_none());
     }
 }

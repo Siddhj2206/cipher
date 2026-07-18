@@ -209,6 +209,22 @@ mod tests {
     }
 
     #[test]
+    fn chapter_state_key_returns_normalized_relative_path() {
+        let raw = Path::new("/book/raw");
+        let file = Path::new("/book/raw/01-intro.md");
+        let key = chapter_state_key(raw, file).unwrap();
+        assert_eq!(key, "01-intro.md");
+    }
+
+    #[test]
+    fn chapter_output_path_joins_filename_with_out_dir() {
+        let out = Path::new("/book/tl");
+        let file = Path::new("/book/raw/01-intro.md");
+        let path = chapter_output_path(out, file).unwrap();
+        assert_eq!(path, Path::new("/book/tl/01-intro.md"));
+    }
+
+    #[test]
     fn test_extract_number_multiple_groups() {
         assert_eq!(extract_number("ch3_part2"), Some(3));
         assert_eq!(extract_number("v2_chapter10"), Some(2));
