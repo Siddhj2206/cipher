@@ -34,6 +34,8 @@ pub struct RunOptions {
     pub fail_fast: bool,
     #[serde(default)]
     pub rerun: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun_mode: Option<crate::RerunMode>,
     #[serde(default)]
     pub rerun_affected_glossary: bool,
     #[serde(default)]
@@ -395,6 +397,7 @@ mod tests {
                 overwrite: true,
                 fail_fast: false,
                 rerun: false,
+                rerun_mode: None,
                 rerun_affected_glossary: false,
                 rerun_affected_chapters: false,
             }),

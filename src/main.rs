@@ -22,7 +22,7 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum)]
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
 pub enum RerunMode {
     All,
     Glossary,
