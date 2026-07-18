@@ -264,7 +264,8 @@ fn build_status_output(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterStatus, InjectionMode};
+    use crate::glossary::InjectionMode;
+    use crate::state::{ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterStatus};
 
     fn sample_chapter_state(path: &str) -> ChapterState {
         ChapterState {

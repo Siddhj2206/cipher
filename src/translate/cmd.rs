@@ -11,7 +11,7 @@ use crate::glossary::{
 };
 use crate::output;
 use crate::output::{
-    stderr_detail, stderr_detail_kv, stderr_status as output_status, stderr_warn, verbose_detail,
+    stderr_detail, stderr_detail_kv, stderr_status, stderr_warn, verbose_detail,
     verbose_detail_kv,
 };
 use crate::state::{
@@ -19,11 +19,11 @@ use crate::state::{
     RunOptions, load_all_chapter_states, load_glossary_state, normalized_source_text_hash,
     save_chapter_state, save_run_metadata,
 };
-use crate::translate::preview::preview_translation_run;
+use crate::translate::preview::{preview_translation_run, EMPTY_CHAPTER_SKIP_REASON};
 use crate::translate::rerun::{
-    ChapterRerunDecision, EMPTY_CHAPTER_SKIP_REASON, GlossaryRerunPlan, SourceRerunPlan,
+    GlossaryRerunPlan, RerunDecision, SourceRerunPlan,
     build_chapter_glossary_usage, build_glossary_rerun_plan, build_glossary_state,
-    build_source_rerun_plan, chapter_translation_injection_mode, combine_rerun_decisions,
+    build_source_rerun_plan, combine_rerun_decisions,
     finalize_glossary_baseline, migrate_legacy_full_tracking,
 };
 use crate::translate::{
@@ -54,10 +54,10 @@ struct TranslateProfiles<'a> {
     glossary_name: &'a str,
 }
 
-struct Translators {
-    translation: Translator,
-    repair: Translator,
-    glossary: Translator,
+pub(crate) struct Translators {
+    pub(crate) translation: Translator,
+    pub(crate) repair: Translator,
+    pub(crate) glossary: Translator,
 }
 
 fn resolve_translate_profiles<'a>(
@@ -98,7 +98,7 @@ fn validate_translate_profiles(
     ] {
         let validation = validate_profile(config, name);
         if !validation.is_valid() {
-            output_status(format!("{} profile validation failed", label));
+            stderr_status(format!("{} profile validation failed", label));
             for error in &validation.errors {
                 stderr_detail(error);
             }
@@ -183,7 +183,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .into_iter()
         .collect();
     if chapters.is_empty() {
-        output_status("No chapters found");
+        stderr_status("No chapters found");
         stderr_detail_kv("Directory", layout.paths.raw_dir.display());
         return Ok(0);
     }
@@ -254,7 +254,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     if options.dry_run {
-        output_status("Translation preview");
+        stderr_status("Translation preview");
         stderr_detail_kv("Book", book_dir.display());
         if let Some(profile_names) =
             resolve_translate_profiles(&global_config, &book_config, &options)
@@ -300,7 +300,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             .context("Failed to create glossary translator")?,
     };
 
-    output_status("Translating chapters");
+    stderr_status("Translating chapters");
     verbose_detail_kv("Chapters found", chapters.len());
 
     let pb = if output::is_quiet() {
@@ -464,7 +464,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     }
 
     // Print summary
-    output_status("Translation complete");
+    stderr_status("Translation complete");
     stderr_detail_kv("Translated", translated);
     stderr_detail_kv("Skipped", skipped);
     stderr_detail_kv("Failed", failed);
@@ -497,7 +497,7 @@ async fn translate_single_chapter(
     chapter_path: &str,
     options: &TranslateOptions,
     previous_chapter_state: Option<&ChapterState>,
-    rerun_decision: Option<&ChapterRerunDecision>,
+    rerun_decision: Option<&RerunDecision>,
     glossary: &mut Vec<GlossaryTerm>,
     style_guide: &Option<String>,
     output_config: &OutputConfig,
@@ -505,8 +505,7 @@ async fn translate_single_chapter(
     glossary_path: &Path,
     book_dir: &Path,
 ) -> Result<ChapterResult> {
-    let translation_injection_mode =
-        chapter_translation_injection_mode(injection_mode, rerun_decision);
+    let translation_injection_mode = injection_mode;
     let previous_artifacts = previous_chapter_artifacts(previous_chapter_state);
 
     // Check if output exists
@@ -530,7 +529,7 @@ async fn translate_single_chapter(
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
-        output_status(format!("Skip {}: chapter is empty", chapter_path));
+        stderr_status(format!("Skip {}: chapter is empty", chapter_path));
         return Ok(build_skipped_chapter_result(
             chapter_path,
             Some(EMPTY_CHAPTER_SKIP_REASON.to_string()),

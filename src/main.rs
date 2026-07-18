@@ -10,6 +10,7 @@ mod io;
 mod output;
 mod state;
 mod translate;
+mod ui;
 mod validate;
 
 #[derive(Parser)]
@@ -300,7 +301,7 @@ async fn run_translate_command(
 }
 
 fn run_status_command(book_dir: PathBuf, json: bool) -> anyhow::Result<()> {
-    state::status::show_status(&book_dir, json)
+    ui::status::show_status(&book_dir, json)
 }
 
 fn run_glossary_command(command: GlossaryCommands) -> anyhow::Result<()> {

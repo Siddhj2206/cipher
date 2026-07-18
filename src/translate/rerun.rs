@@ -11,23 +11,15 @@ use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-pub(crate) const EMPTY_CHAPTER_SKIP_REASON: &str = "Chapter is empty";
-pub(crate) const OUTPUT_EXISTS_SKIP_REASON: &str = "Output exists and no rerun reason matched";
-pub(crate) const OUTPUT_MISSING_REASON: &str = "No output exists yet";
-
 #[derive(Debug, Clone)]
-pub(crate) struct GlossaryRerunDecision {
+pub(crate) struct RerunDecision {
     pub reason: String,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ChapterRerunDecision {
-    pub reason: String,
+    pub is_approximate: bool,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct GlossaryRerunPlan {
-    pub forced_chapters: BTreeMap<String, GlossaryRerunDecision>,
+    pub forced_chapters: BTreeMap<String, RerunDecision>,
     pub warnings: Vec<String>,
     pub changed_term_count: usize,
     pub approximate_smart_checks: usize,
@@ -35,7 +27,7 @@ pub(crate) struct GlossaryRerunPlan {
 
 #[derive(Debug, Default)]
 pub(crate) struct SourceRerunPlan {
-    pub forced_chapters: BTreeMap<String, String>,
+    pub forced_chapters: BTreeMap<String, RerunDecision>,
     pub untracked_chapters: usize,
 }
 
@@ -58,41 +50,126 @@ pub(crate) struct LegacyTrackingMigration {
     pub migrated_glossary_baseline: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PreviewAction {
-    Translate,
-    Retranslate,
-    Skip,
+pub(crate) struct RerunPlanner {
+    book_dir: PathBuf,
+    previous_glossary_state: Option<GlossaryState>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct ChapterPreview {
-    pub chapter_path: String,
-    pub action: PreviewAction,
-    pub reason: String,
-    pub approximate: bool,
-}
+impl RerunPlanner {
+    pub(crate) fn new(
+        book_dir: &Path,
+        previous_glossary_state: Option<GlossaryState>,
+    ) -> Self {
+        Self {
+            book_dir: book_dir.to_path_buf(),
+            previous_glossary_state,
+        }
+    }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct PreviewSummary {
-    pub translate: usize,
-    pub retranslate: usize,
-    pub skip: usize,
-    pub approximate_reruns: usize,
-    pub exact_reruns: usize,
-    pub empty_skips: usize,
-    pub output_exists_skips: usize,
-    pub output_missing: usize,
+    pub(crate) fn plan_glossary_rerun(
+        &self,
+        chapters: &[PathBuf],
+        raw_dir: &Path,
+        out_dir: &Path,
+        previous_chapter_states: &BTreeMap<String, ChapterState>,
+        glossary: &[GlossaryTerm],
+        injection_mode: InjectionMode,
+    ) -> Result<GlossaryRerunPlan> {
+        build_glossary_rerun_plan(
+            chapters,
+            raw_dir,
+            out_dir,
+            self.previous_glossary_state.as_ref(),
+            previous_chapter_states,
+            glossary,
+            injection_mode,
+        )
+    }
+
+    pub(crate) fn plan_source_rerun(
+        &self,
+        chapters: &[PathBuf],
+        raw_dir: &Path,
+        out_dir: &Path,
+        previous_chapter_states: &BTreeMap<String, ChapterState>,
+    ) -> Result<SourceRerunPlan> {
+        build_source_rerun_plan(
+            chapters,
+            raw_dir,
+            out_dir,
+            previous_chapter_states,
+        )
+    }
+
+    pub(crate) fn combine_decisions(
+        &self,
+        glossary_decision: Option<&RerunDecision>,
+        source_decision: Option<&RerunDecision>,
+    ) -> Option<RerunDecision> {
+        combine_rerun_decisions(glossary_decision, source_decision)
+    }
+
+    pub(crate) fn finalize_baseline(
+        &self,
+        rerun_glossary_enabled: bool,
+        run_start_glossary_state: &GlossaryState,
+        chapters: &[PathBuf],
+        raw_dir: &Path,
+        out_dir: &Path,
+        chapter_states: &BTreeMap<String, ChapterState>,
+        glossary: &[GlossaryTerm],
+        injection_mode: InjectionMode,
+        failed: usize,
+    ) -> Result<GlossaryBaselineOutcome> {
+        finalize_glossary_baseline(
+            &self.book_dir,
+            rerun_glossary_enabled,
+            self.previous_glossary_state.as_ref(),
+            run_start_glossary_state,
+            chapters,
+            raw_dir,
+            out_dir,
+            chapter_states,
+            glossary,
+            injection_mode,
+            failed,
+        )
+    }
+
+    pub(crate) fn migrate_legacy(
+        &self,
+        baseline_outcome: GlossaryBaselineOutcome,
+        chapters: &[PathBuf],
+        raw_dir: &Path,
+        out_dir: &Path,
+        chapter_states: &mut BTreeMap<String, ChapterState>,
+        glossary: &[GlossaryTerm],
+        injection_mode: InjectionMode,
+        failed: usize,
+    ) -> Result<LegacyTrackingMigration> {
+        migrate_legacy_full_tracking(
+            &self.book_dir,
+            self.previous_glossary_state.as_ref(),
+            baseline_outcome,
+            chapters,
+            raw_dir,
+            out_dir,
+            chapter_states,
+            glossary,
+            injection_mode,
+            failed,
+        )
+    }
 }
 
 impl GlossaryRerunPlan {
-    pub fn decision_for(&self, filename: &str) -> Option<&GlossaryRerunDecision> {
+    pub fn decision_for(&self, filename: &str) -> Option<&RerunDecision> {
         self.forced_chapters.get(filename)
     }
 }
 
 impl SourceRerunPlan {
-    pub fn decision_for(&self, filename: &str) -> Option<&String> {
+    pub fn decision_for(&self, filename: &str) -> Option<&RerunDecision> {
         self.forced_chapters.get(filename)
     }
 }
@@ -138,13 +215,6 @@ pub(crate) fn build_chapter_glossary_usage(
     }
 }
 
-pub(crate) fn chapter_translation_injection_mode(
-    injection_mode: InjectionMode,
-    _rerun_decision: Option<&ChapterRerunDecision>,
-) -> InjectionMode {
-    injection_mode
-}
-
 pub(crate) fn selection_fingerprints(terms: &[GlossaryTerm]) -> BTreeMap<String, String> {
     terms
         .iter()
@@ -178,13 +248,11 @@ pub(crate) fn glossary_terms_from_state(glossary_state: &GlossaryState) -> Vec<G
         .collect()
 }
 
-pub(crate) fn tracked_usage_state_label(usage: &ChapterGlossaryUsage) -> &'static str {
-    if usage.injection_mode == InjectionMode::Full {
-        "legacy full tracking"
-    } else if usage.used_fallback_to_full {
-        "fallback to full"
-    } else {
-        "smart selection only"
+fn tracked_usage_state_label(usage: &ChapterGlossaryUsage) -> &'static str {
+    match usage.injection_mode {
+        InjectionMode::Full => "legacy full tracking",
+        _ if usage.used_fallback_to_full => "fallback to full",
+        _ => "smart selection only",
     }
 }
 
@@ -226,21 +294,6 @@ pub(crate) fn changed_selected_term_keys(
         .collect()
 }
 
-pub(crate) fn full_glossary_rerun_reason(changed_term_keys: &BTreeSet<String>) -> Option<String> {
-    if changed_term_keys.is_empty() {
-        None
-    } else {
-        Some(format!(
-            "Full glossary changed: {}",
-            changed_term_keys
-                .iter()
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ")
-        ))
-    }
-}
-
 pub(crate) fn current_expected_glossary_usage(
     raw_path: &Path,
     current_glossary: &[GlossaryTerm],
@@ -269,15 +322,7 @@ pub(crate) fn chapter_matches_current_glossary(
         return Ok(false);
     };
 
-    let current_fingerprints: BTreeMap<String, String> = current_glossary
-        .iter()
-        .map(|term| {
-            (
-                glossary_term_key(term),
-                glossary_term_prompt_fingerprint(term),
-            )
-        })
-        .collect();
+    let current_fingerprints = selection_fingerprints(current_glossary);
 
     let tracked_terms_match = usage
         .terms
@@ -348,20 +393,12 @@ pub(crate) fn exact_rerun_decision(
     chapter_state: &ChapterState,
     current_glossary: &[GlossaryTerm],
     injection_mode: InjectionMode,
-) -> Result<Option<GlossaryRerunDecision>> {
+) -> Result<Option<RerunDecision>> {
     let Some(usage) = &chapter_state.glossary_usage else {
         return Ok(None);
     };
 
-    let current_fingerprints: BTreeMap<String, String> = current_glossary
-        .iter()
-        .map(|term| {
-            (
-                glossary_term_key(term),
-                glossary_term_prompt_fingerprint(term),
-            )
-        })
-        .collect();
+    let current_fingerprints = selection_fingerprints(current_glossary);
 
     let fingerprint_changed_keys: Vec<String> = usage
         .terms
@@ -374,11 +411,12 @@ pub(crate) fn exact_rerun_decision(
         .collect();
 
     if !fingerprint_changed_keys.is_empty() {
-        return Ok(Some(GlossaryRerunDecision {
+        return Ok(Some(RerunDecision {
             reason: format!(
                 "Imported or exported glossary term changed: {}",
                 fingerprint_changed_keys.join(", ")
             ),
+            is_approximate: false,
         }));
     }
 
@@ -399,28 +437,30 @@ pub(crate) fn exact_rerun_decision(
             return Ok(None);
         }
 
-        return Ok(Some(GlossaryRerunDecision {
+        return Ok(Some(RerunDecision {
             reason: format!(
                 "Smart glossary selection changed fallback behavior: {} -> {}",
                 tracked_usage_state_label(usage),
                 tracked_usage_state_label(&expected_usage)
             ),
+            is_approximate: false,
         }));
     }
 
     if usage.injection_mode == InjectionMode::Full
         || usage.used_fallback_to_full != expected_usage.used_fallback_to_full
     {
-        return Ok(Some(GlossaryRerunDecision {
+        return Ok(Some(RerunDecision {
             reason: format!(
                 "Smart glossary selection changed fallback behavior: {} -> {}",
                 tracked_usage_state_label(usage),
                 tracked_usage_state_label(&expected_usage)
             ),
+            is_approximate: false,
         }));
     }
 
-    Ok(Some(GlossaryRerunDecision {
+    Ok(Some(RerunDecision {
         reason: format!(
             "Smart glossary selection changed: {}",
             selection_changed_keys
@@ -428,6 +468,7 @@ pub(crate) fn exact_rerun_decision(
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
+        is_approximate: false,
     }))
 }
 
@@ -436,7 +477,7 @@ pub(crate) fn approximate_smart_rerun_decision(
     previous_glossary_state: &GlossaryState,
     current_glossary: &[GlossaryTerm],
     changed_term_keys: &BTreeSet<String>,
-) -> Result<Option<GlossaryRerunDecision>> {
+) -> Result<Option<RerunDecision>> {
     let chapter_text = std::fs::read_to_string(raw_path)
         .with_context(|| format!("Failed to read {}", raw_path.display()))?;
 
@@ -451,10 +492,15 @@ pub(crate) fn approximate_smart_rerun_decision(
         select_terms_for_text(current_glossary, &chapter_text, InjectionMode::Smart);
 
     if previous_selection.used_fallback_to_full || current_selection.used_fallback_to_full {
-        return Ok(full_glossary_rerun_reason(changed_term_keys).map(|reason| {
-            GlossaryRerunDecision {
-                reason: format!("Approximate rerun after smart fallback matched: {}", reason),
-            }
+        if changed_term_keys.is_empty() {
+            return Ok(None);
+        }
+        return Ok(Some(RerunDecision {
+            reason: format!(
+                "Approximate rerun after smart fallback matched: Full glossary changed: {}",
+                changed_term_keys.iter().cloned().collect::<Vec<_>>().join(", ")
+            ),
+            is_approximate: true,
         }));
     }
 
@@ -465,11 +511,12 @@ pub(crate) fn approximate_smart_rerun_decision(
     if changed_keys.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(GlossaryRerunDecision {
+        Ok(Some(RerunDecision {
             reason: format!(
                 "Approximate smart glossary selection changed: {}",
                 changed_keys.into_iter().collect::<Vec<_>>().join(", ")
             ),
+            is_approximate: true,
         }))
     }
 }
@@ -530,9 +577,15 @@ pub(crate) fn build_glossary_rerun_plan(
 
         match previous_glossary_state.injection_mode {
             InjectionMode::Full => {
-                if let Some(reason) = full_glossary_rerun_reason(&changed_term_keys) {
-                    plan.forced_chapters
-                        .insert(chapter_path, GlossaryRerunDecision { reason });
+                if !changed_term_keys.is_empty() {
+                    let reason = format!(
+                        "Full glossary changed: {}",
+                        changed_term_keys.iter().cloned().collect::<Vec<_>>().join(", ")
+                    );
+                    plan.forced_chapters.insert(
+                        chapter_path,
+                        RerunDecision { reason, is_approximate: false },
+                    );
                 }
             }
             InjectionMode::Smart => {
@@ -590,8 +643,13 @@ pub(crate) fn build_source_rerun_plan(
         let current_hash = normalized_source_text_hash(&chapter_text);
 
         if current_hash != *previous_hash {
-            plan.forced_chapters
-                .insert(chapter_path, "Chapter source changed".to_string());
+            plan.forced_chapters.insert(
+                chapter_path,
+                RerunDecision {
+                    reason: "Chapter source changed".to_string(),
+                    is_approximate: false,
+                },
+            );
         }
     }
 
@@ -599,19 +657,16 @@ pub(crate) fn build_source_rerun_plan(
 }
 
 pub(crate) fn combine_rerun_decisions(
-    glossary_decision: Option<&GlossaryRerunDecision>,
-    source_reason: Option<&String>,
-) -> Option<ChapterRerunDecision> {
-    match (glossary_decision, source_reason) {
+    glossary_decision: Option<&RerunDecision>,
+    source_decision: Option<&RerunDecision>,
+) -> Option<RerunDecision> {
+    match (glossary_decision, source_decision) {
         (None, None) => None,
-        (Some(glossary_decision), None) => Some(ChapterRerunDecision {
-            reason: glossary_decision.reason.clone(),
-        }),
-        (None, Some(source_reason)) => Some(ChapterRerunDecision {
-            reason: source_reason.clone(),
-        }),
-        (Some(glossary_decision), Some(source_reason)) => Some(ChapterRerunDecision {
-            reason: format!("{}; {}", source_reason, glossary_decision.reason),
+        (Some(g), None) => Some(g.clone()),
+        (None, Some(s)) => Some(s.clone()),
+        (Some(g), Some(s)) => Some(RerunDecision {
+            reason: format!("{}; {}", g.reason, s.reason),
+            is_approximate: g.is_approximate || s.is_approximate,
         }),
     }
 }
@@ -1381,7 +1436,7 @@ mod tests {
 
         assert_eq!(plan.forced_chapters.len(), 1);
         assert_eq!(
-            plan.forced_chapters.get("chapter1.md").map(String::as_str),
+            plan.forced_chapters.get("chapter1.md").map(|d| d.reason.as_str()),
             Some("Chapter source changed")
         );
         assert_eq!(plan.untracked_chapters, 0);
@@ -1458,28 +1513,20 @@ mod tests {
 
     #[test]
     fn test_combine_rerun_decisions_merges_source_and_glossary_reasons() {
-        let glossary_decision = GlossaryRerunDecision {
+        let glossary_decision = RerunDecision {
             reason: "Full glossary changed: hero".to_string(),
+            is_approximate: false,
         };
-        let source_reason = "Chapter source changed".to_string();
+        let source_decision = RerunDecision {
+            reason: "Chapter source changed".to_string(),
+            is_approximate: false,
+        };
 
         let decision =
-            combine_rerun_decisions(Some(&glossary_decision), Some(&source_reason)).unwrap();
+            combine_rerun_decisions(Some(&glossary_decision), Some(&source_decision)).unwrap();
         assert_eq!(
             decision.reason,
-            "Chapter source changed; Full glossary changed: hero"
-        );
-    }
-
-    #[test]
-    fn test_chapter_translation_injection_mode_keeps_smart_on_full_rerun_reason() {
-        let rerun_decision = ChapterRerunDecision {
-            reason: "Full glossary changed: hero".to_string(),
-        };
-
-        assert_eq!(
-            chapter_translation_injection_mode(InjectionMode::Smart, Some(&rerun_decision)),
-            InjectionMode::Smart
+            "Full glossary changed: hero; Chapter source changed"
         );
     }
 

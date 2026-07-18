@@ -1,13 +1,40 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key};
-use crate::output::{stderr_detail_kv, stderr_status as output_status, verbose_detail_kv};
-use crate::translate::rerun::{
-    ChapterPreview, ChapterRerunDecision, EMPTY_CHAPTER_SKIP_REASON, GlossaryRerunPlan,
-    OUTPUT_EXISTS_SKIP_REASON, OUTPUT_MISSING_REASON, PreviewAction, PreviewSummary,
-    SourceRerunPlan, combine_rerun_decisions,
-};
+use crate::output::{stderr_detail_kv, stderr_status, verbose_detail_kv};
+use crate::translate::rerun::{GlossaryRerunPlan, RerunDecision, SourceRerunPlan, combine_rerun_decisions};
 use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
+
+pub(crate) const EMPTY_CHAPTER_SKIP_REASON: &str = "Chapter is empty";
+pub(crate) const OUTPUT_EXISTS_SKIP_REASON: &str = "Output exists and no rerun reason matched";
+pub(crate) const OUTPUT_MISSING_REASON: &str = "No output exists yet";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviewAction {
+    Translate,
+    Retranslate,
+    Skip,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ChapterPreview {
+    pub chapter_path: String,
+    pub action: PreviewAction,
+    pub reason: String,
+    pub approximate: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct PreviewSummary {
+    pub translate: usize,
+    pub retranslate: usize,
+    pub skip: usize,
+    pub approximate_reruns: usize,
+    pub exact_reruns: usize,
+    pub empty_skips: usize,
+    pub output_exists_skips: usize,
+    pub output_missing: usize,
+}
 
 pub(crate) fn preview_translation_run(
     chapters: &VecDeque<PathBuf>,
@@ -27,13 +54,13 @@ pub(crate) fn preview_translation_run(
     )?;
     let summary = summarize_previews(&previews);
 
-    output_status("Planned actions");
+    stderr_status("Planned actions");
     for preview in &previews {
-        output_status(preview_display_line(preview));
+        stderr_status(preview_display_line(preview));
         verbose_detail_kv("Reason", &preview.reason);
     }
 
-    output_status("Preview summary");
+    stderr_status("Preview summary");
     stderr_detail_kv("Translate", summary.translate);
     stderr_detail_kv("Retranslate", summary.retranslate);
     stderr_detail_kv("Skip", summary.skip);
@@ -91,7 +118,7 @@ pub(crate) fn preview_for_chapter(
     chapter_path: String,
     output_exists: bool,
     options: &crate::translate::cmd::TranslateOptions,
-    rerun_decision: Option<&ChapterRerunDecision>,
+    rerun_decision: Option<&RerunDecision>,
 ) -> Result<ChapterPreview> {
     let chapter_text = std::fs::read_to_string(raw_path)
         .with_context(|| format!("Failed to read {}", raw_path.display()))?;
@@ -127,7 +154,7 @@ pub(crate) fn preview_for_chapter(
             chapter_path,
             action: PreviewAction::Retranslate,
             reason: decision.reason.clone(),
-            approximate: decision.reason.starts_with("Approximate "),
+            approximate: decision.is_approximate,
         });
     }
 
@@ -199,9 +226,7 @@ pub(crate) fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::translate::rerun::{
-        ChapterRerunDecision, EMPTY_CHAPTER_SKIP_REASON, OUTPUT_EXISTS_SKIP_REASON,
-    };
+    use crate::translate::rerun::RerunDecision;
     use crate::translate::test_helpers::translate_options;
 
     #[test]
@@ -232,8 +257,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let raw_path = dir.path().join("chapter1.md");
         std::fs::write(&raw_path, "content").unwrap();
-        let rerun_decision = ChapterRerunDecision {
+        let rerun_decision = RerunDecision {
             reason: "Approximate smart glossary selection changed: hero".to_string(),
+            is_approximate: true,
         };
 
         let preview = preview_for_chapter(

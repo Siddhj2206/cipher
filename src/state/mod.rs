@@ -1,5 +1,3 @@
-pub mod status;
-
 use crate::book::paths::BookPaths;
 use crate::glossary::InjectionMode;
 use crate::translate::TranslationUsage;

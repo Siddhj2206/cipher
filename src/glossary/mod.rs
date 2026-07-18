@@ -126,6 +126,7 @@ fn normalize_key(s: &str) -> String {
         .to_lowercase()
 }
 
+#[derive(Debug, Clone)]
 pub struct SelectionResult {
     pub terms: Vec<GlossaryTerm>,
     pub total_count: usize,
