@@ -19,7 +19,8 @@ use crate::translate::rerun::{
     RerunDecision, build_chapter_glossary_usage,
 };
 use crate::translate::{
-    AcceptedTranslation, ProviderTranslationResult, TranslationUsage, Translator,
+    AcceptedTranslation, ProviderTextResult, ProviderTranslationResult, TranslationUsage,
+    Translator,
 };
 use crate::validate::{ValidationOptions, validate_translation};
 use anyhow::{Context, Result};
@@ -315,6 +316,37 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
 
 const MAX_API_RETRIES: usize = 3;
 
+async fn call_translation_with_retry(
+    translator: &Translator,
+    chapter_text: &str,
+    terms: &[GlossaryTerm],
+    style_guide: &Option<String>,
+    output_config: &OutputConfig,
+) -> (Option<ProviderTextResult>, Option<String>, u32) {
+    for attempt in 1..=MAX_API_RETRIES as u32 {
+        match translator
+            .translate_chapter(chapter_text, terms, style_guide.clone(), output_config.clone())
+            .await
+        {
+            Ok(resp) => return (Some(resp), None, attempt),
+            Err(e) => {
+                let msg = format!("API error: {e}");
+                if attempt < MAX_API_RETRIES as u32 {
+                    let delay = 2u64.pow(attempt);
+                    verbose_detail_kv(
+                        "Attempt",
+                        format!("Attempt {attempt}/{MAX_API_RETRIES} failed: {e}. Retrying in {delay}s."),
+                    );
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                } else {
+                    return (None, Some(msg), attempt);
+                }
+            }
+        }
+    }
+    (None, Some("API error".to_string()), MAX_API_RETRIES as u32)
+}
+
 async fn attempt_translation(
     translators: &Translators,
     chapter_text: &str,
@@ -327,125 +359,95 @@ async fn attempt_translation(
     Option<String>,
     Option<TranslationUsage>,
 ) {
-    let mut last_error: Option<String> = None;
-    let mut failed_usage: Option<TranslationUsage> = None;
     let validation_options = ValidationOptions {
         require_markdown_heading: render_starts_with_markdown_heading(output_config),
     };
 
-    for api_attempt in 1..=MAX_API_RETRIES {
+    let (translation_result, api_error, api_attempt) = call_translation_with_retry(
+        &translators.translation,
+        chapter_text,
+        &selection.terms,
+        style_guide,
+        output_config,
+    )
+    .await;
+
+    let Some(resp) = translation_result else {
+        return (None, api_error, None);
+    };
+
+    let rendered = render_chapter_markdown(&resp.chapter, output_config);
+    let mut validation_errors = validate_structured_chapter(&resp.chapter, output_config);
+    validation_errors.extend(validate_translation(&rendered, validation_options).errors().iter().cloned());
+    let original_usage = resp.usage.clone();
+
+    if validation_errors.is_empty() {
+        let result = finish_accepted_translation(
+            &translators.glossary,
+            chapter_text,
+            resp.chapter,
+            rendered,
+            glossary,
+            resp.usage,
+        )
+        .await;
+        return (Some(result), None, None);
+    }
+
+    let mut last_error = Some(format!("Validation failed: {}", validation_errors.join(", ")));
+    let mut failed_usage = Some(original_usage.clone());
+
+    if api_attempt == 1 {
+        verbose_detail_kv(
+            "Validation",
+            format!("{} Attempting repair.", validation_errors.join(", ")),
+        );
+
         match translators
-            .translation
-            .translate_chapter(
+            .repair
+            .repair_chapter(
                 chapter_text,
+                rendered,
                 &selection.terms,
                 style_guide.clone(),
+                validation_errors,
                 output_config.clone(),
             )
             .await
         {
-            Ok(resp) => {
-                let rendered = render_chapter_markdown(&resp.chapter, output_config);
-                let mut validation_errors =
-                    validate_structured_chapter(&resp.chapter, output_config);
-                let rendered_validation = validate_translation(&rendered, validation_options);
-                validation_errors.extend(rendered_validation.errors().iter().cloned());
-                let original_translation_usage = resp.usage.clone();
-                failed_usage = Some(original_translation_usage.clone());
+            Ok(repair_resp) => {
+                let repaired_rendered =
+                    render_chapter_markdown(&repair_resp.chapter, output_config);
+                let mut combined_usage = original_usage;
+                combined_usage += repair_resp.usage.clone();
+                failed_usage = Some(combined_usage.clone());
+                let mut repair_errors =
+                    validate_structured_chapter(&repair_resp.chapter, output_config);
+                repair_errors
+                    .extend(validate_translation(&repaired_rendered, validation_options).errors().iter().cloned());
 
-                if validation_errors.is_empty() {
+                if repair_errors.is_empty() {
+                    verbose_detail_kv("Repair", "success");
                     let result = finish_accepted_translation(
                         &translators.glossary,
                         chapter_text,
-                        resp.chapter,
-                        rendered,
+                        repair_resp.chapter,
+                        repaired_rendered,
                         glossary,
-                        resp.usage,
+                        combined_usage,
                     )
                     .await;
                     return (Some(result), None, None);
                 }
 
-                last_error = Some(format!(
-                    "Validation failed: {}",
-                    validation_errors.join(", ")
-                ));
-
-                if api_attempt == 1 {
-                    verbose_detail_kv(
-                        "Validation",
-                        format!("{} Attempting repair.", validation_errors.join(", ")),
-                    );
-
-                    match translators
-                        .repair
-                        .repair_chapter(
-                            chapter_text,
-                            rendered,
-                            &selection.terms,
-                            style_guide.clone(),
-                            validation_errors,
-                            output_config.clone(),
-                        )
-                        .await
-                    {
-                        Ok(repair_resp) => {
-                            let repaired_rendered =
-                                render_chapter_markdown(&repair_resp.chapter, output_config);
-                            let mut combined_usage = original_translation_usage.clone();
-                            combined_usage += repair_resp.usage.clone();
-                            failed_usage = Some(combined_usage.clone());
-                            let mut repair_errors =
-                                validate_structured_chapter(&repair_resp.chapter, output_config);
-                            let repair_validation =
-                                validate_translation(&repaired_rendered, validation_options);
-                            repair_errors.extend(repair_validation.errors().iter().cloned());
-
-                            if repair_errors.is_empty() {
-                                verbose_detail_kv("Repair", "success");
-                                let result = finish_accepted_translation(
-                                    &translators.glossary,
-                                    chapter_text,
-                                    repair_resp.chapter,
-                                    repaired_rendered,
-                                    glossary,
-                                    combined_usage,
-                                )
-                                .await;
-                                return (Some(result), None, None);
-                            } else {
-                                last_error = Some(format!(
-                                    "Repair failed validation: {}",
-                                    repair_errors.join(", ")
-                                ));
-                                verbose_detail_kv("Repair", last_error.as_ref().unwrap());
-                            }
-                        }
-                        Err(e) => {
-                            last_error = Some(format!("Repair request failed: {}", e));
-                            verbose_detail_kv("Repair", last_error.as_ref().unwrap());
-                        }
-                    }
-                }
-
-                break;
+                let msg = format!("Repair failed validation: {}", repair_errors.join(", "));
+                verbose_detail_kv("Repair", &msg);
+                last_error = Some(msg);
             }
             Err(e) => {
-                last_error = Some(format!("API error: {}", e));
-                if api_attempt < MAX_API_RETRIES {
-                    let delay_secs = 2u64.pow(api_attempt as u32);
-                    verbose_detail_kv(
-                        "Attempt",
-                        format!(
-                            "Attempt {}/{} failed: {}. Retrying in {}s.",
-                            api_attempt,
-                            MAX_API_RETRIES,
-                            last_error.as_ref().unwrap(),
-                            delay_secs
-                        ),
-                    );
-                    tokio::time::sleep(std::time::Duration::from_secs(delay_secs)).await;
-                }
+                let msg = format!("Repair request failed: {e}");
+                verbose_detail_kv("Repair", &msg);
+                last_error = Some(msg);
             }
         }
     }
