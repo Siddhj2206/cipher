@@ -10,6 +10,10 @@ keywords = ["translation", "glossary", "llm", "cli", "book"]
 name = "cipher"
 path = "src/lib.rs"
 
+[[bin]]
+name = "cli-prototype"
+path = "src/bin/cli-prototype.rs"
+
 [dependencies]
 anyhow = "1.0.101"
 async-trait = "0.1.89"
