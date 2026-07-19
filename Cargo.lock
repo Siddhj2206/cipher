@@ -1246,7 +1246,6 @@ dependencies = [
  "async-trait",
  "chrono",
  "clap",
- "console 0.16.4",
  "dialoguer",
  "directories",
  "indicatif 0.18.6",
