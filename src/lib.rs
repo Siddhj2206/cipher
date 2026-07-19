@@ -225,14 +225,6 @@ pub enum ProfileCommands {
     },
 }
 
-fn run_profile_command(
-    config: &mut config::GlobalConfig,
-    command: ProfileCommands,
-    no_input: bool,
-) -> anyhow::Result<()> {
-    config::cli::run_profile_command(config, command, no_input)
-}
-
 fn load_global_config() -> anyhow::Result<config::GlobalConfig> {
     config::GlobalConfig::load().context("Failed to load global config")
 }
@@ -331,7 +323,7 @@ fn run_doctor_command(book_dir: Option<PathBuf>) -> anyhow::Result<()> {
 
 fn run_profile_subcommand(command: ProfileCommands, no_input: bool) -> anyhow::Result<()> {
     let mut config = load_global_config()?;
-    run_profile_command(&mut config, command, no_input)
+    config::cli::run_profile_command(&mut config, command, no_input)
 }
 
 pub async fn run_command(command: Commands) -> anyhow::Result<i32> {
