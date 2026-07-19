@@ -1,3 +1,5 @@
+use crate::state::normalize_chapter_path;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -121,5 +123,169 @@ impl BookLayout {
 
     pub fn is_using_legacy_out(&self) -> bool {
         self.paths.is_using_legacy_out()
+    }
+}
+
+pub fn chapter_state_key(raw_dir: &Path, chapter_file: &Path) -> Result<String> {
+    let relative_path = chapter_file
+        .strip_prefix(raw_dir)
+        .with_context(|| format!("Failed to relativize {}", chapter_file.display()))?;
+    Ok(normalize_chapter_path(relative_path))
+}
+
+pub fn chapter_output_path(out_dir: &Path, chapter_file: &Path) -> Result<PathBuf> {
+    let filename = chapter_file
+        .file_name()
+        .context("Invalid chapter filename")?;
+    Ok(out_dir.join(filename))
+}
+
+pub(crate) fn discover_chapters(raw_dir: &Path) -> Result<Vec<PathBuf>> {
+    let mut chapters = Vec::new();
+
+    if !raw_dir.exists() {
+        return Ok(chapters);
+    }
+
+    for entry in std::fs::read_dir(raw_dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.extension().map(|e| e == "md").unwrap_or(false) {
+            chapters.push(path);
+        }
+    }
+
+    chapters.sort_by(|a, b| {
+        let a_name = a
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+        let b_name = b
+            .file_stem()
+            .map(|s| s.to_string_lossy())
+            .unwrap_or_default();
+
+        let a_num = extract_number(&a_name);
+        let b_num = extract_number(&b_name);
+
+        match (a_num, b_num) {
+            (Some(n1), Some(n2)) => n1.cmp(&n2),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => a_name.cmp(&b_name),
+        }
+    });
+
+    Ok(chapters)
+}
+
+pub(crate) fn extract_number(filename: &str) -> Option<u32> {
+    let digits: String = filename
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
+
+    if digits.is_empty() {
+        None
+    } else {
+        digits.parse().ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_extract_number() {
+        assert_eq!(extract_number("chapter01"), Some(1));
+        assert_eq!(extract_number("chapter1"), Some(1));
+        assert_eq!(extract_number("chapter10"), Some(10));
+        assert_eq!(extract_number("01-chapter"), Some(1));
+        assert_eq!(extract_number("no-number"), None);
+        assert_eq!(extract_number(""), None);
+    }
+
+    #[test]
+    fn chapter_state_key_returns_normalized_relative_path() {
+        let raw = Path::new("/book/raw");
+        let file = Path::new("/book/raw/01-intro.md");
+        let key = chapter_state_key(raw, file).unwrap();
+        assert_eq!(key, "01-intro.md");
+    }
+
+    #[test]
+    fn chapter_output_path_joins_filename_with_out_dir() {
+        let out = Path::new("/book/tl");
+        let file = Path::new("/book/raw/01-intro.md");
+        let path = chapter_output_path(out, file).unwrap();
+        assert_eq!(path, Path::new("/book/tl/01-intro.md"));
+    }
+
+    #[test]
+    fn test_extract_number_multiple_groups() {
+        assert_eq!(extract_number("ch3_part2"), Some(3));
+        assert_eq!(extract_number("v2_chapter10"), Some(2));
+    }
+
+    #[test]
+    fn test_discover_chapters_empty_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let chapters = discover_chapters(dir.path()).unwrap();
+        assert!(chapters.is_empty());
+    }
+
+    #[test]
+    fn test_discover_chapters_nonexistent_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let non_existent = dir.path().join("does_not_exist");
+        let chapters = discover_chapters(&non_existent).unwrap();
+        assert!(chapters.is_empty());
+    }
+
+    #[test]
+    fn test_discover_chapters_filters_non_md() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chapter01.md"), "# Ch 1").unwrap();
+        std::fs::write(dir.path().join("notes.txt"), "notes").unwrap();
+        std::fs::write(dir.path().join("image.png"), "binary").unwrap();
+
+        let chapters = discover_chapters(dir.path()).unwrap();
+        assert_eq!(chapters.len(), 1);
+        assert!(chapters[0].file_name().unwrap().to_str().unwrap() == "chapter01.md");
+    }
+
+    #[test]
+    fn test_discover_chapters_sorted_by_number() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("chapter10.md"), "# Ch 10").unwrap();
+        std::fs::write(dir.path().join("chapter2.md"), "# Ch 2").unwrap();
+        std::fs::write(dir.path().join("chapter1.md"), "# Ch 1").unwrap();
+
+        let chapters = discover_chapters(dir.path()).unwrap();
+        let names: Vec<_> = chapters
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["chapter1.md", "chapter2.md", "chapter10.md"]);
+    }
+
+    #[test]
+    fn test_discover_chapters_non_numeric_sorted_alpha() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("prologue.md"), "# Prologue").unwrap();
+        std::fs::write(dir.path().join("epilogue.md"), "# Epilogue").unwrap();
+        std::fs::write(dir.path().join("chapter1.md"), "# Ch 1").unwrap();
+
+        let chapters = discover_chapters(dir.path()).unwrap();
+        let names: Vec<_> = chapters
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names[0], "chapter1.md");
+        assert_eq!(names[1], "epilogue.md");
+        assert_eq!(names[2], "prologue.md");
     }
 }

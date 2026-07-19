@@ -2,21 +2,21 @@ use std::path::Path;
 
 use crate::book::BookLayout;
 use crate::config::{self, GlobalConfig};
-use crate::output::{detail, detail_kv};
+use crate::output::{detail, detail_kv, section, status};
 
 pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
     let layout = BookLayout::discover(dir);
 
-    println!("Book doctor");
+    section("Book doctor");
     detail_kv("Book directory", layout.paths.root.display());
 
-    println!("Configuration");
+    section("Configuration");
     detail_kv(
         "cipher.toml",
         format_path_status(&layout.paths.config_toml, layout.exists.config_toml),
     );
 
-    println!("Content");
+    section("Content");
     detail_kv(
         "raw/",
         format_path_status(&layout.paths.raw_dir, layout.exists.raw_dir),
@@ -45,7 +45,7 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
         detail_kv("Effective output", effective_out.display());
     }
 
-    println!("Glossary and style");
+    section("Glossary and style");
     detail_kv(
         "glossary.json",
         format_path_status(&layout.paths.glossary_json, layout.exists.glossary_json),
@@ -55,16 +55,16 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
         format_path_status(&layout.paths.style_md, layout.exists.style_md),
     );
 
-    println!("Tool state");
+    section("Tool state");
     detail_kv(
         ".cipher/",
         format_path_status(&layout.paths.state_dir, layout.exists.state_dir),
     );
 
     if layout.is_valid_book() {
-        println!("Book layout looks valid");
+        status("Book layout looks valid");
     } else {
-        println!("Book layout has issues");
+        status("Book layout has issues");
         if !layout.exists.root_dir {
             detail("Book directory does not exist");
         }
@@ -77,7 +77,7 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
 }
 
 fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
-    println!("Profile configuration");
+    status("Profile configuration");
     let book_config = crate::book::load_book_config(&layout.paths.config_toml).unwrap_or_default();
     let profile_name = config.effective_profile_name(book_config.profile.as_deref());
     let repair_profile_name = book_config.repair_profile.as_deref().or(profile_name);
@@ -147,4 +147,21 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
 fn format_path_status(path: &Path, exists: bool) -> String {
     let status = if exists { "exists" } else { "missing" };
     format!("{} ({})", status, path.display())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_path_status_exists() {
+        let result = format_path_status(Path::new("/a/b.md"), true);
+        assert_eq!(result, "exists (/a/b.md)");
+    }
+
+    #[test]
+    fn format_path_status_missing() {
+        let result = format_path_status(Path::new("/a/b.md"), false);
+        assert_eq!(result, "missing (/a/b.md)");
+    }
 }

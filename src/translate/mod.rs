@@ -1,6 +1,12 @@
+pub mod backup;
 pub mod cmd;
+pub mod orchestrate;
+pub mod preview;
 pub mod prompt;
 pub mod providers;
+pub mod rerun;
+#[cfg(test)]
+pub mod test_helpers;
 pub mod types;
 
 pub use crate::translate::cmd::{TranslateOptions, translate_book};
@@ -19,6 +25,10 @@ pub struct Translator {
 }
 
 impl Translator {
+    pub fn new(provider: Box<dyn providers::Provider>) -> Self {
+        Self { provider }
+    }
+
     pub fn from_config(config: &GlobalConfig, profile_name: &str) -> Result<Self> {
         let provider = providers::build_provider(config, profile_name)
             .with_context(|| format!("Failed to build provider for profile '{}'", profile_name))?;
@@ -76,5 +86,56 @@ impl Translator {
             existing_glossary_terms: existing_glossary_terms.to_vec(),
         };
         self.provider.extract_glossary(request).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
+
+    fn config_with_valid_profile() -> GlobalConfig {
+        let mut config = GlobalConfig::default();
+        config.providers.insert(
+            "gemini".to_string(),
+            ProviderConfig {
+                kind: ProviderKind::Gemini,
+                keys: vec![ApiKey {
+                    value: "test-key".to_string(),
+                    name: Some("default".to_string()),
+                }],
+                base_url: None,
+            },
+        );
+        config.profiles.insert(
+            "valid".to_string(),
+            ProfileConfig {
+                provider: "gemini".to_string(),
+                model: "gemini-2.5-flash".to_string(),
+                key: Some("default".to_string()),
+            },
+        );
+        config
+    }
+
+    #[test]
+    fn translator_from_config_constructs_for_valid_profile() {
+        let config = config_with_valid_profile();
+        match Translator::from_config(&config, "valid") {
+            Ok(_) => {} // success
+            Err(e) => panic!("from_config should succeed: {e}"),
+        }
+    }
+
+    #[test]
+    fn translator_from_config_fails_for_missing_profile() {
+        let config = GlobalConfig::default();
+        match Translator::from_config(&config, "nonexistent") {
+            Err(e) => {
+                let msg = format!("{e:#}");
+                assert!(msg.contains("not found"), "expected 'not found' in '{msg}'");
+            }
+            Ok(_) => panic!("expected error"),
+        }
     }
 }

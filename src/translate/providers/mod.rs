@@ -4,6 +4,7 @@
 
 pub mod gemini;
 pub mod openai;
+pub mod shared;
 
 use crate::config::{GlobalConfig, ProviderKind};
 use crate::translate::{
@@ -76,5 +77,105 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
                 Some(base_url),
             )?))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
+    use std::collections::BTreeMap;
+
+    fn config_with_profile() -> GlobalConfig {
+        let mut config = GlobalConfig {
+            default_profile: None,
+            providers: BTreeMap::new(),
+            profiles: BTreeMap::new(),
+        };
+        config.providers.insert(
+            "gemini".to_string(),
+            ProviderConfig {
+                kind: ProviderKind::Gemini,
+                keys: vec![ApiKey {
+                    value: "test-key".to_string(),
+                    name: Some("default".to_string()),
+                }],
+                base_url: None,
+            },
+        );
+        config.profiles.insert(
+            "valid".to_string(),
+            ProfileConfig {
+                provider: "gemini".to_string(),
+                model: "gemini-2.5-flash".to_string(),
+                key: Some("default".to_string()),
+            },
+        );
+        config
+    }
+
+    fn assert_provider_error(config: &GlobalConfig, name: &str, expected: &str) {
+        match build_provider(config, name) {
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(msg.contains(expected), "expected '{expected}' in '{msg}'");
+            }
+            Ok(_) => panic!("expected error for profile '{name}'"),
+        }
+    }
+
+    #[test]
+    fn build_provider_profile_not_found() {
+        assert_provider_error(&GlobalConfig::default(), "nonexistent", "not found");
+    }
+
+    #[test]
+    fn build_provider_provider_not_found() {
+        let mut config = config_with_profile();
+        config.profiles.insert(
+            "bad".to_string(),
+            ProfileConfig {
+                provider: "nonexistent".to_string(),
+                model: "m".to_string(),
+                key: None,
+            },
+        );
+        assert_provider_error(&config, "bad", "not found");
+    }
+
+    #[test]
+    fn build_provider_missing_api_key_label() {
+        let mut config = config_with_profile();
+        config.profiles.insert(
+            "nokey".to_string(),
+            ProfileConfig {
+                provider: "gemini".to_string(),
+                model: "m".to_string(),
+                key: Some("nonexistent-label".to_string()),
+            },
+        );
+        assert_provider_error(&config, "nokey", "No API key");
+    }
+
+    #[test]
+    fn build_provider_no_api_key_at_all() {
+        let mut config = config_with_profile();
+        config.providers.insert(
+            "empty-provider".to_string(),
+            ProviderConfig {
+                kind: ProviderKind::Gemini,
+                keys: vec![],
+                base_url: None,
+            },
+        );
+        config.profiles.insert(
+            "empty-key".to_string(),
+            ProfileConfig {
+                provider: "empty-provider".to_string(),
+                model: "m".to_string(),
+                key: None,
+            },
+        );
+        assert_provider_error(&config, "empty-key", "No API key");
     }
 }

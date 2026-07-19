@@ -26,7 +26,7 @@ const FORMATTING_REQUIREMENTS: &str = r#"**Formatting Requirements: [IMPORTANT]*
   * Maintain proper spacing between paragraphs.
   * Keep dialogue formatting intact (e.g., use of quotation marks and new lines for each speaker)."#;
 
-fn build_style_section(style_guide: &Option<String>) -> String {
+pub(crate) fn build_style_section(style_guide: &Option<String>) -> String {
     match style_guide {
         Some(guide) if !guide.trim().is_empty() => {
             format!(
@@ -213,7 +213,7 @@ fn build_existing_glossary_keys_section(terms: &[GlossaryTerm]) -> String {
     }
 }
 
-fn build_glossary_section(terms: &[GlossaryTerm]) -> String {
+pub(crate) fn build_glossary_section(terms: &[GlossaryTerm]) -> String {
     if terms.is_empty() {
         "(No glossary terms available)".to_string()
     } else {

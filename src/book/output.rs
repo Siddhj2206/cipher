@@ -1,20 +1,11 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OutputConfig {
     #[serde(default)]
     pub fields: OutputFieldsConfig,
     #[serde(default)]
     pub render: OutputRenderConfig,
-}
-
-impl Default for OutputConfig {
-    fn default() -> Self {
-        Self {
-            fields: OutputFieldsConfig::default(),
-            render: OutputRenderConfig::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -185,5 +176,22 @@ mod tests {
 
         assert!(errors.iter().any(|e| e.contains("chapter_number")));
         assert!(errors.iter().any(|e| e.contains("content")));
+    }
+
+    #[test]
+    fn render_starts_with_markdown_heading_true() {
+        let config = OutputConfig::default();
+        assert!(render_starts_with_markdown_heading(&config));
+    }
+
+    #[test]
+    fn render_starts_with_markdown_heading_false() {
+        let config = OutputConfig {
+            render: OutputRenderConfig {
+                template: "plain text".to_string(),
+            },
+            ..OutputConfig::default()
+        };
+        assert!(!render_starts_with_markdown_heading(&config));
     }
 }

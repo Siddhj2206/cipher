@@ -1,0 +1,22 @@
+#!/bin/sh
+# Pre-commit hook: format check, clippy, and test
+
+set -e
+
+echo "--- cargo fmt --check ---"
+cargo fmt --check || {
+    echo "ERROR: Format check failed. Run 'cargo fmt' to fix."
+    exit 1
+}
+
+echo "--- cargo clippy ---"
+cargo clippy --quiet -- -D warnings || {
+    echo "ERROR: Clippy found issues. Fix them before committing."
+    exit 1
+}
+
+echo "--- cargo test ---"
+cargo test || {
+    echo "ERROR: Tests failed. Fix them before committing."
+    exit 1
+}

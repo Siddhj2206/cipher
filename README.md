@@ -134,27 +134,29 @@ Translate a book. If `book_dir` is omitted, the current directory is used.
 ```bash
 cipher translate
 cipher translate my-book
-cipher translate my-book --profile fast
-cipher translate my-book --profile best --repair-profile fast --glossary-profile cheap
-cipher translate my-book --overwrite
-cipher translate my-book --dry-run
+cipher translate my-book -p fast
+cipher translate my-book -p best --repair-profile fast --glossary-profile cheap
+cipher translate my-book -o
+cipher translate my-book -d
 cipher translate my-book --fail-fast
 cipher translate my-book --rerun
-cipher translate my-book --rerun-affected-glossary
-cipher translate my-book --rerun-affected-chapters
+cipher translate my-book --rerun=glossary
+cipher translate my-book --rerun=source
+cipher translate my-book -q
+cipher translate my-book -v
 ```
 
 Current translate flags:
 
-- `--profile <name>`: override the book/global profile for this run
+- `-p, --profile <name>`: override the book/global profile for this run
 - `--repair-profile <name>`: use a different profile for repair requests
 - `--glossary-profile <name>`: use a different profile for glossary extraction requests
-- `--overwrite`: retranslate even when output already exists
-- `--dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
+- `-o, --overwrite`: retranslate even when output already exists
+- `-d, --dry-run`: preview translate/rerun/skip decisions without calling providers or writing state
 - `--fail-fast`: stop on the first failed chapter
-- `--rerun`: retranslate chapters whose tracked source or glossary-relevant inputs changed
-- `--rerun-affected-glossary`: retranslate chapters whose glossary-relevant inputs changed since the tracked baseline
-- `--rerun-affected-chapters`: retranslate chapters whose raw markdown changed since the last tracked chapter state
+- `--rerun[=MODE]`: retranslate chapters affected by tracked changes. Modes: `all` (glossary + source, default), `glossary`, or `source`
+- `-q, --quiet`: suppress non-essential output (progress bar and detail lines)
+- `-v, --verbose`: show detailed per-chapter progress and glossary info
 
 Default behavior:
 
@@ -166,6 +168,7 @@ Default behavior:
 - validation failures get one repair attempt
 - accepted outputs are written atomically
 - overwriting creates timestamped backups in `.cipher/backups/`
+- a progress bar shows translation progress (hidden with `--quiet`)
 
 ### `cipher status <book_dir>`
 
@@ -173,6 +176,7 @@ Show the latest recorded run state for a book.
 
 ```bash
 cipher status my-book
+cipher status --json
 ```
 
 Status currently includes:
@@ -189,7 +193,7 @@ Create a new book scaffold.
 
 ```bash
 cipher init my-book
-cipher init my-book --profile myprofile
+cipher init my-book -p myprofile
 cipher init my-book --from other-book
 cipher init my-book --import-glossary terms.json
 ```
@@ -200,8 +204,9 @@ Manage the canonical glossary.
 
 ```bash
 cipher glossary list my-book
-cipher glossary import my-book new-terms.json
-cipher glossary export my-book backup.json
+cipher glossary list my-book --json
+cipher glossary import my-book --file new-terms.json
+cipher glossary export my-book --output backup.json
 ```
 
 ### `cipher profile <subcommand>`
@@ -210,11 +215,25 @@ Manage profiles.
 
 ```bash
 cipher profile new
+cipher profile new --name my-profile --provider gemini --model gemini-2.5-flash --api-key-file key.txt
+cipher profile new --name my-profile --no-input
 cipher profile list
+cipher profile list --json
 cipher profile show myprofile
+cipher profile show myprofile --json
 cipher profile set-default myprofile
 cipher profile test myprofile
 ```
+
+Non-interactive profile creation flags (all optional; omit for interactive prompts):
+
+- `--name <name>`: profile name (skips interactive prompt)
+- `--provider <name>`: provider name (skips interactive selection)
+- `--model <name>`: model name (skips interactive prompt)
+- `--key-label <label>`: key label to assign (skips interactive key selection)
+- `--api-key-file <path>`: read API key from file (skips key input)
+- `--set-default`: set as default profile
+- `--no-input`: fail if required flags are missing (for scripting)
 
 ### `cipher doctor [book_dir]`
 
@@ -315,14 +334,9 @@ Glossary behavior:
 
 ## Glossary injection behavior
 
-Book config now treats `smart` as the canonical mode.
+`smart` is the canonical/default mode. Legacy `full` config values are treated as `smart`.
 
-- `smart` - select relevant glossary terms for the current chapter
-- legacy `full` config values are deprecated and treated as `smart`
-
-`smart` is the default.
-
-Current smart-mode behavior:
+Smart-mode behavior:
 
 - matches glossary terms against the chapter text using deterministic selection logic
 - always includes terms with empty `og_term`
@@ -345,7 +359,7 @@ Use it for:
 
 Before output is accepted, `cipher` validates it.
 
-Current checks include:
+Validation checks include:
 
 - non-empty output
 - heading presence/shape
@@ -371,7 +385,7 @@ Glossary extraction now runs only after a translation has passed validation.
 
 `cipher` stores internal state under `.cipher/` so runs are resumable and future rerun decisions can be more informed.
 
-Current tracked state includes:
+Tracked state includes:
 
 - run metadata
 - per-chapter result state
@@ -381,27 +395,18 @@ Current tracked state includes:
 
 ### Glossary-aware reruns
 
-`--rerun-affected-glossary` uses tracked state to detect when a chapter should be rerun because glossary-relevant inputs changed.
+`--rerun=glossary` uses tracked state to detect when a chapter should be rerun because glossary-relevant inputs changed.
 
-Current support includes:
-
-- direct comparison between saved chapter glossary state and the current expected glossary usage for tracked chapters
-- changed glossary fingerprints for previously selected terms
-- changed fingerprints for exported terms
-- smart-selection changes when newly relevant or removed terms alter the effective injected set
-- fallback-to-full behavior changes when smart selection now recovers or degrades
-- forward-only incremental replanning for remaining chapters when new glossary terms are discovered mid-run
-
-For tracked chapters, the global glossary baseline is no longer the primary rerun decision input. It is kept mainly for legacy untracked approximation and run-level baseline commits.
+Rerun detection compares saved chapter glossary state against the current expected glossary usage, including changed term fingerprints, smart-selection changes when newly relevant or removed terms alter the effective injected set, and fallback-to-full behavior changes. Forward-only incremental replanning for remaining chapters runs when new glossary terms are discovered mid-run.
 
 ### Overwrite vs rerun
 
 These are different tools:
 
 - `--overwrite` means redo outputs regardless of tracked equivalence
-- `--rerun` means rerun chapters whose tracked source or glossary inputs changed
-- `--rerun-affected-glossary` means rerun chapters whose tracked glossary inputs became stale
-- `--rerun-affected-chapters` means rerun chapters whose tracked raw source became stale
+- `--rerun` (or `--rerun=all`) means rerun chapters whose tracked source or glossary inputs changed
+- `--rerun=glossary` means rerun chapters whose tracked glossary inputs became stale
+- `--rerun=source` means rerun chapters whose tracked raw source became stale
 
 ## Safety guarantees
 
@@ -413,13 +418,11 @@ Current file-safety behavior:
 
 This keeps runs resumable and reduces the chance of corrupted outputs after interruptions.
 
-## Current limitations
+## Limitations
 
-A few areas are intentionally still evolving:
-
-- API keys are not yet stored in a proper secret store
-- dry-run preview is intentionally narrow and currently reports planned actions from the existing rerun rules
-- status output does not yet expose all tracked-vs-approximate rerun details
+- API keys are stored as plain text in global config; a proper secret store is planned
+- dry-run preview reports planned actions from the existing rerun rules
+- status output does not expose all tracked-vs-approximate rerun details
 
 ## Development
 

@@ -1,6 +1,5 @@
-pub mod status;
-
 use crate::book::paths::BookPaths;
+use crate::glossary::InjectionMode;
 use crate::translate::TranslationUsage;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -33,19 +32,15 @@ pub struct RunMetadata {
 pub struct RunOptions {
     pub overwrite: bool,
     pub fail_fast: bool,
-    #[serde(default)]
-    pub rerun: bool,
-    #[serde(default)]
-    pub rerun_affected_glossary: bool,
-    #[serde(default)]
-    pub rerun_affected_chapters: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerun_mode: Option<crate::RerunMode>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct GlossaryState {
     pub version: u32,
     pub updated_at: String,
-    pub injection_mode: GlossaryInjectionMode,
+    pub injection_mode: InjectionMode,
     #[serde(default)]
     pub terms: BTreeMap<String, GlossaryStateTerm>,
 }
@@ -81,7 +76,7 @@ pub struct ChapterState {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ChapterGlossaryUsage {
-    pub injection_mode: GlossaryInjectionMode,
+    pub injection_mode: InjectionMode,
     pub used_fallback_to_full: bool,
     #[serde(default)]
     pub terms: Vec<ChapterGlossaryTerm>,
@@ -91,13 +86,6 @@ pub struct ChapterGlossaryUsage {
 pub struct ChapterGlossaryTerm {
     pub key: String,
     pub fingerprint: String,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum GlossaryInjectionMode {
-    Full,
-    Smart,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -163,10 +151,7 @@ impl RunMetadata {
 }
 
 impl GlossaryState {
-    pub fn new(
-        injection_mode: GlossaryInjectionMode,
-        terms: BTreeMap<String, GlossaryStateTerm>,
-    ) -> Self {
+    pub fn new(injection_mode: InjectionMode, terms: BTreeMap<String, GlossaryStateTerm>) -> Self {
         Self {
             version: GLOSSARY_STATE_VERSION,
             updated_at: now_rfc3339(),
@@ -177,6 +162,7 @@ impl GlossaryState {
 }
 
 impl ChapterState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         chapter_path: String,
         status: ChapterStatus,
@@ -363,22 +349,8 @@ fn save_json<T>(path: &Path, value: &T) -> Result<()>
 where
     T: Serialize,
 {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create {}", parent.display()))?;
-    }
-
     let content = serde_json::to_string_pretty(value)?;
-    let temp_path = path.with_extension("json.tmp");
-    std::fs::write(&temp_path, &content)
-        .with_context(|| format!("Failed to write {}", temp_path.display()))?;
-
-    if let Err(error) = std::fs::rename(&temp_path, path) {
-        let _ = std::fs::remove_file(&temp_path);
-        return Err(error).with_context(|| format!("Failed to rename {}", path.display()));
-    }
-
-    Ok(())
+    crate::io::atomic_write(path, &content)
 }
 
 #[cfg(test)]
@@ -387,7 +359,7 @@ mod tests {
 
     fn sample_glossary_usage() -> ChapterGlossaryUsage {
         ChapterGlossaryUsage {
-            injection_mode: GlossaryInjectionMode::Smart,
+            injection_mode: InjectionMode::Smart,
             used_fallback_to_full: false,
             terms: vec![ChapterGlossaryTerm {
                 key: "hero".into(),
@@ -419,9 +391,7 @@ mod tests {
             Some(RunOptions {
                 overwrite: true,
                 fail_fast: false,
-                rerun: false,
-                rerun_affected_glossary: false,
-                rerun_affected_chapters: false,
+                rerun_mode: None,
             }),
         );
         metadata.mark_finished();
@@ -440,7 +410,7 @@ mod tests {
     fn test_glossary_state_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
         let glossary_state = GlossaryState::new(
-            GlossaryInjectionMode::Smart,
+            InjectionMode::Smart,
             BTreeMap::from([(
                 "hero".into(),
                 GlossaryStateTerm {
@@ -455,7 +425,7 @@ mod tests {
         save_glossary_state(dir.path(), &glossary_state).unwrap();
 
         let loaded = load_glossary_state(dir.path()).unwrap().unwrap();
-        assert_eq!(loaded.injection_mode, GlossaryInjectionMode::Smart);
+        assert_eq!(loaded.injection_mode, InjectionMode::Smart);
         assert_eq!(loaded.terms.len(), 1);
         assert_eq!(loaded.terms["hero"].definition, "Main character");
     }
@@ -563,7 +533,7 @@ mod tests {
 
         save_run_metadata(dir.path(), &metadata).unwrap();
 
-        assert!(!path.with_extension("json.tmp").exists());
+        assert!(!path.with_extension("tmp").exists());
     }
 
     #[test]
