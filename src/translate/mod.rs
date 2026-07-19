@@ -1,4 +1,6 @@
+pub mod backup;
 pub mod cmd;
+pub mod orchestrate;
 pub mod preview;
 pub mod prompt;
 pub mod providers;
