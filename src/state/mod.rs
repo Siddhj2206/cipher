@@ -32,14 +32,8 @@ pub struct RunMetadata {
 pub struct RunOptions {
     pub overwrite: bool,
     pub fail_fast: bool,
-    #[serde(default)]
-    pub rerun: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rerun_mode: Option<crate::RerunMode>,
-    #[serde(default)]
-    pub rerun_affected_glossary: bool,
-    #[serde(default)]
-    pub rerun_affected_chapters: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -397,10 +391,7 @@ mod tests {
             Some(RunOptions {
                 overwrite: true,
                 fail_fast: false,
-                rerun: false,
                 rerun_mode: None,
-                rerun_affected_glossary: false,
-                rerun_affected_chapters: false,
             }),
         );
         metadata.mark_finished();

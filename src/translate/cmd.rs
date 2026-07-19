@@ -208,10 +208,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let run_options = RunOptions {
         overwrite: options.overwrite,
         fail_fast: options.fail_fast,
-        rerun: options.rerun.is_some(),
         rerun_mode: options.rerun.clone(),
-        rerun_affected_glossary: options.rerun_glossary_enabled(),
-        rerun_affected_chapters: options.rerun_chapters_enabled(),
     };
 
     let mut run_metadata = RunMetadata::new(
