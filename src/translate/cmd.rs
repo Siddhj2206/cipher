@@ -203,10 +203,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
 
     if !output::is_quiet() {
         output::stderr_section(format!(
-            "Translating {} / {} {}",
+            "Translating {} {}",
             to_process,
-            chapters.len(),
-            if chapters.len() == 1 { "chapter" } else { "chapters" }
+            if to_process == 1 { "chapter" } else { "chapters" }
         ));
     }
 
