@@ -17,7 +17,7 @@ pub fn is_quiet() -> bool {
     QUIET.load(Ordering::Relaxed)
 }
 
-fn is_verbose() -> bool {
+pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
 

@@ -27,7 +27,6 @@ use crate::translate::{TranslationUsage, Translator};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 pub struct TranslateOptions {
     pub profile: Option<String>,
@@ -190,7 +189,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     stderr_status("Translating chapters");
     verbose_detail_kv("Chapters found", chapters.len());
 
-    let run_start = Instant::now();
     if !output::is_quiet() {
         output::stderr_section(format!(
             "Translating {} {}",
@@ -236,7 +234,6 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         &source_rerun_plan,
         &mut previous_chapter_states,
         previous_glossary_state.as_ref(),
-        run_start,
     )
     .await?;
 
@@ -281,7 +278,6 @@ async fn iterate_translation(
     source_rerun_plan: &SourceRerunPlan,
     previous_chapter_states: &mut BTreeMap<String, ChapterState>,
     previous_glossary_state: Option<&GlossaryState>,
-    run_start: Instant,
 ) -> Result<(usize, usize, usize, usize, TranslationUsage, bool)> {
     let mut translated = 0;
     let mut skipped = 0;
@@ -290,22 +286,12 @@ async fn iterate_translation(
     let mut total_usage = TranslationUsage::default();
     let mut cancelled = false;
 
-    let total = chapters.len();
     let mut remaining_chapters = chapters;
+    let ctrl_c = tokio::signal::ctrl_c();
 
-    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let cancel_clone = cancel_flag.clone();
-    tokio::spawn(async move {
-        tokio::signal::ctrl_c().await.ok();
-        cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-    });
+    tokio::pin!(ctrl_c);
 
     while let Some(chapter_file) = remaining_chapters.pop_front() {
-        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
-            cancelled = true;
-            break;
-        }
-
         let chapter_path = chapter_state_key(raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
@@ -324,23 +310,28 @@ async fn iterate_translation(
         );
         let paths = ChapterPaths::new(&chapter_file, &out_path, &chapter_path);
 
-        let result = translate_single_chapter(
-            &ctx,
-            &paths,
-            options.overwrite,
-            options.rerun_chapters_enabled(),
-            previous_chapter_state,
-            rerun_decision.as_ref(),
-            glossary,
-        )
-        .await?;
+        let result = tokio::select! {
+            result = translate_single_chapter(
+                &ctx,
+                &paths,
+                options.overwrite,
+                options.rerun_chapters_enabled(),
+                previous_chapter_state,
+                rerun_decision.as_ref(),
+                glossary,
+            ) => result?,
+            _ = &mut ctrl_c => {
+                cancelled = true;
+                break;
+            }
+        };
 
         checkpoint_chapter_progress(book_dir, &mut *run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
 
-        let done = translated + skipped + failed + 1;
-        output::progress_bar(done, total, fmt_elapsed(run_start.elapsed()));
-        if !output::is_quiet() {
+        if !output::is_quiet()
+            && (result.translated || result.failed || output::is_verbose())
+        {
             print_chapter_result(&result, &chapter_path);
         }
 
@@ -403,10 +394,6 @@ fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path
         let error = result.chapter_state.error.as_deref().unwrap_or("unknown error");
         output::chapter_line_fail(chapter_path, &time, &tokens, error);
     }
-}
-
-fn fmt_elapsed(d: std::time::Duration) -> String {
-    fmt_time(d.as_millis() as u64)
 }
 
 fn fmt_time(ms: u64) -> String {
