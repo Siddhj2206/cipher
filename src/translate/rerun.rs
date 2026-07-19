@@ -32,7 +32,7 @@ pub(crate) struct SourceRerunPlan {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GlossaryBaselineAdvance {
+pub(crate) enum BaselineAction {
     KeepExisting,
     InitializeFromRunStart,
     CommitRunEnd,
@@ -40,7 +40,7 @@ pub(crate) enum GlossaryBaselineAdvance {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct GlossaryBaselineOutcome {
-    pub advance: GlossaryBaselineAdvance,
+    pub action: BaselineAction,
     pub remaining_forced_chapters: usize,
 }
 
@@ -138,9 +138,9 @@ pub(crate) fn glossary_terms_from_state(glossary_state: &GlossaryState) -> Vec<G
 
 fn tracked_usage_state_label(usage: &ChapterGlossaryUsage) -> &'static str {
     match usage.injection_mode {
-        InjectionMode::Full => "legacy full tracking",
-        _ if usage.used_fallback_to_full => "fallback to full",
-        _ => "smart selection only",
+        InjectionMode::Full => "full",
+        _ if usage.used_fallback_to_full => "fallback",
+        _ => "smart",
     }
 }
 
@@ -303,7 +303,7 @@ pub(crate) fn exact_rerun_decision(
     if !fingerprint_changed_keys.is_empty() {
         return Ok(Some(RerunDecision {
             reason: format!(
-                "Imported or exported glossary term changed: {}",
+                "Glossary term changed: {}",
                 fingerprint_changed_keys.join(", ")
             ),
             is_approximate: false,
@@ -329,7 +329,7 @@ pub(crate) fn exact_rerun_decision(
 
         return Ok(Some(RerunDecision {
             reason: format!(
-                "Smart glossary selection changed fallback behavior: {} -> {}",
+                "Fallback behavior: {} -> {}",
                 tracked_usage_state_label(usage),
                 tracked_usage_state_label(&expected_usage)
             ),
@@ -342,7 +342,7 @@ pub(crate) fn exact_rerun_decision(
     {
         return Ok(Some(RerunDecision {
             reason: format!(
-                "Smart glossary selection changed fallback behavior: {} -> {}",
+                "Fallback behavior: {} -> {}",
                 tracked_usage_state_label(usage),
                 tracked_usage_state_label(&expected_usage)
             ),
@@ -352,7 +352,7 @@ pub(crate) fn exact_rerun_decision(
 
     Ok(Some(RerunDecision {
         reason: format!(
-            "Smart glossary selection changed: {}",
+            "Glossary selection changed: {}",
             selection_changed_keys
                 .into_iter()
                 .collect::<Vec<_>>()
@@ -387,7 +387,7 @@ pub(crate) fn approximate_smart_rerun_decision(
         }
         return Ok(Some(RerunDecision {
             reason: format!(
-                "Approximate rerun after smart fallback matched: Full glossary changed: {}",
+                "Full glossary changed (approx): {}",
                 changed_term_keys
                     .iter()
                     .cloned()
@@ -407,12 +407,28 @@ pub(crate) fn approximate_smart_rerun_decision(
     } else {
         Ok(Some(RerunDecision {
             reason: format!(
-                "Approximate smart glossary selection changed: {}",
+                "Glossary selection changed (approx): {}",
                 changed_keys.into_iter().collect::<Vec<_>>().join(", ")
             ),
             is_approximate: true,
         }))
     }
+}
+
+fn chapters_with_output<'a>(
+    chapters: &'a [PathBuf],
+    raw_dir: &Path,
+    out_dir: &Path,
+) -> Result<Vec<(String, &'a PathBuf)>> {
+    let mut result = Vec::new();
+    for chapter_file in chapters {
+        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
+        if !chapter_output_path(out_dir, chapter_file)?.exists() {
+            continue;
+        }
+        result.push((chapter_path, chapter_file));
+    }
+    Ok(result)
 }
 
 pub(crate) fn build_glossary_rerun_plan(
@@ -442,16 +458,10 @@ pub(crate) fn build_glossary_rerun_plan(
     }
 
     let mut approximate_smart_checks = 0;
+    let output_chapters = chapters_with_output(chapters, raw_dir, out_dir)?;
 
-    for chapter_file in chapters {
-        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
-        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
-
-        if !output_exists {
-            continue;
-        }
-
-        if let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path)
+    for (chapter_path, chapter_file) in &output_chapters {
+        if let Some(previous_chapter_state) = previous_chapter_states.get(chapter_path)
             && previous_chapter_state.glossary_usage.is_some()
         {
             if let Some(decision) = exact_rerun_decision(
@@ -460,7 +470,7 @@ pub(crate) fn build_glossary_rerun_plan(
                 current_glossary,
                 injection_mode,
             )? {
-                plan.forced_chapters.insert(chapter_path, decision);
+                plan.forced_chapters.insert(chapter_path.clone(), decision);
             }
             continue;
         }
@@ -481,7 +491,7 @@ pub(crate) fn build_glossary_rerun_plan(
                             .join(", ")
                     );
                     plan.forced_chapters.insert(
-                        chapter_path,
+                        chapter_path.clone(),
                         RerunDecision {
                             reason,
                             is_approximate: false,
@@ -497,9 +507,9 @@ pub(crate) fn build_glossary_rerun_plan(
                     &changed_term_keys,
                 )? {
                     approximate_smart_checks += 1;
-                    plan.forced_chapters.insert(chapter_path, decision);
+                    plan.forced_chapters.insert(chapter_path.clone(), decision);
                 } else if previous_chapter_states
-                    .get(&chapter_path)
+                    .get(chapter_path)
                     .and_then(|state| state.glossary_usage.as_ref())
                     .is_none()
                 {
@@ -521,16 +531,10 @@ pub(crate) fn build_source_rerun_plan(
     previous_chapter_states: &BTreeMap<String, ChapterState>,
 ) -> Result<SourceRerunPlan> {
     let mut plan = SourceRerunPlan::default();
+    let output_chapters = chapters_with_output(chapters, raw_dir, out_dir)?;
 
-    for chapter_file in chapters {
-        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
-        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
-
-        if !output_exists {
-            continue;
-        }
-
-        let Some(previous_chapter_state) = previous_chapter_states.get(&chapter_path) else {
+    for (chapter_path, chapter_file) in &output_chapters {
+        let Some(previous_chapter_state) = previous_chapter_states.get(chapter_path) else {
             continue;
         };
 
@@ -545,7 +549,7 @@ pub(crate) fn build_source_rerun_plan(
 
         if current_hash != *previous_hash {
             plan.forced_chapters.insert(
-                chapter_path,
+                chapter_path.clone(),
                 RerunDecision {
                     reason: "Chapter source changed".to_string(),
                     is_approximate: false,
@@ -588,7 +592,7 @@ pub(crate) fn finalize_glossary_baseline(
 ) -> Result<GlossaryBaselineOutcome> {
     if failed > 0 {
         return Ok(GlossaryBaselineOutcome {
-            advance: GlossaryBaselineAdvance::KeepExisting,
+            action: BaselineAction::KeepExisting,
             remaining_forced_chapters: 0,
         });
     }
@@ -596,14 +600,14 @@ pub(crate) fn finalize_glossary_baseline(
     if previous_glossary_state.is_none() {
         save_glossary_state(book_dir, run_start_glossary_state)?;
         return Ok(GlossaryBaselineOutcome {
-            advance: GlossaryBaselineAdvance::InitializeFromRunStart,
+            action: BaselineAction::InitializeFromRunStart,
             remaining_forced_chapters: 0,
         });
     }
 
     if !rerun_glossary_enabled {
         return Ok(GlossaryBaselineOutcome {
-            advance: GlossaryBaselineAdvance::KeepExisting,
+            action: BaselineAction::KeepExisting,
             remaining_forced_chapters: 0,
         });
     }
@@ -619,7 +623,7 @@ pub(crate) fn finalize_glossary_baseline(
         .is_empty()
     {
         return Ok(GlossaryBaselineOutcome {
-            advance: GlossaryBaselineAdvance::KeepExisting,
+            action: BaselineAction::KeepExisting,
             remaining_forced_chapters: 0,
         });
     }
@@ -636,12 +640,12 @@ pub(crate) fn finalize_glossary_baseline(
     if remaining_forced_chapters == 0 {
         save_glossary_state(book_dir, &current_glossary_state)?;
         Ok(GlossaryBaselineOutcome {
-            advance: GlossaryBaselineAdvance::CommitRunEnd,
+            action: BaselineAction::CommitRunEnd,
             remaining_forced_chapters: 0,
         })
     } else {
         Ok(GlossaryBaselineOutcome {
-            advance: GlossaryBaselineAdvance::KeepExisting,
+            action: BaselineAction::KeepExisting,
             remaining_forced_chapters,
         })
     }
@@ -710,9 +714,9 @@ pub(crate) fn migrate_legacy_full_tracking(
     }
 
     let current_glossary_state = build_glossary_state(glossary, injection_mode);
-    let migrated_glossary_state = match baseline_outcome.advance {
-        GlossaryBaselineAdvance::CommitRunEnd => Some(current_glossary_state),
-        GlossaryBaselineAdvance::KeepExisting
+    let migrated_glossary_state = match baseline_outcome.action {
+        BaselineAction::CommitRunEnd => Some(current_glossary_state),
+        BaselineAction::KeepExisting
             if changed_prompt_relevant_keys(
                 &previous_glossary_state.terms,
                 &current_glossary_state.terms,
@@ -1010,7 +1014,7 @@ mod tests {
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::InitializeFromRunStart,
+                action: BaselineAction::InitializeFromRunStart,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1053,7 +1057,7 @@ mod tests {
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::KeepExisting,
+                action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 1,
             }
         );
@@ -1119,7 +1123,7 @@ mod tests {
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::KeepExisting,
+                action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1205,7 +1209,7 @@ mod tests {
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::CommitRunEnd,
+                action: BaselineAction::CommitRunEnd,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1254,7 +1258,7 @@ mod tests {
             dir.path(),
             Some(&previous_glossary_state),
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::KeepExisting,
+                action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             },
             std::slice::from_ref(&chapter),
@@ -1336,7 +1340,7 @@ mod tests {
             dir.path(),
             Some(&previous_glossary_state),
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::KeepExisting,
+                action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             },
             std::slice::from_ref(&chapter),
@@ -1396,7 +1400,7 @@ mod tests {
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::KeepExisting,
+                action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1436,7 +1440,7 @@ mod tests {
         assert_eq!(
             outcome,
             GlossaryBaselineOutcome {
-                advance: GlossaryBaselineAdvance::KeepExisting,
+                action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             }
         );
@@ -1635,11 +1639,7 @@ mod tests {
         assert_eq!(plan.changed_term_count, 1);
         assert_eq!(plan.forced_chapters.len(), 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
-        assert!(
-            decision
-                .reason
-                .contains("Imported or exported glossary term changed")
-        );
+        assert!(decision.reason.contains("Glossary term changed"));
     }
 
     #[test]
@@ -1689,11 +1689,7 @@ mod tests {
 
         assert_eq!(plan.changed_term_count, 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
-        assert!(
-            decision
-                .reason
-                .contains("Imported or exported glossary term changed")
-        );
+        assert!(decision.reason.contains("Glossary term changed"));
     }
 
     #[test]
@@ -1727,7 +1723,7 @@ mod tests {
         assert!(
             decision
                 .reason
-                .contains("Approximate smart glossary selection changed")
+                .contains("Glossary selection changed (approx)")
         );
         assert!(plan.warnings.is_empty());
         assert_eq!(plan.approximate_smart_checks, 1);
@@ -1894,11 +1890,7 @@ mod tests {
         .unwrap();
 
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
-        assert!(
-            decision
-                .reason
-                .contains("Imported or exported glossary term changed")
-        );
+        assert!(decision.reason.contains("Glossary term changed"));
     }
 
     #[test]
@@ -2034,11 +2026,7 @@ mod tests {
 
         assert_eq!(plan.changed_term_count, 1);
         let decision = plan.forced_chapters.get("chapter1.md").unwrap();
-        assert!(
-            decision
-                .reason
-                .contains("Imported or exported glossary term changed")
-        );
+        assert!(decision.reason.contains("Glossary term changed"));
         assert!(decision.reason.contains("hero"));
     }
 

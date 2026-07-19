@@ -46,6 +46,9 @@ _Avoid_: Retranslate, redo, refresh
 **Rerun Decision**:
 A per-chapter determination made during planning: skip, re-translate, or re-extract glossary terms. Based on comparing current inputs against the tracked baseline in State.
 
+**Glossary Baseline**:
+A snapshot of the glossary state persisted between runs. Compared against the current glossary to detect changes that require reruns. Managed through a `BaselineAction` state machine during run finalization: `KeepExisting`, `InitializeFromRunStart`, or `CommitRunEnd`.
+
 **Style Guide**:
 A markdown file (`style.md`) in a book that defines tone, register, naming conventions, and formatting preferences for translations. It is sent as context during every chapter translation and repair.
 _Avoid_: Style file, tone doc
