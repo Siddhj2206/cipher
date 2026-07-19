@@ -14,9 +14,9 @@ use crate::output::{
     stderr_detail, stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
 };
 use crate::state::{
-    ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, RunMetadata,
-    RunOptions, load_all_chapter_states, load_glossary_state, normalized_source_text_hash,
-    save_chapter_state, save_run_metadata,
+    ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryState,
+    RunMetadata, RunOptions, load_all_chapter_states, load_glossary_state,
+    normalized_source_text_hash, save_chapter_state, save_run_metadata,
 };
 use crate::translate::preview::{EMPTY_CHAPTER_SKIP_REASON, preview_translation_run};
 use crate::translate::rerun::{
@@ -30,7 +30,7 @@ use crate::translate::{
 use crate::validate::{ValidationOptions, validate_translation};
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -150,6 +150,43 @@ struct ChapterResult {
     new_terms_added: usize,
     usage: Option<TranslationUsage>,
     chapter_state: ChapterState,
+}
+
+impl ChapterResult {
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        chapter_path: &str,
+        status: ChapterStatus,
+        translated: bool,
+        failed: bool,
+        skipped: bool,
+        new_terms_added: usize,
+        usage: Option<TranslationUsage>,
+        error: Option<String>,
+        duration_ms: Option<u64>,
+        translation_usage: Option<TranslationUsage>,
+        glossary_usage: Option<ChapterGlossaryUsage>,
+        exported_terms: Vec<ChapterGlossaryTerm>,
+        source_text_hash: Option<String>,
+    ) -> Self {
+        ChapterResult {
+            translated,
+            failed,
+            skipped,
+            new_terms_added,
+            usage,
+            chapter_state: ChapterState::new(
+                chapter_path.to_string(),
+                status,
+                error,
+                duration_ms,
+                translation_usage,
+                glossary_usage,
+                exported_terms,
+                source_text_hash,
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -340,18 +377,80 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     );
     save_run_metadata(book_dir, &run_metadata)?;
 
-    // Track stats
+    let (translated, skipped, failed, new_glossary_terms, total_usage) = iterate_translation(
+        &translators,
+        &mut glossary,
+        chapters.clone(),
+        &options,
+        &layout.paths.raw_dir,
+        out_dir,
+        &style_guide,
+        &book_config.output,
+        injection_mode,
+        &layout.paths.glossary_json,
+        book_dir,
+        &mut run_metadata,
+        rerun_plan,
+        &source_rerun_plan,
+        &mut previous_chapter_states,
+        previous_glossary_state.as_ref(),
+        pb.as_ref(),
+    )
+    .await?;
+
+    let exit_code = finalize_run(
+        book_dir,
+        &chapters,
+        &layout.paths.raw_dir,
+        out_dir,
+        &previous_chapter_states,
+        &glossary,
+        injection_mode,
+        options.rerun_glossary_enabled(),
+        previous_glossary_state.as_ref(),
+        &run_start_glossary_state,
+        failed,
+        translated,
+        skipped,
+        new_glossary_terms,
+        total_usage,
+        run_metadata,
+        pb,
+    )?;
+
+    Ok(exit_code)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn iterate_translation(
+    translators: &Translators,
+    glossary: &mut Vec<GlossaryTerm>,
+    chapters: VecDeque<PathBuf>,
+    options: &TranslateOptions,
+    raw_dir: &Path,
+    out_dir: &Path,
+    style_guide: &Option<String>,
+    output_config: &OutputConfig,
+    injection_mode: InjectionMode,
+    glossary_json_path: &Path,
+    book_dir: &Path,
+    run_metadata: &mut RunMetadata,
+    mut rerun_plan: GlossaryRerunPlan,
+    source_rerun_plan: &SourceRerunPlan,
+    previous_chapter_states: &mut BTreeMap<String, ChapterState>,
+    previous_glossary_state: Option<&GlossaryState>,
+    pb: Option<&ProgressBar>,
+) -> Result<(usize, usize, usize, usize, TranslationUsage)> {
     let mut translated = 0;
     let mut skipped = 0;
     let mut failed = 0;
     let mut new_glossary_terms = 0;
     let mut total_usage = TranslationUsage::default();
 
-    let mut remaining_chapters = chapters.clone();
-    let mut rerun_plan = rerun_plan;
+    let mut remaining_chapters = chapters;
 
     while let Some(chapter_file) = remaining_chapters.pop_front() {
-        let chapter_path = chapter_state_key(&layout.paths.raw_dir, &chapter_file)?;
+        let chapter_path = chapter_state_key(raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
         let rerun_decision = combine_rerun_decisions(
@@ -359,30 +458,30 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             source_rerun_plan.decision_for(&chapter_path),
         );
 
-        if let Some(ref pb) = pb {
+        if let Some(pb) = pb {
             pb.set_message(chapter_path.clone());
         }
 
         let result = translate_single_chapter(
-            &translators,
+            translators,
             &chapter_file,
             &out_path,
             &chapter_path,
-            &options,
+            options,
             previous_chapter_state,
             rerun_decision.as_ref(),
-            &mut glossary,
-            &style_guide,
-            &book_config.output,
+            glossary,
+            style_guide,
+            output_config,
             injection_mode,
-            &layout.paths.glossary_json,
+            glossary_json_path,
             book_dir,
         )
         .await?;
 
-        checkpoint_chapter_progress(book_dir, &mut run_metadata, &result.chapter_state)?;
+        checkpoint_chapter_progress(book_dir, &mut *run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
-        if let Some(ref pb) = pb {
+        if let Some(pb) = pb {
             pb.inc(1);
         }
 
@@ -410,39 +509,62 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         {
             rerun_plan = build_glossary_rerun_plan(
                 &Vec::from(remaining_chapters.clone()),
-                &layout.paths.raw_dir,
+                raw_dir,
                 out_dir,
-                previous_glossary_state.as_ref(),
-                &previous_chapter_states,
-                &glossary,
+                previous_glossary_state,
+                previous_chapter_states,
+                glossary,
                 injection_mode,
             )?;
         }
     }
 
+    Ok((translated, skipped, failed, new_glossary_terms, total_usage))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn finalize_run(
+    book_dir: &Path,
+    chapters: &VecDeque<PathBuf>,
+    raw_dir: &Path,
+    out_dir: &Path,
+    previous_chapter_states: &BTreeMap<String, ChapterState>,
+    glossary: &[GlossaryTerm],
+    injection_mode: InjectionMode,
+    rerun_glossary_enabled: bool,
+    previous_glossary_state: Option<&GlossaryState>,
+    run_start_glossary_state: &GlossaryState,
+    failed: usize,
+    translated: usize,
+    skipped: usize,
+    new_glossary_terms: usize,
+    total_usage: TranslationUsage,
+    mut run_metadata: RunMetadata,
+    pb: Option<ProgressBar>,
+) -> Result<i32> {
     let baseline_outcome = finalize_glossary_baseline(
         book_dir,
-        options.rerun_glossary_enabled(),
-        previous_glossary_state.as_ref(),
-        &run_start_glossary_state,
+        rerun_glossary_enabled,
+        previous_glossary_state,
+        run_start_glossary_state,
         &Vec::from(chapters.clone()),
-        &layout.paths.raw_dir,
+        raw_dir,
         out_dir,
-        &previous_chapter_states,
-        &glossary,
+        previous_chapter_states,
+        glossary,
         injection_mode,
         failed,
     )?;
 
     let legacy_tracking_migration = migrate_legacy_full_tracking(
         book_dir,
-        previous_glossary_state.as_ref(),
+        previous_glossary_state,
         baseline_outcome,
         &Vec::from(chapters.clone()),
-        &layout.paths.raw_dir,
+        raw_dir,
         out_dir,
-        &mut previous_chapter_states,
-        &glossary,
+        &mut previous_chapter_states.clone(),
+        glossary,
         injection_mode,
         failed,
     )?;
@@ -624,23 +746,21 @@ fn build_skipped_chapter_result(
     previous_artifacts: PreviousChapterArtifacts,
     source_text_hash: Option<String>,
 ) -> ChapterResult {
-    ChapterResult {
-        translated: false,
-        failed: false,
-        skipped: true,
-        new_terms_added: 0,
-        usage: None,
-        chapter_state: ChapterState::new(
-            chapter_path.to_string(),
-            ChapterStatus::Skipped,
-            message,
-            duration_ms,
-            previous_artifacts.translation_usage,
-            previous_artifacts.glossary_usage,
-            previous_artifacts.exported_terms,
-            source_text_hash,
-        ),
-    }
+    ChapterResult::new(
+        chapter_path,
+        ChapterStatus::Skipped,
+        false,
+        false,
+        true,
+        0,
+        None,
+        message,
+        duration_ms,
+        previous_artifacts.translation_usage,
+        previous_artifacts.glossary_usage,
+        previous_artifacts.exported_terms,
+        source_text_hash,
+    )
 }
 
 fn build_success_chapter_result(
@@ -652,23 +772,21 @@ fn build_success_chapter_result(
     source_text_hash: String,
     new_terms_added: usize,
 ) -> ChapterResult {
-    ChapterResult {
-        translated: true,
-        failed: false,
-        skipped: false,
+    ChapterResult::new(
+        chapter_path,
+        ChapterStatus::Success,
+        true,
+        false,
+        false,
         new_terms_added,
-        usage: Some(usage.clone()),
-        chapter_state: ChapterState::new(
-            chapter_path.to_string(),
-            ChapterStatus::Success,
-            None,
-            Some(duration_ms),
-            Some(usage),
-            Some(glossary_usage),
-            exported_terms,
-            Some(source_text_hash),
-        ),
-    }
+        Some(usage.clone()),
+        None,
+        Some(duration_ms),
+        Some(usage),
+        Some(glossary_usage),
+        exported_terms,
+        Some(source_text_hash),
+    )
 }
 
 fn build_failed_chapter_result(
@@ -679,23 +797,21 @@ fn build_failed_chapter_result(
     previous_artifacts: PreviousChapterArtifacts,
     source_text_hash: Option<String>,
 ) -> ChapterResult {
-    ChapterResult {
-        translated: false,
-        failed: true,
-        skipped: false,
-        new_terms_added: 0,
-        usage: usage.clone(),
-        chapter_state: ChapterState::new(
-            chapter_path.to_string(),
-            ChapterStatus::Failed,
-            Some(error_msg),
-            Some(duration_ms),
-            usage,
-            previous_artifacts.glossary_usage,
-            previous_artifacts.exported_terms,
-            source_text_hash,
-        ),
-    }
+    ChapterResult::new(
+        chapter_path,
+        ChapterStatus::Failed,
+        false,
+        true,
+        false,
+        0,
+        usage.clone(),
+        Some(error_msg),
+        Some(duration_ms),
+        usage,
+        previous_artifacts.glossary_usage,
+        previous_artifacts.exported_terms,
+        source_text_hash,
+    )
 }
 
 fn skipped_chapter_source_hash(
