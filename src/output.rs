@@ -1,5 +1,6 @@
 use std::fmt::Display;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 static QUIET: AtomicBool = AtomicBool::new(false);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
@@ -20,7 +21,33 @@ fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
 
-// stdout functions — for display/inspection commands where output IS the data
+fn no_color() -> bool {
+    static NO_COLOR: OnceLock<bool> = OnceLock::new();
+    *NO_COLOR.get_or_init(|| std::env::var("NO_COLOR").is_ok_and(|v| !v.is_empty()))
+}
+
+fn ok() -> &'static str { if no_color() { "\u{2713}" } else { "\x1b[32m\u{2713}\x1b[0m" } }
+fn skip_mark() -> &'static str { if no_color() { "\u{2014}" } else { "\x1b[33m\u{2014}\x1b[0m" } }
+fn fail_mark() -> &'static str { if no_color() { "\u{2717}" } else { "\x1b[31m\u{2717}\x1b[0m" } }
+
+fn green(s: &str) -> String {
+    if no_color() { s.to_string() } else { format!("\x1b[32m{s}\x1b[0m") }
+}
+fn red(s: &str) -> String {
+    if no_color() { s.to_string() } else { format!("\x1b[31m{s}\x1b[0m") }
+}
+fn yellow(s: &str) -> String {
+    if no_color() { s.to_string() } else { format!("\x1b[33m{s}\x1b[0m") }
+}
+fn bold(s: &str) -> String {
+    if no_color() { s.to_string() } else { format!("\x1b[1m{s}\x1b[0m") }
+}
+fn dim(s: &str) -> String {
+    if no_color() { s.to_string() } else { format!("\x1b[2m{s}\x1b[0m") }
+}
+
+// stdout functions — for display/inspection commands where output IS the data.
+// These keep ANSI minimal to remain pipe-friendly.
 
 pub fn detail(message: impl Display) {
     if is_quiet() {
@@ -41,7 +68,7 @@ pub fn section(header: impl Display) {
         return;
     }
     println!();
-    println!("{}", header);
+    println!("{}", bold(&header.to_string()));
 }
 
 pub fn status(message: impl Display) {
@@ -51,19 +78,20 @@ pub fn status(message: impl Display) {
     println!("{}", message);
 }
 
-// stderr functions — for action/confirmation/progress output
+// stderr functions — for action/confirmation/progress output.
+// These use ANSI styling per the unified design.
 
 pub fn stderr_detail(message: impl Display) {
-    eprintln!("- {}", message);
+    eprintln!("{} {}", dim("-"), message);
 }
 
 pub fn stderr_detail_kv(label: &str, value: impl Display) {
-    eprintln!("- {}: {}", label, value);
+    eprintln!("{} {}: {}", dim("-"), label, value);
 }
 
 pub fn stderr_section(header: impl Display) {
     eprintln!();
-    eprintln!("{}", header);
+    eprintln!("{}", bold(&header.to_string()));
 }
 
 pub fn stderr_status(message: impl Display) {
@@ -71,27 +99,86 @@ pub fn stderr_status(message: impl Display) {
 }
 
 pub fn stderr_warn(message: impl Display) {
-    eprintln!("- Warning: {}", message);
+    eprintln!("{} {}", yellow("\u{26A0}"), message);
 }
 
 pub fn stderr_error(message: impl Display) {
-    eprintln!("Error: {}", message);
+    eprintln!("{} {}", red("\u{2717}"), message);
 }
 
-// Verbose-only stderr — for per-chapter details during translate
+// Verbose-only stderr
 
 pub fn verbose_detail(message: impl Display) {
     if is_quiet() || !is_verbose() {
         return;
     }
-    eprintln!("- {}", message);
+    eprintln!("{} {}", dim("-"), message);
 }
 
 pub fn verbose_detail_kv(label: &str, value: impl Display) {
     if is_quiet() || !is_verbose() {
         return;
     }
-    eprintln!("- {}: {}", label, value);
+    eprintln!("{} {}: {}", dim("-"), label, value);
+}
+
+// ── Unified design components ──────────────────────────────────────
+
+pub fn progress_bar(current: usize, total: usize, elapsed: impl Display) {
+    let width = 20usize;
+    let filled = if total > 0 { (current * width).checked_div(total).unwrap_or(0) } else { 0 };
+    let bar: String = (0..width).map(|i| if i < filled { '=' } else { '-' }).collect();
+    eprintln!(
+        " {} {}  {}/{}  {}",
+        dim("Progress:"),
+        dim(&format!("[{}]", bar)),
+        current,
+        total,
+        dim(&elapsed.to_string()),
+    );
+}
+
+pub fn chapter_line_ok(name: impl Display, time: impl Display, tokens: impl Display, tags: &[String]) {
+    let tag_str = if tags.is_empty() {
+        String::new()
+    } else {
+        format!("  {}", tags.join(" "))
+    };
+    eprintln!("  {}  {}  {}  {}{}", ok(), name, dim(&time.to_string()), dim(&tokens.to_string()), tag_str);
+}
+
+pub fn chapter_line_fail(name: impl Display, time: impl Display, tokens: impl Display, error: impl Display) {
+    eprintln!("  {}  {}  {}  {}  {}", fail_mark(), name, dim(&time.to_string()), dim(&tokens.to_string()), red(&error.to_string()));
+}
+
+pub fn chapter_line_skip(name: impl Display, reason: impl Display) {
+    eprintln!("  {}  {}  {}", skip_mark(), name, dim(&reason.to_string()));
+}
+
+pub fn cancel_banner(completed: usize, total: usize) {
+    eprintln!();
+    eprintln!(" {} {} after {} chapters", yellow("\u{26A0}"), yellow("Translation cancelled (Ctrl-C)"), dim(&format!("{completed}/{total}")));
+    eprintln!();
+}
+
+pub fn summary_header() {
+    eprintln!(" {}", bold("Summary"));
+}
+
+pub fn summary_item(label: impl Display, value: impl Display) {
+    eprintln!("  {}  {}  {}", dim("\u{2502}"), bold(&label.to_string()), value);
+}
+
+pub fn styled_green(s: impl Display) -> String {
+    green(&s.to_string())
+}
+
+pub fn styled_red(s: impl Display) -> String {
+    red(&s.to_string())
+}
+
+pub fn styled_yellow(s: impl Display) -> String {
+    yellow(&s.to_string())
 }
 
 #[cfg(test)]
@@ -115,12 +202,10 @@ mod tests {
     #[test]
     fn quiet_suppresses_stdout_functions() {
         set_quiet(true);
-        // None of these should print anything
         detail("test");
         detail_kv("k", "v");
         section("test");
         status("test");
-        // But they also shouldn't panic
         set_quiet(false);
     }
 
@@ -130,12 +215,10 @@ mod tests {
         set_verbose(true);
         verbose_detail("visible");
         verbose_detail_kv("k", "v");
-        // No panic = success
 
         set_verbose(false);
         verbose_detail("hidden");
         verbose_detail_kv("k", "v");
-        // No panic = success
 
         set_quiet(true);
         set_verbose(true);

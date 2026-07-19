@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use crate::book::BookLayout;
 use crate::glossary::{load_glossary, merge_terms, save_glossary};
-use crate::output::{detail, detail_kv, status, stderr_detail, stderr_detail_kv, stderr_status};
+use crate::output::{detail, detail_kv, section, stderr_detail, stderr_detail_kv, stderr_status};
 
 pub fn list_glossary(book_dir: &Path, json: bool) -> Result<()> {
     let layout = BookLayout::discover(book_dir);
@@ -30,10 +30,11 @@ pub fn list_glossary(book_dir: &Path, json: bool) -> Result<()> {
     }
 
     if terms.is_empty() {
-        status("No glossary entries found");
+        section("Glossary entries");
         detail_kv("Path", layout.paths.glossary_json.display());
+        detail("No entries found");
     } else {
-        status("Glossary entries");
+        section("Glossary entries");
         detail_kv("Count", terms.len());
         for term in &terms {
             let def_preview = if term.definition.chars().count() > 60 {

@@ -147,8 +147,12 @@ fn glossary_list_on_initialized_book_is_empty() {
     assert!(output.status.success(), "glossary list: {:?}", output);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("No glossary entries found"),
-        "got: {stdout}"
+        stdout.contains("Glossary entries"),
+        "expected 'Glossary entries' in stdout, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("No entries found"),
+        "expected 'No entries found' in stdout, got: {stdout}"
     );
 }
 

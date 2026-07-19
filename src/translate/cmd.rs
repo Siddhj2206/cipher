@@ -6,7 +6,7 @@ use crate::glossary::{
 };
 use crate::output;
 use crate::output::{
-    stderr_detail, stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
+    stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
 };
 use crate::state::{
     ChapterState, GlossaryState, RunMetadata, RunOptions,
@@ -25,9 +25,9 @@ use crate::translate::rerun::{
 };
 use crate::translate::{TranslationUsage, Translator};
 use anyhow::{Context, Result};
-use indicatif::{ProgressBar, ProgressStyle};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 pub struct TranslateOptions {
     pub profile: Option<String>,
@@ -190,20 +190,14 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     stderr_status("Translating chapters");
     verbose_detail_kv("Chapters found", chapters.len());
 
-    let pb = if output::is_quiet() {
-        None
-    } else {
-        let bar = ProgressBar::new(chapters.len() as u64);
-        bar.set_style(
-            ProgressStyle::with_template(
-                "{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {pos}/{len} ({msg})",
-            )
-            .unwrap()
-            .progress_chars("#>-"),
-        );
-        bar.set_message("translating");
-        Some(bar)
-    };
+    let run_start = Instant::now();
+    if !output::is_quiet() {
+        output::stderr_section(format!(
+            "Translating {} {}",
+            chapters.len(),
+            if chapters.len() == 1 { "chapter" } else { "chapters" }
+        ));
+    }
 
     let run_options = RunOptions {
         overwrite: options.overwrite,
@@ -225,7 +219,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     );
     save_run_metadata(book_dir, &run_metadata)?;
 
-    let (translated, skipped, failed, new_glossary_terms, total_usage) = iterate_translation(
+    let (translated, skipped, failed, new_glossary_terms, total_usage, cancelled) = iterate_translation(
         &translators,
         &mut glossary,
         chapters.clone(),
@@ -242,7 +236,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         &source_rerun_plan,
         &mut previous_chapter_states,
         previous_glossary_state.as_ref(),
-        pb.as_ref(),
+        run_start,
     )
     .await?;
 
@@ -263,7 +257,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         new_glossary_terms,
         total_usage,
         run_metadata,
-        pb,
+        cancelled,
     )?;
 
     Ok(exit_code)
@@ -287,17 +281,31 @@ async fn iterate_translation(
     source_rerun_plan: &SourceRerunPlan,
     previous_chapter_states: &mut BTreeMap<String, ChapterState>,
     previous_glossary_state: Option<&GlossaryState>,
-    pb: Option<&ProgressBar>,
-) -> Result<(usize, usize, usize, usize, TranslationUsage)> {
+    run_start: Instant,
+) -> Result<(usize, usize, usize, usize, TranslationUsage, bool)> {
     let mut translated = 0;
     let mut skipped = 0;
     let mut failed = 0;
     let mut new_glossary_terms = 0;
     let mut total_usage = TranslationUsage::default();
+    let mut cancelled = false;
 
+    let total = chapters.len();
     let mut remaining_chapters = chapters;
 
+    let cancel_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let cancel_clone = cancel_flag.clone();
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c().await.ok();
+        cancel_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
     while let Some(chapter_file) = remaining_chapters.pop_front() {
+        if cancel_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            cancelled = true;
+            break;
+        }
+
         let chapter_path = chapter_state_key(raw_dir, &chapter_file)?;
         let out_path = chapter_output_path(out_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
@@ -305,10 +313,6 @@ async fn iterate_translation(
             rerun_plan.decision_for(&chapter_path),
             source_rerun_plan.decision_for(&chapter_path),
         );
-
-        if let Some(pb) = pb {
-            pb.set_message(chapter_path.clone());
-        }
 
         let ctx = ChapterContext::new(
             translators,
@@ -333,8 +337,11 @@ async fn iterate_translation(
 
         checkpoint_chapter_progress(book_dir, &mut *run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
-        if let Some(pb) = pb {
-            pb.inc(1);
+
+        let done = translated + skipped + failed + 1;
+        output::progress_bar(done, total, fmt_elapsed(run_start.elapsed()));
+        if !output::is_quiet() {
+            print_chapter_result(&result, &chapter_path);
         }
 
         if result.translated {
@@ -371,7 +378,52 @@ async fn iterate_translation(
         }
     }
 
-    Ok((translated, skipped, failed, new_glossary_terms, total_usage))
+    Ok((translated, skipped, failed, new_glossary_terms, total_usage, cancelled))
+}
+
+fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path: &str) {
+    let time = result.chapter_state.translation_time_ms
+        .map(fmt_time)
+        .unwrap_or_else(|| "\u{2014}".to_string());
+    let tokens = result.usage.as_ref()
+        .map(|u| fmt_tokens(u.total_tokens))
+        .unwrap_or_else(|| "\u{2014}".to_string());
+
+    if result.translated {
+        let mut tags: Vec<String> = Vec::new();
+        if result.new_terms_added > 0 {
+            let label = if result.new_terms_added == 1 { "term" } else { "terms" };
+            tags.push(output::styled_green(format!("+{} {}", result.new_terms_added, label)));
+        }
+        output::chapter_line_ok(chapter_path, &time, &tokens, &tags);
+    } else if result.skipped {
+        let reason = result.chapter_state.error.as_deref().unwrap_or("skipped");
+        output::chapter_line_skip(chapter_path, reason);
+    } else if result.failed {
+        let error = result.chapter_state.error.as_deref().unwrap_or("unknown error");
+        output::chapter_line_fail(chapter_path, &time, &tokens, error);
+    }
+}
+
+fn fmt_elapsed(d: std::time::Duration) -> String {
+    fmt_time(d.as_millis() as u64)
+}
+
+fn fmt_time(ms: u64) -> String {
+    let total_s = ms / 1000;
+    if total_s >= 60 {
+        format!("{}m{:02}s", total_s / 60, total_s % 60)
+    } else {
+        format!("{total_s}s")
+    }
+}
+
+fn fmt_tokens(tokens: u64) -> String {
+    if tokens >= 1000 {
+        format!("{:.1}K", tokens as f64 / 1000.0)
+    } else {
+        tokens.to_string()
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -392,7 +444,7 @@ fn finalize_run(
     new_glossary_terms: usize,
     total_usage: TranslationUsage,
     mut run_metadata: RunMetadata,
-    pb: Option<ProgressBar>,
+    cancelled: bool,
 ) -> Result<i32> {
     let baseline_outcome = finalize_glossary_baseline(
         book_dir,
@@ -408,7 +460,7 @@ fn finalize_run(
         failed,
     )?;
 
-    let legacy_tracking_migration = migrate_legacy_full_tracking(
+    let _legacy = migrate_legacy_full_tracking(
         book_dir,
         previous_glossary_state,
         baseline_outcome,
@@ -422,7 +474,7 @@ fn finalize_run(
     )?;
 
     if baseline_outcome.remaining_forced_chapters > 0 {
-        stderr_warn(format!(
+        output::stderr_warn(format!(
             "Glossary baseline was not updated because {} affected chapter(s) still need reruns.",
             baseline_outcome.remaining_forced_chapters
         ));
@@ -431,26 +483,32 @@ fn finalize_run(
     run_metadata.mark_finished();
     save_run_metadata(book_dir, &run_metadata)?;
 
-    if let Some(pb) = pb {
-        pb.finish_with_message("done");
+    if cancelled {
+        output::cancel_banner(translated + skipped + failed, chapters.len());
     }
-
-    stderr_status("Translation complete");
-    stderr_detail_kv("Translated", translated);
-    stderr_detail_kv("Skipped", skipped);
-    stderr_detail_kv("Failed", failed);
-    stderr_detail_kv("Glossary terms added", new_glossary_terms);
-    if legacy_tracking_migration.migrated_chapters > 0 {
-        stderr_detail_kv(
-            "Legacy chapters migrated",
-            legacy_tracking_migration.migrated_chapters,
-        );
-    }
-    if legacy_tracking_migration.migrated_glossary_baseline {
-        stderr_detail("Migrated legacy full-glossary baseline to canonical smart tracking");
-    }
+    output::summary_header();
+    let total_done = translated + skipped + failed;
+    output::summary_item("Processed", format!("{total_done}/{}", chapters.len()));
+    if translated > 0 { output::summary_item("Translated", output::styled_green(translated)); }
+    if skipped > 0 { output::summary_item("Skipped", skipped); }
+    if failed > 0 { output::summary_item("Failed", output::styled_red(failed)); }
+    if new_glossary_terms > 0 { output::summary_item("New glossary terms", new_glossary_terms); }
     if total_usage.total_tokens > 0 {
-        crate::translate::orchestrate::print_usage_info_with_label("Token usage", &total_usage);
+        output::summary_item("Token usage", total_usage.total_tokens);
+    }
+    if _legacy.migrated_chapters > 0 {
+        output::summary_item("Legacy chapters migrated", _legacy.migrated_chapters);
+    }
+    if _legacy.migrated_glossary_baseline {
+        eprintln!(" {} Migrated legacy full-glossary baseline to canonical smart tracking", output::styled_green("\u{2713}"));
+    }
+    eprintln!();
+    if cancelled {
+        eprintln!(" {} {}", output::styled_yellow("\u{26A0}"), output::styled_yellow("Translation cancelled. Partial results saved."));
+    } else if failed > 0 {
+        eprintln!(" {} Translation finished ({} failed)", output::styled_green("\u{2713}"), failed);
+    } else {
+        eprintln!(" {} Translation complete", output::styled_green("\u{2713}"));
     }
 
     if failed > 0 {

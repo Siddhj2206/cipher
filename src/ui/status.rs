@@ -24,7 +24,7 @@ pub fn show_status(book_dir: &Path, json: bool) -> Result<()> {
 
     match metadata {
         Some(metadata) => {
-            status("Book status");
+            section("Book status");
             detail_kv("Book", layout.paths.root.display());
             print_run_state(&metadata, &chapters);
         }

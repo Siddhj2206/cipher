@@ -2,21 +2,21 @@ use std::path::Path;
 
 use crate::book::BookLayout;
 use crate::config::{self, GlobalConfig};
-use crate::output::{detail, detail_kv, status};
+use crate::output::{detail, detail_kv, section, status};
 
 pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
     let layout = BookLayout::discover(dir);
 
-    status("Book doctor");
+    section("Book doctor");
     detail_kv("Book directory", layout.paths.root.display());
 
-    status("Configuration");
+    section("Configuration");
     detail_kv(
         "cipher.toml",
         format_path_status(&layout.paths.config_toml, layout.exists.config_toml),
     );
 
-    status("Content");
+    section("Content");
     detail_kv(
         "raw/",
         format_path_status(&layout.paths.raw_dir, layout.exists.raw_dir),
@@ -45,7 +45,7 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
         detail_kv("Effective output", effective_out.display());
     }
 
-    status("Glossary and style");
+    section("Glossary and style");
     detail_kv(
         "glossary.json",
         format_path_status(&layout.paths.glossary_json, layout.exists.glossary_json),
@@ -55,7 +55,7 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
         format_path_status(&layout.paths.style_md, layout.exists.style_md),
     );
 
-    status("Tool state");
+    section("Tool state");
     detail_kv(
         ".cipher/",
         format_path_status(&layout.paths.state_dir, layout.exists.state_dir),
