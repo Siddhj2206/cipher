@@ -310,6 +310,14 @@ async fn iterate_translation(
         );
         let paths = ChapterPaths::new(&chapter_file, &out_path, &chapter_path);
 
+        if !output::is_quiet() {
+            let short = Path::new(&chapter_path)
+                .file_name()
+                .map(|f| f.to_string_lossy())
+                .unwrap_or_default();
+            eprint!("\r\x1b[K  Translating {} ...", short);
+        }
+
         let result = tokio::select! {
             result = translate_single_chapter(
                 &ctx,
@@ -329,10 +337,12 @@ async fn iterate_translation(
         checkpoint_chapter_progress(book_dir, &mut *run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
 
-        if !output::is_quiet()
-            && (result.translated || result.failed || output::is_verbose())
-        {
-            print_chapter_result(&result, &chapter_path);
+        if !output::is_quiet() {
+            if result.translated || result.failed {
+                print_chapter_result(&result, &chapter_path);
+            } else {
+                eprint!("\r\x1b[K");
+            }
         }
 
         if result.translated {
@@ -387,9 +397,6 @@ fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path
             tags.push(output::styled_green(format!("+{} {}", result.new_terms_added, label)));
         }
         output::chapter_line_ok(chapter_path, &time, &tokens, &tags);
-    } else if result.skipped {
-        let reason = result.chapter_state.error.as_deref().unwrap_or("skipped");
-        output::chapter_line_skip(chapter_path, reason);
     } else if result.failed {
         let error = result.chapter_state.error.as_deref().unwrap_or("unknown error");
         output::chapter_line_fail(chapter_path, &time, &tokens, error);

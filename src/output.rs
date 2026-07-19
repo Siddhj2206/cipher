@@ -144,15 +144,15 @@ pub fn chapter_line_ok(name: impl Display, time: impl Display, tokens: impl Disp
     } else {
         format!("  {}", tags.join(" "))
     };
-    eprintln!("  {}  {}  {}  {}{}", ok(), name, dim(&time.to_string()), dim(&tokens.to_string()), tag_str);
+    eprintln!("\r\x1b[K  {}  {}  {}  {}{}", ok(), name, dim(&time.to_string()), dim(&tokens.to_string()), tag_str);
 }
 
 pub fn chapter_line_fail(name: impl Display, time: impl Display, tokens: impl Display, error: impl Display) {
-    eprintln!("  {}  {}  {}  {}  {}", fail_mark(), name, dim(&time.to_string()), dim(&tokens.to_string()), red(&error.to_string()));
+    eprintln!("\r\x1b[K  {}  {}  {}  {}  {}", fail_mark(), name, dim(&time.to_string()), dim(&tokens.to_string()), red(&error.to_string()));
 }
 
 pub fn chapter_line_skip(name: impl Display, reason: impl Display) {
-    eprintln!("  {}  {}  {}", skip_mark(), name, dim(&reason.to_string()));
+    eprintln!("\r\x1b[K  {}  {}  {}", skip_mark(), name, dim(&reason.to_string()));
 }
 
 pub fn cancel_banner(completed: usize, total: usize) {
