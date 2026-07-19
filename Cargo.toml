@@ -2,6 +2,9 @@
 name = "cipher"
 version = "0.2.1"
 edition = "2024"
+description = "LLM-powered book translation CLI with glossary management and incremental rerun support"
+categories = ["command-line-utilities", "text-processing"]
+keywords = ["translation", "glossary", "llm", "cli", "book"]
 
 [lib]
 name = "cipher"
