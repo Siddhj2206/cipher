@@ -4,9 +4,8 @@ use crate::state::{
     ChapterGlossaryUsage, ChapterState, GlossaryState, normalized_source_text_hash,
 };
 use crate::translate::rerun::glossary::{
-    build_glossary_state, changed_prompt_relevant_keys,
-    changed_selected_term_keys, glossary_terms_from_state, selection_fingerprints,
-    usage_fingerprint_map,
+    build_glossary_state, changed_prompt_relevant_keys, changed_selected_term_keys,
+    glossary_terms_from_state, selection_fingerprints, usage_fingerprint_map,
 };
 use crate::translate::rerun::types::{GlossaryRerunPlan, RerunDecision, SourceRerunPlan};
 use anyhow::{Context, Result};
@@ -53,12 +52,11 @@ pub(crate) fn exact_rerun_decision(
         }));
     }
 
-    let Some(expected_usage) =
-        crate::translate::rerun::glossary::current_expected_glossary_usage(
-            raw_path,
-            current_glossary,
-            injection_mode,
-        )?
+    let Some(expected_usage) = crate::translate::rerun::glossary::current_expected_glossary_usage(
+        raw_path,
+        current_glossary,
+        injection_mode,
+    )?
     else {
         return Ok(None);
     };
@@ -327,11 +325,11 @@ pub(crate) fn combine_rerun_decisions(
 mod tests {
     use super::*;
     use crate::glossary::{glossary_term_prompt_fingerprint, select_terms_for_text};
-    use crate::state::{ChapterGlossaryTerm, ChapterStatus, load_glossary_state, save_glossary_state, RunMetadata};
-    use crate::translate::orchestrate::checkpoint_chapter_progress;
-    use crate::translate::rerun::glossary::{
-        build_chapter_glossary_usage, build_glossary_state,
+    use crate::state::{
+        ChapterGlossaryTerm, ChapterStatus, RunMetadata, load_glossary_state, save_glossary_state,
     };
+    use crate::translate::orchestrate::checkpoint_chapter_progress;
+    use crate::translate::rerun::glossary::{build_chapter_glossary_usage, build_glossary_state};
     use crate::translate::rerun::types::snapshot_fingerprints;
     use crate::translate::test_helpers::*;
     use std::collections::BTreeMap;

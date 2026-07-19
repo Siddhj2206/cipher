@@ -7,8 +7,10 @@ use crate::translate::rerun::glossary::{
     build_chapter_glossary_usage, build_glossary_state, changed_prompt_relevant_keys,
     count_chapters_still_stale_for_current_glossary,
 };
-use crate::translate::rerun::types::{BaselineAction, GlossaryBaselineOutcome, LegacyTrackingMigration};
-use anyhow::Result;
+use crate::translate::rerun::types::{
+    BaselineAction, GlossaryBaselineOutcome, LegacyTrackingMigration,
+};
+use anyhow::{Context, Result};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -218,15 +220,13 @@ pub(crate) fn migrated_legacy_full_usage(
     Ok(Some(migrated_usage))
 }
 
-use anyhow::Context;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::glossary::GlossaryTerm;
     use crate::state::{
-        ChapterStatus, normalized_source_text_hash,
-        load_chapter_state, load_glossary_state, save_glossary_state,
+        ChapterStatus, load_chapter_state, load_glossary_state, normalized_source_text_hash,
+        save_glossary_state,
     };
     use crate::translate::rerun::glossary::build_glossary_state;
     use crate::translate::rerun::types::snapshot_fingerprints;

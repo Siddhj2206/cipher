@@ -242,9 +242,7 @@ fn select_or_create_provider_sectioned(config: &mut GlobalConfig) -> anyhow::Res
     create_provider_interactive(config)
 }
 
-fn select_existing_api_key(
-    provider_keys: &[ApiKey],
-) -> anyhow::Result<Option<usize>> {
+fn select_existing_api_key(provider_keys: &[ApiKey]) -> anyhow::Result<Option<usize>> {
     if provider_keys.is_empty() {
         return Ok(None);
     }
@@ -286,8 +284,7 @@ fn select_or_create_api_key_sectioned(
     if let Some(selection) = select_existing_api_key(provider_keys)? {
         let key = &provider_keys[selection];
         if key.name.is_none() {
-            let label = prompt_key_label(provider_keys, true)?
-                .expect("require_label ensures Some");
+            let label = prompt_key_label(provider_keys, true)?.expect("require_label ensures Some");
             provider_keys[selection].name = Some(label.clone());
             Ok(Some(label))
         } else {

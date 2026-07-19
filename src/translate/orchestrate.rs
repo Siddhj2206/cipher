@@ -1,6 +1,7 @@
+use crate::book::init::BookConfig;
 use crate::book::{
-    OutputConfig, StructuredChapter, render_chapter_markdown,
-    render_starts_with_markdown_heading, validate_structured_chapter,
+    OutputConfig, StructuredChapter, render_chapter_markdown, render_starts_with_markdown_heading,
+    validate_structured_chapter,
 };
 use crate::config::{GlobalConfig, validate_profile};
 use crate::glossary::{
@@ -8,16 +9,13 @@ use crate::glossary::{
     glossary_term_prompt_fingerprint, merge_terms, save_glossary, select_terms_for_text,
 };
 use crate::output::{stderr_detail, stderr_status, verbose_detail, verbose_detail_kv};
-use crate::book::init::BookConfig;
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus,
     normalized_source_text_hash, save_chapter_state, save_run_metadata,
 };
 use crate::translate::backup::create_backup;
 use crate::translate::preview::EMPTY_CHAPTER_SKIP_REASON;
-use crate::translate::rerun::{
-    RerunDecision, build_chapter_glossary_usage,
-};
+use crate::translate::rerun::{RerunDecision, build_chapter_glossary_usage};
 use crate::translate::{
     AcceptedTranslation, ProviderTextResult, ProviderTranslationResult, TranslationUsage,
     Translator,
@@ -48,8 +46,8 @@ pub(crate) fn resolve_translate_profiles<'a>(
     repair_profile: Option<&'a str>,
     glossary_profile: Option<&'a str>,
 ) -> Option<TranslateProfiles<'a>> {
-    let translation_name = profile
-        .or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()))?;
+    let translation_name =
+        profile.or_else(|| global_config.effective_profile_name(book_config.profile.as_deref()))?;
     let repair_name = repair_profile
         .or(book_config.repair_profile.as_deref())
         .unwrap_or(translation_name);
@@ -333,7 +331,12 @@ async fn call_translation_with_retry(
 ) -> (Option<ProviderTextResult>, Option<String>, u32) {
     for attempt in 1..=MAX_API_RETRIES as u32 {
         match translator
-            .translate_chapter(chapter_text, terms, style_guide.clone(), output_config.clone())
+            .translate_chapter(
+                chapter_text,
+                terms,
+                style_guide.clone(),
+                output_config.clone(),
+            )
             .await
         {
             Ok(resp) => return (Some(resp), None, attempt),
@@ -343,7 +346,9 @@ async fn call_translation_with_retry(
                     let delay = 2u64.pow(attempt);
                     verbose_detail_kv(
                         "Attempt",
-                        format!("Attempt {attempt}/{MAX_API_RETRIES} failed: {e}. Retrying in {delay}s."),
+                        format!(
+                            "Attempt {attempt}/{MAX_API_RETRIES} failed: {e}. Retrying in {delay}s."
+                        ),
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                 } else {
@@ -386,7 +391,12 @@ async fn attempt_translation(
 
     let rendered = render_chapter_markdown(&resp.chapter, output_config);
     let mut validation_errors = validate_structured_chapter(&resp.chapter, output_config);
-    validation_errors.extend(validate_translation(&rendered, validation_options).errors().iter().cloned());
+    validation_errors.extend(
+        validate_translation(&rendered, validation_options)
+            .errors()
+            .iter()
+            .cloned(),
+    );
     let original_usage = resp.usage.clone();
 
     if validation_errors.is_empty() {
@@ -402,7 +412,10 @@ async fn attempt_translation(
         return (Some(result), None, None);
     }
 
-    let mut last_error = Some(format!("Validation failed: {}", validation_errors.join(", ")));
+    let mut last_error = Some(format!(
+        "Validation failed: {}",
+        validation_errors.join(", ")
+    ));
     let mut failed_usage = Some(original_usage.clone());
 
     if api_attempt == 1 {
@@ -431,8 +444,12 @@ async fn attempt_translation(
                 failed_usage = Some(combined_usage.clone());
                 let mut repair_errors =
                     validate_structured_chapter(&repair_resp.chapter, output_config);
-                repair_errors
-                    .extend(validate_translation(&repaired_rendered, validation_options).errors().iter().cloned());
+                repair_errors.extend(
+                    validate_translation(&repaired_rendered, validation_options)
+                        .errors()
+                        .iter()
+                        .cloned(),
+                );
 
                 if repair_errors.is_empty() {
                     verbose_detail_kv("Repair", "success");
@@ -688,8 +705,11 @@ pub(crate) async fn translate_single_chapter(
         io::atomic_write(paths.out_path, &rendered_translation)
             .with_context(|| format!("Failed to write {}", paths.out_path.display()))?;
 
-        let (new_terms_added, exported_terms) =
-            merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, ctx.glossary_path)?;
+        let (new_terms_added, exported_terms) = merge_new_glossary_terms(
+            glossary,
+            resp.response.new_glossary_terms,
+            ctx.glossary_path,
+        )?;
 
         verbose_detail_kv("Result", "success");
         return Ok(build_success_chapter_result(
@@ -723,11 +743,10 @@ pub(crate) async fn translate_single_chapter(
 mod tests {
     use super::*;
     use crate::config::GlobalConfig;
-    
+
     use crate::translate::providers::Provider;
-    
+
     use crate::translate::{GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult};
-    
 
     struct FailingGlossaryProvider;
 
@@ -787,8 +806,14 @@ mod tests {
         let book_config = BookConfig::default();
         let (profile, repair, glossary) = profile_options(None, None, None);
 
-        let profiles =
-            resolve_translate_profiles(&config, &book_config, profile.as_deref(), repair.as_deref(), glossary.as_deref()).unwrap();
+        let profiles = resolve_translate_profiles(
+            &config,
+            &book_config,
+            profile.as_deref(),
+            repair.as_deref(),
+            glossary.as_deref(),
+        )
+        .unwrap();
 
         assert_eq!(profiles.translation_name, "default");
         assert_eq!(profiles.repair_name, "default");
@@ -804,8 +829,14 @@ mod tests {
         let (profile, repair, glossary) =
             profile_options(Some("cli"), Some("cli-repair"), Some("cli-glossary"));
 
-        let profiles =
-            resolve_translate_profiles(&config, &book_config, profile.as_deref(), repair.as_deref(), glossary.as_deref()).unwrap();
+        let profiles = resolve_translate_profiles(
+            &config,
+            &book_config,
+            profile.as_deref(),
+            repair.as_deref(),
+            glossary.as_deref(),
+        )
+        .unwrap();
 
         assert_eq!(profiles.translation_name, "cli");
         assert_eq!(profiles.repair_name, "cli-repair");
@@ -821,12 +852,8 @@ mod tests {
 
         let previous_chapter_state = previous_chapter_state_with_hash(None);
 
-        let source_text_hash = skipped_chapter_source_hash(
-            &raw_path,
-            Some(&previous_chapter_state),
-            true,
-        )
-        .unwrap();
+        let source_text_hash =
+            skipped_chapter_source_hash(&raw_path, Some(&previous_chapter_state), true).unwrap();
 
         assert_eq!(
             source_text_hash,
@@ -842,12 +869,8 @@ mod tests {
 
         let previous_chapter_state = previous_chapter_state_with_hash(None);
 
-        let source_text_hash = skipped_chapter_source_hash(
-            &raw_path,
-            Some(&previous_chapter_state),
-            false,
-        )
-        .unwrap();
+        let source_text_hash =
+            skipped_chapter_source_hash(&raw_path, Some(&previous_chapter_state), false).unwrap();
 
         assert_eq!(source_text_hash, None);
     }
@@ -938,12 +961,8 @@ mod tests {
 
         let previous_chapter_state = previous_chapter_state_with_hash(None);
 
-        let source_text_hash = skipped_chapter_source_hash(
-            &raw_path,
-            Some(&previous_chapter_state),
-            true,
-        )
-        .unwrap();
+        let source_text_hash =
+            skipped_chapter_source_hash(&raw_path, Some(&previous_chapter_state), true).unwrap();
 
         assert_eq!(
             source_text_hash,

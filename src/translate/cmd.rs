@@ -1,21 +1,18 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key, discover_chapters};
 use crate::book::{BookLayout, OutputConfig, load_book_config};
 use crate::config::GlobalConfig;
-use crate::glossary::{
-    GlossaryTerm, InjectionMode, book_config_injection_mode, load_glossary,
-};
+use crate::glossary::{GlossaryTerm, InjectionMode, book_config_injection_mode, load_glossary};
 use crate::output;
 use crate::output::{
     stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
 };
 use crate::state::{
-    ChapterState, GlossaryState, RunMetadata, RunOptions,
-    load_all_chapter_states, load_glossary_state, save_run_metadata,
+    ChapterState, GlossaryState, RunMetadata, RunOptions, load_all_chapter_states,
+    load_glossary_state, save_run_metadata,
 };
 use crate::translate::orchestrate::{
-    ChapterContext, ChapterPaths, Translators, checkpoint_chapter_progress,
-    print_profile_details, resolve_translate_profiles, translate_single_chapter,
-    validate_translate_profiles,
+    ChapterContext, ChapterPaths, Translators, checkpoint_chapter_progress, print_profile_details,
+    resolve_translate_profiles, translate_single_chapter, validate_translate_profiles,
 };
 use crate::translate::preview::preview_translation_run;
 use crate::translate::rerun::{
@@ -142,9 +139,13 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     if options.dry_run {
         stderr_status("Translation preview");
         stderr_detail_kv("Book", book_dir.display());
-        if let Some(profile_names) =
-            resolve_translate_profiles(&global_config, &book_config, options.profile.as_deref(), options.repair_profile.as_deref(), options.glossary_profile.as_deref())
-        {
+        if let Some(profile_names) = resolve_translate_profiles(
+            &global_config,
+            &book_config,
+            options.profile.as_deref(),
+            options.repair_profile.as_deref(),
+            options.glossary_profile.as_deref(),
+        ) {
             print_profile_details(&global_config, &profile_names);
         }
         return preview_translation_run(
@@ -157,10 +158,16 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         );
     }
 
-    let profile_names = resolve_translate_profiles(&global_config, &book_config, options.profile.as_deref(), options.repair_profile.as_deref(), options.glossary_profile.as_deref())
-        .ok_or_else(|| {
-            anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
-        })?;
+    let profile_names = resolve_translate_profiles(
+        &global_config,
+        &book_config,
+        options.profile.as_deref(),
+        options.repair_profile.as_deref(),
+        options.glossary_profile.as_deref(),
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
+    })?;
 
     validate_translate_profiles(&global_config, &profile_names)?;
 
@@ -192,7 +199,8 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let to_process = if options.overwrite {
         chapters.len()
     } else {
-        chapters.iter()
+        chapters
+            .iter()
             .filter(|ch| {
                 chapter_output_path(out_dir, ch)
                     .map(|p| !p.exists())
@@ -205,7 +213,11 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         output::stderr_section(format!(
             "Translating {} {}",
             to_process,
-            if to_process == 1 { "chapter" } else { "chapters" }
+            if to_process == 1 {
+                "chapter"
+            } else {
+                "chapters"
+            }
         ));
     }
 
@@ -229,25 +241,26 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     );
     save_run_metadata(book_dir, &run_metadata)?;
 
-    let (translated, skipped, failed, new_glossary_terms, total_usage, cancelled) = iterate_translation(
-        &translators,
-        &mut glossary,
-        chapters.clone(),
-        &options,
-        &layout.paths.raw_dir,
-        out_dir,
-        &style_guide,
-        &book_config.output,
-        injection_mode,
-        &layout.paths.glossary_json,
-        book_dir,
-        &mut run_metadata,
-        rerun_plan,
-        &source_rerun_plan,
-        &mut previous_chapter_states,
-        previous_glossary_state.as_ref(),
-    )
-    .await?;
+    let (translated, skipped, failed, new_glossary_terms, total_usage, cancelled) =
+        iterate_translation(
+            &translators,
+            &mut glossary,
+            chapters.clone(),
+            &options,
+            &layout.paths.raw_dir,
+            out_dir,
+            &style_guide,
+            &book_config.output,
+            injection_mode,
+            &layout.paths.glossary_json,
+            book_dir,
+            &mut run_metadata,
+            rerun_plan,
+            &source_rerun_plan,
+            &mut previous_chapter_states,
+            previous_glossary_state.as_ref(),
+        )
+        .await?;
 
     let exit_code = finalize_run(
         book_dir,
@@ -391,29 +404,51 @@ async fn iterate_translation(
         }
     }
 
-    Ok((translated, skipped, failed, new_glossary_terms, total_usage, cancelled))
+    Ok((
+        translated,
+        skipped,
+        failed,
+        new_glossary_terms,
+        total_usage,
+        cancelled,
+    ))
 }
 
 fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path: &str) {
-    let time = result.chapter_state.translation_time_ms
+    let time = result
+        .chapter_state
+        .translation_time_ms
         .map(fmt_time)
         .unwrap_or_else(|| "\u{2014}".to_string());
-    let tokens = result.usage.as_ref()
+    let tokens = result
+        .usage
+        .as_ref()
         .map(|u| fmt_tokens(u.total_tokens))
         .unwrap_or_else(|| "\u{2014}".to_string());
 
     if result.translated {
         let mut tags: Vec<String> = Vec::new();
         if result.new_terms_added > 0 {
-            let label = if result.new_terms_added == 1 { "term" } else { "terms" };
-            tags.push(output::styled_green(format!("+{} {}", result.new_terms_added, label)));
+            let label = if result.new_terms_added == 1 {
+                "term"
+            } else {
+                "terms"
+            };
+            tags.push(output::styled_green(format!(
+                "+{} {}",
+                result.new_terms_added, label
+            )));
         }
         if let Some(ref err) = result.glossary_extraction_error {
             tags.push(output::styled_yellow(format!("\u{26A0} glos: {}", err)));
         }
         output::chapter_line_ok(chapter_path, &time, &tokens, &tags);
     } else if result.failed {
-        let error = result.chapter_state.error.as_deref().unwrap_or("unknown error");
+        let error = result
+            .chapter_state
+            .error
+            .as_deref()
+            .unwrap_or("unknown error");
         output::chapter_line_fail(chapter_path, &time, &tokens, error);
     }
 }
@@ -498,10 +533,18 @@ fn finalize_run(
     output::summary_header();
     let total_done = translated + skipped + failed;
     output::summary_item("Processed", format!("{total_done}/{}", chapters.len()));
-    if translated > 0 { output::summary_item("Translated", output::styled_green(translated)); }
-    if skipped > 0 { output::summary_item("Skipped", skipped); }
-    if failed > 0 { output::summary_item("Failed", output::styled_red(failed)); }
-    if new_glossary_terms > 0 { output::summary_item("New glossary terms", new_glossary_terms); }
+    if translated > 0 {
+        output::summary_item("Translated", output::styled_green(translated));
+    }
+    if skipped > 0 {
+        output::summary_item("Skipped", skipped);
+    }
+    if failed > 0 {
+        output::summary_item("Failed", output::styled_red(failed));
+    }
+    if new_glossary_terms > 0 {
+        output::summary_item("New glossary terms", new_glossary_terms);
+    }
     if total_usage.total_tokens > 0 {
         output::summary_item("Token usage", total_usage.total_tokens);
     }
@@ -509,13 +552,24 @@ fn finalize_run(
         output::summary_item("Legacy chapters migrated", _legacy.migrated_chapters);
     }
     if _legacy.migrated_glossary_baseline {
-        eprintln!(" {} Migrated legacy full-glossary baseline to canonical smart tracking", output::styled_green("\u{2713}"));
+        eprintln!(
+            " {} Migrated legacy full-glossary baseline to canonical smart tracking",
+            output::styled_green("\u{2713}")
+        );
     }
     eprintln!();
     if cancelled {
-        eprintln!(" {} {}", output::styled_yellow("\u{26A0}"), output::styled_yellow("Translation cancelled. Partial results saved."));
+        eprintln!(
+            " {} {}",
+            output::styled_yellow("\u{26A0}"),
+            output::styled_yellow("Translation cancelled. Partial results saved.")
+        );
     } else if failed > 0 {
-        eprintln!(" {} Translation finished ({} failed)", output::styled_green("\u{2713}"), failed);
+        eprintln!(
+            " {} Translation finished ({} failed)",
+            output::styled_green("\u{2713}"),
+            failed
+        );
     } else {
         eprintln!(" {} Translation complete", output::styled_green("\u{2713}"));
     }
@@ -530,7 +584,7 @@ fn finalize_run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     use crate::translate::test_helpers::translate_options;
 
     fn rerun_opts(rerun: Option<crate::RerunMode>) -> TranslateOptions {

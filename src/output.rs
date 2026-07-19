@@ -1,6 +1,6 @@
 use std::fmt::Display;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 static QUIET: AtomicBool = AtomicBool::new(false);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
@@ -26,24 +26,55 @@ fn no_color() -> bool {
     *NO_COLOR.get_or_init(|| std::env::var("NO_COLOR").is_ok_and(|v| !v.is_empty()))
 }
 
-fn ok() -> &'static str { if no_color() { "\u{2713}" } else { "\x1b[32m\u{2713}\x1b[0m" } }
-fn skip_mark() -> &'static str { if no_color() { "\u{2014}" } else { "\x1b[33m\u{2014}\x1b[0m" } }
-fn fail_mark() -> &'static str { if no_color() { "\u{2717}" } else { "\x1b[31m\u{2717}\x1b[0m" } }
+fn ok() -> &'static str {
+    if no_color() {
+        "\u{2713}"
+    } else {
+        "\x1b[32m\u{2713}\x1b[0m"
+    }
+}
+fn fail_mark() -> &'static str {
+    if no_color() {
+        "\u{2717}"
+    } else {
+        "\x1b[31m\u{2717}\x1b[0m"
+    }
+}
 
 fn green(s: &str) -> String {
-    if no_color() { s.to_string() } else { format!("\x1b[32m{s}\x1b[0m") }
+    if no_color() {
+        s.to_string()
+    } else {
+        format!("\x1b[32m{s}\x1b[0m")
+    }
 }
 fn red(s: &str) -> String {
-    if no_color() { s.to_string() } else { format!("\x1b[31m{s}\x1b[0m") }
+    if no_color() {
+        s.to_string()
+    } else {
+        format!("\x1b[31m{s}\x1b[0m")
+    }
 }
 fn yellow(s: &str) -> String {
-    if no_color() { s.to_string() } else { format!("\x1b[33m{s}\x1b[0m") }
+    if no_color() {
+        s.to_string()
+    } else {
+        format!("\x1b[33m{s}\x1b[0m")
+    }
 }
 fn bold(s: &str) -> String {
-    if no_color() { s.to_string() } else { format!("\x1b[1m{s}\x1b[0m") }
+    if no_color() {
+        s.to_string()
+    } else {
+        format!("\x1b[1m{s}\x1b[0m")
+    }
 }
 fn dim(s: &str) -> String {
-    if no_color() { s.to_string() } else { format!("\x1b[2m{s}\x1b[0m") }
+    if no_color() {
+        s.to_string()
+    } else {
+        format!("\x1b[2m{s}\x1b[0m")
+    }
 }
 
 // stdout functions — for display/inspection commands where output IS the data.
@@ -124,40 +155,51 @@ pub fn verbose_detail_kv(label: &str, value: impl Display) {
 
 // ── Unified design components ──────────────────────────────────────
 
-pub fn progress_bar(current: usize, total: usize, elapsed: impl Display) {
-    let width = 20usize;
-    let filled = if total > 0 { (current * width).checked_div(total).unwrap_or(0) } else { 0 };
-    let bar: String = (0..width).map(|i| if i < filled { '=' } else { '-' }).collect();
-    eprintln!(
-        " {} {}  {}/{}  {}",
-        dim("Progress:"),
-        dim(&format!("[{}]", bar)),
-        current,
-        total,
-        dim(&elapsed.to_string()),
-    );
-}
-
-pub fn chapter_line_ok(name: impl Display, time: impl Display, tokens: impl Display, tags: &[String]) {
+pub fn chapter_line_ok(
+    name: impl Display,
+    time: impl Display,
+    tokens: impl Display,
+    tags: &[String],
+) {
     let tag_str = if tags.is_empty() {
         String::new()
     } else {
         format!("  {}", tags.join(" "))
     };
-    eprintln!("\r\x1b[K  {}  {}  {}  {}{}", ok(), name, dim(&time.to_string()), dim(&tokens.to_string()), tag_str);
+    eprintln!(
+        "\r\x1b[K  {}  {}  {}  {}{}",
+        ok(),
+        name,
+        dim(&time.to_string()),
+        dim(&tokens.to_string()),
+        tag_str
+    );
 }
 
-pub fn chapter_line_fail(name: impl Display, time: impl Display, tokens: impl Display, error: impl Display) {
-    eprintln!("\r\x1b[K  {}  {}  {}  {}  {}", fail_mark(), name, dim(&time.to_string()), dim(&tokens.to_string()), red(&error.to_string()));
-}
-
-pub fn chapter_line_skip(name: impl Display, reason: impl Display) {
-    eprintln!("\r\x1b[K  {}  {}  {}", skip_mark(), name, dim(&reason.to_string()));
+pub fn chapter_line_fail(
+    name: impl Display,
+    time: impl Display,
+    tokens: impl Display,
+    error: impl Display,
+) {
+    eprintln!(
+        "\r\x1b[K  {}  {}  {}  {}  {}",
+        fail_mark(),
+        name,
+        dim(&time.to_string()),
+        dim(&tokens.to_string()),
+        red(&error.to_string())
+    );
 }
 
 pub fn cancel_banner(completed: usize, total: usize) {
     eprintln!();
-    eprintln!(" {} {} after {} chapters", yellow("\u{26A0}"), yellow("Translation cancelled (Ctrl-C)"), dim(&format!("{completed}/{total}")));
+    eprintln!(
+        " {} {} after {} chapters",
+        yellow("\u{26A0}"),
+        yellow("Translation cancelled (Ctrl-C)"),
+        dim(&format!("{completed}/{total}"))
+    );
     eprintln!();
 }
 
@@ -166,7 +208,12 @@ pub fn summary_header() {
 }
 
 pub fn summary_item(label: impl Display, value: impl Display) {
-    eprintln!("  {}  {}  {}", dim("\u{2502}"), bold(&label.to_string()), value);
+    eprintln!(
+        "  {}  {}  {}",
+        dim("\u{2502}"),
+        bold(&label.to_string()),
+        value
+    );
 }
 
 pub fn styled_green(s: impl Display) -> String {

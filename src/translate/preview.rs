@@ -42,7 +42,7 @@ pub(crate) fn preview_translation_run(
     chapters: &VecDeque<PathBuf>,
     raw_dir: &Path,
     out_dir: &Path,
-    options: &crate::translate::cmd::TranslateOptions,
+    options: &crate::translate::TranslateOptions,
     glossary_rerun_plan: &GlossaryRerunPlan,
     source_rerun_plan: &SourceRerunPlan,
 ) -> Result<i32> {
@@ -89,7 +89,7 @@ fn build_chapter_previews(
     chapters: &VecDeque<PathBuf>,
     raw_dir: &Path,
     out_dir: &Path,
-    options: &crate::translate::cmd::TranslateOptions,
+    options: &crate::translate::TranslateOptions,
     glossary_rerun_plan: &GlossaryRerunPlan,
     source_rerun_plan: &SourceRerunPlan,
 ) -> Result<Vec<ChapterPreview>> {
@@ -119,7 +119,7 @@ pub(crate) fn preview_for_chapter(
     raw_path: &Path,
     chapter_path: String,
     output_exists: bool,
-    options: &crate::translate::cmd::TranslateOptions,
+    options: &crate::translate::TranslateOptions,
     rerun_decision: Option<&RerunDecision>,
 ) -> Result<ChapterPreview> {
     let chapter_text = std::fs::read_to_string(raw_path)

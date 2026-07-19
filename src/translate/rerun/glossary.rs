@@ -1,3 +1,4 @@
+use crate::book::paths::{chapter_output_path, chapter_state_key};
 use crate::glossary::{
     GlossaryTerm, InjectionMode, glossary_term_key, glossary_term_prompt_fingerprint,
     select_terms_for_text,
@@ -5,7 +6,6 @@ use crate::glossary::{
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, GlossaryState, GlossaryStateTerm,
 };
-use crate::book::paths::{chapter_output_path, chapter_state_key};
 use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -222,8 +222,9 @@ pub(crate) fn count_chapters_still_stale_for_current_glossary(
 mod tests {
     use super::*;
     use crate::glossary::GlossaryTerm;
-    use crate::state::{ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryStateTerm};
-    
+    use crate::state::{
+        ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus, GlossaryStateTerm,
+    };
 
     fn test_term(key: &str, term: &str, definition: &str) -> GlossaryTerm {
         GlossaryTerm {
