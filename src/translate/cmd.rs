@@ -13,7 +13,7 @@ use crate::state::{
     load_all_chapter_states, load_glossary_state, save_run_metadata,
 };
 use crate::translate::orchestrate::{
-    Translators, checkpoint_chapter_progress,
+    ChapterContext, ChapterPaths, Translators, checkpoint_chapter_progress,
     print_profile_details, resolve_translate_profiles, translate_single_chapter,
     validate_translate_profiles,
 };
@@ -310,21 +310,24 @@ async fn iterate_translation(
             pb.set_message(chapter_path.clone());
         }
 
-        let result = translate_single_chapter(
+        let ctx = ChapterContext::new(
             translators,
-            &chapter_file,
-            &out_path,
-            &chapter_path,
-            options.overwrite,
-            options.rerun_chapters_enabled(),
-            previous_chapter_state,
-            rerun_decision.as_ref(),
-            glossary,
             style_guide,
             output_config,
             injection_mode,
             glossary_json_path,
             book_dir,
+        );
+        let paths = ChapterPaths::new(&chapter_file, &out_path, &chapter_path);
+
+        let result = translate_single_chapter(
+            &ctx,
+            &paths,
+            options.overwrite,
+            options.rerun_chapters_enabled(),
+            previous_chapter_state,
+            rerun_decision.as_ref(),
+            glossary,
         )
         .await?;
 

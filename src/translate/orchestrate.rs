@@ -554,33 +554,72 @@ fn pluralize<'a>(count: usize, singular: &'a str, plural: &'a str) -> &'a str {
     if count == 1 { singular } else { plural }
 }
 
-#[allow(clippy::too_many_arguments)]
+pub(crate) struct ChapterPaths<'a> {
+    pub raw_path: &'a Path,
+    pub out_path: &'a Path,
+    pub chapter_path: &'a str,
+}
+
+impl<'a> ChapterPaths<'a> {
+    pub fn new(raw_path: &'a Path, out_path: &'a Path, chapter_path: &'a str) -> Self {
+        Self {
+            raw_path,
+            out_path,
+            chapter_path,
+        }
+    }
+}
+
+pub(crate) struct ChapterContext<'a> {
+    pub translators: &'a Translators,
+    pub style_guide: &'a Option<String>,
+    pub output_config: &'a OutputConfig,
+    pub injection_mode: InjectionMode,
+    pub glossary_path: &'a Path,
+    pub book_dir: &'a Path,
+}
+
+impl<'a> ChapterContext<'a> {
+    pub fn new(
+        translators: &'a Translators,
+        style_guide: &'a Option<String>,
+        output_config: &'a OutputConfig,
+        injection_mode: InjectionMode,
+        glossary_path: &'a Path,
+        book_dir: &'a Path,
+    ) -> Self {
+        Self {
+            translators,
+            style_guide,
+            output_config,
+            injection_mode,
+            glossary_path,
+            book_dir,
+        }
+    }
+}
+
 pub(crate) async fn translate_single_chapter(
-    translators: &Translators,
-    raw_path: &Path,
-    out_path: &Path,
-    chapter_path: &str,
+    ctx: &ChapterContext<'_>,
+    paths: &ChapterPaths<'_>,
     overwrite: bool,
     rerun_chapters_enabled: bool,
     previous_chapter_state: Option<&ChapterState>,
     rerun_decision: Option<&RerunDecision>,
     glossary: &mut Vec<GlossaryTerm>,
-    style_guide: &Option<String>,
-    output_config: &OutputConfig,
-    injection_mode: InjectionMode,
-    glossary_path: &Path,
-    book_dir: &Path,
 ) -> Result<ChapterResult> {
-    let translation_injection_mode = injection_mode;
     let prev_artifacts = previous_chapter_artifacts(previous_chapter_state);
 
-    let output_exists = out_path.exists();
+    let output_exists = paths.out_path.exists();
     if !overwrite && output_exists && rerun_decision.is_none() {
-        let source_text_hash =
-            skipped_chapter_source_hash(raw_path, previous_chapter_state, rerun_chapters_enabled)?;
+        let source_text_hash = skipped_chapter_source_hash(
+            paths.raw_path,
+            previous_chapter_state,
+            rerun_chapters_enabled,
+        )?;
 
         return Ok(build_skipped_chapter_result(
-            chapter_path,
+            paths.chapter_path,
             None,
             None,
             prev_artifacts,
@@ -588,14 +627,14 @@ pub(crate) async fn translate_single_chapter(
         ));
     }
 
-    let chapter_text = std::fs::read_to_string(raw_path)
-        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+    let chapter_text = std::fs::read_to_string(paths.raw_path)
+        .with_context(|| format!("Failed to read {}", paths.raw_path.display()))?;
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
-        stderr_status(format!("Skip {}: chapter is empty", chapter_path));
+        stderr_status(format!("Skip {}: chapter is empty", paths.chapter_path));
         return Ok(build_skipped_chapter_result(
-            chapter_path,
+            paths.chapter_path,
             Some(EMPTY_CHAPTER_SKIP_REASON.to_string()),
             None,
             prev_artifacts,
@@ -608,16 +647,16 @@ pub(crate) async fn translate_single_chapter(
     }
 
     let start = Instant::now();
-    let selection = select_terms_for_text(glossary, &chapter_text, translation_injection_mode);
-    print_glossary_info(&selection, translation_injection_mode);
+    let selection = select_terms_for_text(glossary, &chapter_text, ctx.injection_mode);
+    print_glossary_info(&selection, ctx.injection_mode);
 
     let (response, last_error, failed_usage) = attempt_translation(
-        translators,
+        ctx.translators,
         &chapter_text,
         &selection,
         glossary,
-        style_guide,
-        output_config,
+        ctx.style_guide,
+        ctx.output_config,
     )
     .await;
 
@@ -627,24 +666,25 @@ pub(crate) async fn translate_single_chapter(
         print_usage_info(&resp.usage);
 
         if output_exists {
-            let backup_path = create_backup(book_dir, out_path)?;
+            let backup_path = create_backup(ctx.book_dir, paths.out_path)?;
             verbose_detail_kv("Backup", backup_path.display());
         }
 
-        let rendered_translation = render_chapter_markdown(&resp.response.chapter, output_config);
+        let rendered_translation =
+            render_chapter_markdown(&resp.response.chapter, ctx.output_config);
 
-        io::atomic_write(out_path, &rendered_translation)
-            .with_context(|| format!("Failed to write {}", out_path.display()))?;
+        io::atomic_write(paths.out_path, &rendered_translation)
+            .with_context(|| format!("Failed to write {}", paths.out_path.display()))?;
 
         let (new_terms_added, exported_terms) =
-            merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, glossary_path)?;
+            merge_new_glossary_terms(glossary, resp.response.new_glossary_terms, ctx.glossary_path)?;
 
         verbose_detail_kv("Result", "success");
         return Ok(build_success_chapter_result(
-            chapter_path,
+            paths.chapter_path,
             duration.as_millis() as u64,
             resp.usage,
-            build_chapter_glossary_usage(&selection, translation_injection_mode),
+            build_chapter_glossary_usage(&selection, ctx.injection_mode),
             exported_terms,
             source_text_hash,
             new_terms_added,
@@ -657,7 +697,7 @@ pub(crate) async fn translate_single_chapter(
     let failed_source_text_hash =
         failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
     Ok(build_failed_chapter_result(
-        chapter_path,
+        paths.chapter_path,
         error_msg,
         duration.as_millis() as u64,
         failed_usage,
