@@ -189,25 +189,16 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     stderr_status("Translating chapters");
     verbose_detail_kv("Chapters found", chapters.len());
 
-    let to_process = if options.overwrite || options.rerun_chapters_enabled() {
+    let to_process = if options.overwrite {
         chapters.len()
     } else {
-        let forced = chapters.iter().filter(|ch| {
-            let has_decision = chapter_state_key(&layout.paths.raw_dir, ch)
-                .ok()
-                .map(|path| {
-                    rerun_plan.decision_for(&path).is_some()
-                        || source_rerun_plan.decision_for(&path).is_some()
-                })
-                .unwrap_or(false);
-            if has_decision {
-                return true;
-            }
-            chapter_output_path(out_dir, ch)
-                .map(|p| !p.exists())
-                .unwrap_or(false)
-        }).count();
-        if forced > 0 { forced } else { chapters.len() }
+        chapters.iter()
+            .filter(|ch| {
+                chapter_output_path(out_dir, ch)
+                    .map(|p| !p.exists())
+                    .unwrap_or(true)
+            })
+            .count()
     };
 
     if !output::is_quiet() {
