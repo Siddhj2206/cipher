@@ -14,7 +14,7 @@ pub(crate) const OUTPUT_MISSING_REASON: &str = "No output exists yet";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreviewAction {
     Translate,
-    Retranslate,
+    Rerun,
     Skip,
 }
 
@@ -29,7 +29,7 @@ pub(crate) struct ChapterPreview {
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct PreviewSummary {
     pub translate: usize,
-    pub retranslate: usize,
+    pub rerun: usize,
     pub skip: usize,
     pub approximate_reruns: usize,
     pub exact_reruns: usize,
@@ -64,7 +64,7 @@ pub(crate) fn preview_translation_run(
 
     stderr_status("Preview summary");
     stderr_detail_kv("Translate", summary.translate);
-    stderr_detail_kv("Retranslate", summary.retranslate);
+    stderr_detail_kv("Rerun", summary.rerun);
     stderr_detail_kv("Skip", summary.skip);
     if summary.exact_reruns > 0 {
         stderr_detail_kv("Exact reruns", summary.exact_reruns);
@@ -138,7 +138,7 @@ pub(crate) fn preview_for_chapter(
         return Ok(ChapterPreview {
             chapter_path,
             action: if output_exists {
-                PreviewAction::Retranslate
+                PreviewAction::Rerun
             } else {
                 PreviewAction::Translate
             },
@@ -154,7 +154,7 @@ pub(crate) fn preview_for_chapter(
     if let Some(decision) = rerun_decision {
         return Ok(ChapterPreview {
             chapter_path,
-            action: PreviewAction::Retranslate,
+            action: PreviewAction::Rerun,
             reason: decision.reason.clone(),
             approximate: decision.is_approximate,
         });
@@ -180,7 +180,7 @@ pub(crate) fn preview_for_chapter(
 pub(crate) fn preview_display_line(preview: &ChapterPreview) -> String {
     let action = match preview.action {
         PreviewAction::Translate => "Translate",
-        PreviewAction::Retranslate => "Retranslate",
+        PreviewAction::Rerun => "Rerun",
         PreviewAction::Skip => "Skip",
     };
 
@@ -202,8 +202,8 @@ pub(crate) fn summarize_previews(previews: &[ChapterPreview]) -> PreviewSummary 
                     summary.output_missing += 1;
                 }
             }
-            PreviewAction::Retranslate => {
-                summary.retranslate += 1;
+            PreviewAction::Rerun => {
+                summary.rerun += 1;
                 if preview.approximate {
                     summary.approximate_reruns += 1;
                 } else {
@@ -260,7 +260,7 @@ mod tests {
         let raw_path = dir.path().join("chapter1.md");
         std::fs::write(&raw_path, "content").unwrap();
         let rerun_decision = RerunDecision {
-            reason: "Approximate smart glossary selection changed: hero".to_string(),
+            reason: "Glossary selection changed (approx): hero".to_string(),
             is_approximate: true,
         };
 
@@ -273,7 +273,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(preview.action, PreviewAction::Retranslate);
+        assert_eq!(preview.action, PreviewAction::Rerun);
         assert!(preview.approximate);
     }
 
@@ -288,14 +288,14 @@ mod tests {
             },
             ChapterPreview {
                 chapter_path: "chapter2.md".to_string(),
-                action: PreviewAction::Retranslate,
+                action: PreviewAction::Rerun,
                 reason: "Chapter source changed".to_string(),
                 approximate: false,
             },
             ChapterPreview {
                 chapter_path: "chapter3.md".to_string(),
-                action: PreviewAction::Retranslate,
-                reason: "Approximate smart glossary selection changed: hero".to_string(),
+                action: PreviewAction::Rerun,
+                reason: "Glossary selection changed (approx): hero".to_string(),
                 approximate: true,
             },
             ChapterPreview {
@@ -315,7 +315,7 @@ mod tests {
         let summary = summarize_previews(&previews);
 
         assert_eq!(summary.translate, 1);
-        assert_eq!(summary.retranslate, 2);
+        assert_eq!(summary.rerun, 2);
         assert_eq!(summary.skip, 2);
         assert_eq!(summary.output_missing, 1);
         assert_eq!(summary.exact_reruns, 1);
