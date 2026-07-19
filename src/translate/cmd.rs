@@ -189,9 +189,25 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     stderr_status("Translating chapters");
     verbose_detail_kv("Chapters found", chapters.len());
 
+    let to_process = if options.overwrite || options.rerun_chapters_enabled() {
+        chapters.len()
+    } else {
+        let forced = chapters.iter().filter(|ch| {
+            chapter_state_key(&layout.paths.raw_dir, ch)
+                .ok()
+                .map(|path| {
+                    rerun_plan.decision_for(&path).is_some()
+                        || source_rerun_plan.decision_for(&path).is_some()
+                })
+                .unwrap_or(false)
+        }).count();
+        if forced > 0 { forced } else { chapters.len() }
+    };
+
     if !output::is_quiet() {
         output::stderr_section(format!(
-            "Translating {} {}",
+            "Translating {} / {} {}",
+            to_process,
             chapters.len(),
             if chapters.len() == 1 { "chapter" } else { "chapters" }
         ));
@@ -395,6 +411,9 @@ fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path
         if result.new_terms_added > 0 {
             let label = if result.new_terms_added == 1 { "term" } else { "terms" };
             tags.push(output::styled_green(format!("+{} {}", result.new_terms_added, label)));
+        }
+        if let Some(ref err) = result.glossary_extraction_error {
+            tags.push(output::styled_yellow(format!("\u{26A0} glos: {}", err)));
         }
         output::chapter_line_ok(chapter_path, &time, &tokens, &tags);
     } else if result.failed {

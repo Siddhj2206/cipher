@@ -34,6 +34,7 @@ pub struct ProviderGlossaryResult {
 pub struct AcceptedTranslation {
     pub chapter: StructuredChapter,
     pub new_glossary_terms: Vec<GlossaryTerm>,
+    pub glossary_extraction_error: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -114,6 +114,7 @@ pub(crate) struct ChapterResult {
     pub new_terms_added: usize,
     pub usage: Option<TranslationUsage>,
     pub chapter_state: ChapterState,
+    pub glossary_extraction_error: Option<String>,
 }
 
 impl ChapterResult {
@@ -132,6 +133,7 @@ impl ChapterResult {
         glossary_usage: Option<ChapterGlossaryUsage>,
         exported_terms: Vec<ChapterGlossaryTerm>,
         source_text_hash: Option<String>,
+        glossary_extraction_error: Option<String>,
     ) -> Self {
         ChapterResult {
             translated,
@@ -149,6 +151,7 @@ impl ChapterResult {
                 exported_terms,
                 source_text_hash,
             ),
+            glossary_extraction_error,
         }
     }
 }
@@ -193,9 +196,11 @@ fn build_skipped_chapter_result(
         previous_artifacts.glossary_usage,
         previous_artifacts.exported_terms,
         source_text_hash,
+        None,
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_success_chapter_result(
     chapter_path: &str,
     duration_ms: u64,
@@ -204,6 +209,7 @@ fn build_success_chapter_result(
     exported_terms: Vec<ChapterGlossaryTerm>,
     source_text_hash: String,
     new_terms_added: usize,
+    glossary_extraction_error: Option<String>,
 ) -> ChapterResult {
     ChapterResult::new(
         chapter_path,
@@ -219,6 +225,7 @@ fn build_success_chapter_result(
         Some(glossary_usage),
         exported_terms,
         Some(source_text_hash),
+        glossary_extraction_error,
     )
 }
 
@@ -244,6 +251,7 @@ fn build_failed_chapter_result(
         previous_artifacts.glossary_usage,
         previous_artifacts.exported_terms,
         source_text_hash,
+        None,
     )
 }
 
@@ -463,21 +471,22 @@ async fn finish_accepted_translation(
     glossary: &[GlossaryTerm],
     mut usage: TranslationUsage,
 ) -> ProviderTranslationResult {
-    let new_glossary_terms = match translator
+    let (new_glossary_terms, glossary_extraction_error) = match translator
         .extract_glossary(chapter_text, rendered_markdown, glossary)
         .await
     {
         Ok(glossary_resp) => {
             usage += glossary_resp.usage;
             verbose_detail_kv("Glossary extraction", "success");
-            glossary_resp.new_glossary_terms
+            (glossary_resp.new_glossary_terms, None)
         }
         Err(e) => {
+            let msg = format!("{:#}", e);
             verbose_detail_kv(
                 "Glossary extraction",
-                format!("failed: {}. Chapter kept without new terms.", e),
+                format!("failed: {}. Chapter kept without new terms.", msg),
             );
-            Vec::new()
+            (Vec::new(), Some(msg))
         }
     };
 
@@ -485,6 +494,7 @@ async fn finish_accepted_translation(
         response: AcceptedTranslation {
             chapter,
             new_glossary_terms,
+            glossary_extraction_error,
         },
         usage,
     }
@@ -690,6 +700,7 @@ pub(crate) async fn translate_single_chapter(
             exported_terms,
             source_text_hash,
             new_terms_added,
+            resp.response.glossary_extraction_error,
         ));
     }
 
