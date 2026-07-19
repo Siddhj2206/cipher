@@ -4,6 +4,7 @@
 
 pub mod gemini;
 pub mod openai;
+pub mod shared;
 
 use crate::config::{GlobalConfig, ProviderKind};
 use crate::translate::{

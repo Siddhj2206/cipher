@@ -5,41 +5,28 @@
 //! - OpenAI-compatible: Uses Chat Completions API (more widely supported)
 
 use anyhow::Result;
-use rig::completion::CompletionError;
-use rig::extractor::ExtractionError;
 use rig::providers::openai;
+use serde::Serialize;
 use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 
 use crate::book::StructuredChapter;
-use crate::glossary::GlossaryTerm;
 use crate::translate::prompt::{
     build_glossary_extraction_prompt, build_glossary_section, build_repair_prompt,
     build_style_section, build_translation_prompt,
 };
+use crate::translate::providers::shared::{self, HttpErrorMessages};
 use crate::translate::providers::{Provider, ProviderParams};
 use crate::translate::{
     GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
     TranslationRequest,
 };
 
-const EXTRACTOR_RETRIES: u64 = 1;
-const TRANSLATION_PREAMBLE: &str =
-    "You are a professional translator. Always return valid JSON matching the expected schema.";
-const GLOSSARY_PREAMBLE: &str =
-    "You extract glossary terms. Always return valid JSON matching the expected schema.";
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-struct TranslationOnlyResponse {
-    chapter_number: Option<String>,
-    chapter_title: Option<String>,
-    content: String,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
-struct GlossaryExtractionResponse {
-    new_glossary_terms: Vec<GlossaryTerm>,
-}
+const OPENAI_HTTP_MSGS: HttpErrorMessages = HttpErrorMessages {
+    not_found: "Check your base URL and model name",
+    unauthorized: "Check your API key",
+    rate_limited: "Rate limit exceeded",
+    server_error: "Provider issue",
+};
 
 pub struct OpenAiProvider {
     client: openai::Client,
@@ -82,7 +69,7 @@ impl OpenAiProvider {
             let extractor = completions_client
                 .extractor::<T>(&self.model)
                 .preamble(preamble)
-                .retries(EXTRACTOR_RETRIES)
+                .retries(shared::EXTRACTOR_RETRIES)
                 .build();
 
             extractor.extract_with_usage(&prompt).await
@@ -91,7 +78,7 @@ impl OpenAiProvider {
                 .client
                 .extractor::<T>(&self.model)
                 .preamble(preamble)
-                .retries(EXTRACTOR_RETRIES)
+                .retries(shared::EXTRACTOR_RETRIES)
                 .build();
 
             extractor.extract_with_usage(&prompt).await
@@ -100,57 +87,10 @@ impl OpenAiProvider {
         match result {
             Ok(extracted) => Ok((extracted.data, extracted.usage)),
             Err(err) => {
-                let detailed_error = format_extraction_error(&err);
+                let detailed_error = shared::format_extraction_error(&err, &OPENAI_HTTP_MSGS);
                 Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
             }
         }
-    }
-}
-
-fn format_completion_error(err: &CompletionError) -> String {
-    match err {
-        CompletionError::HttpError(http_err) => {
-            let err_str = format!("{}", http_err);
-            if err_str.contains("404") {
-                "HTTP 404: Not Found - Check your base URL and model name".to_string()
-            } else if err_str.contains("401") {
-                "HTTP 401: Unauthorized - Check your API key".to_string()
-            } else if err_str.contains("429") {
-                "HTTP 429: Too Many Requests - Rate limit exceeded".to_string()
-            } else if err_str.contains("500") {
-                "HTTP 500: Internal Server Error - Provider issue".to_string()
-            } else {
-                format!("HTTP error: {}", err_str)
-            }
-        }
-        CompletionError::JsonError(json_err) => {
-            format!("JSON parsing error: {}", json_err)
-        }
-        CompletionError::RequestError(req_err) => {
-            format!("Request error: {}", req_err)
-        }
-        CompletionError::ResponseError(resp) => {
-            format!("Provider response error: {}", resp)
-        }
-        CompletionError::ProviderError(msg) => {
-            format!("Provider error: {}", msg)
-        }
-        other => {
-            format!(
-                "API error: {} (if this persists, please report as a bug)",
-                other
-            )
-        }
-    }
-}
-
-fn format_extraction_error(err: &ExtractionError) -> String {
-    match err {
-        ExtractionError::NoData => "No data extracted".to_string(),
-        ExtractionError::DeserializationError(json_err) => {
-            format!("JSON deserialization error: {}", json_err)
-        }
-        ExtractionError::CompletionError(comp_err) => format_completion_error(comp_err),
     }
 }
 
@@ -159,7 +99,10 @@ impl Provider for OpenAiProvider {
     async fn translate(&self, req: TranslationRequest) -> Result<ProviderTextResult> {
         let prompt = build_translation_prompt(&req);
         let (response, usage) = self
-            .extract_structured::<TranslationOnlyResponse>(prompt, TRANSLATION_PREAMBLE)
+            .extract_structured::<shared::TranslationOnlyResponse>(
+                prompt,
+                shared::TRANSLATION_PREAMBLE,
+            )
             .await?;
 
         Ok(ProviderTextResult {
@@ -178,7 +121,10 @@ impl Provider for OpenAiProvider {
         let style_section = build_style_section(&req.style_guide);
         let prompt = build_repair_prompt(&req, &glossary_section, &style_section);
         let (response, usage) = self
-            .extract_structured::<TranslationOnlyResponse>(prompt, TRANSLATION_PREAMBLE)
+            .extract_structured::<shared::TranslationOnlyResponse>(
+                prompt,
+                shared::TRANSLATION_PREAMBLE,
+            )
             .await?;
 
         Ok(ProviderTextResult {
@@ -198,7 +144,10 @@ impl Provider for OpenAiProvider {
     ) -> Result<ProviderGlossaryResult> {
         let prompt = build_glossary_extraction_prompt(&req);
         let (response, usage) = self
-            .extract_structured::<GlossaryExtractionResponse>(prompt, GLOSSARY_PREAMBLE)
+            .extract_structured::<shared::GlossaryExtractionResponse>(
+                prompt,
+                shared::GLOSSARY_PREAMBLE,
+            )
             .await?;
 
         Ok(ProviderGlossaryResult {
