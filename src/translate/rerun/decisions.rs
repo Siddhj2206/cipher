@@ -328,7 +328,7 @@ mod tests {
     use super::*;
     use crate::glossary::{glossary_term_prompt_fingerprint, select_terms_for_text};
     use crate::state::{ChapterGlossaryTerm, ChapterStatus, load_glossary_state, save_glossary_state, RunMetadata};
-    use crate::translate::cmd::checkpoint_chapter_progress;
+    use crate::translate::orchestrate::checkpoint_chapter_progress;
     use crate::translate::rerun::glossary::{
         build_chapter_glossary_usage, build_glossary_state,
     };
