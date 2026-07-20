@@ -1,6 +1,7 @@
 use std::fmt::Display;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+use console::Style;
 
 static QUIET: AtomicBool = AtomicBool::new(false);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
@@ -21,60 +22,60 @@ pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
 }
 
-fn no_color() -> bool {
-    static NO_COLOR: OnceLock<bool> = OnceLock::new();
-    *NO_COLOR.get_or_init(|| std::env::var("NO_COLOR").is_ok_and(|v| !v.is_empty()))
+fn color_enabled() -> bool {
+    console::colors_enabled()
 }
 
-fn ok() -> &'static str {
-    if no_color() {
-        "\u{2713}"
-    } else {
-        "\x1b[32m\u{2713}\x1b[0m"
-    }
+fn style_green() -> Style {
+    Style::new().green()
 }
-fn fail_mark() -> &'static str {
-    if no_color() {
-        "\u{2717}"
+fn style_red() -> Style {
+    Style::new().red()
+}
+fn style_yellow() -> Style {
+    Style::new().yellow()
+}
+fn style_bold() -> Style {
+    Style::new().bold()
+}
+fn style_dim() -> Style {
+    Style::new().dim()
+}
+
+fn ok() -> String {
+    if color_enabled() {
+        style_green().apply_to("\u{2713}").to_string()
     } else {
-        "\x1b[31m\u{2717}\x1b[0m"
+        "\u{2713}".to_string()
     }
 }
 
-fn green(s: &str) -> String {
-    if no_color() {
-        s.to_string()
+fn fail_mark() -> String {
+    if color_enabled() {
+        style_red().apply_to("\u{2717}").to_string()
     } else {
-        format!("\x1b[32m{s}\x1b[0m")
+        "\u{2717}".to_string()
     }
 }
-fn red(s: &str) -> String {
-    if no_color() {
-        s.to_string()
-    } else {
-        format!("\x1b[31m{s}\x1b[0m")
-    }
+
+fn apply_green(s: &str) -> String {
+    style_green().apply_to(s).to_string()
 }
-fn yellow(s: &str) -> String {
-    if no_color() {
-        s.to_string()
-    } else {
-        format!("\x1b[33m{s}\x1b[0m")
-    }
+
+fn apply_red(s: &str) -> String {
+    style_red().apply_to(s).to_string()
 }
-fn bold(s: &str) -> String {
-    if no_color() {
-        s.to_string()
-    } else {
-        format!("\x1b[1m{s}\x1b[0m")
-    }
+
+fn apply_yellow(s: &str) -> String {
+    style_yellow().apply_to(s).to_string()
 }
-fn dim(s: &str) -> String {
-    if no_color() {
-        s.to_string()
-    } else {
-        format!("\x1b[2m{s}\x1b[0m")
-    }
+
+fn apply_bold(s: &str) -> String {
+    style_bold().apply_to(s).to_string()
+}
+
+fn apply_dim(s: &str) -> String {
+    style_dim().apply_to(s).to_string()
 }
 
 // stdout functions — for display/inspection commands where output IS the data.
@@ -99,7 +100,7 @@ pub fn section(header: impl Display) {
         return;
     }
     println!();
-    println!("{}", bold(&header.to_string()));
+    println!("{}", apply_bold(&header.to_string()));
 }
 
 pub fn status(message: impl Display) {
@@ -110,19 +111,18 @@ pub fn status(message: impl Display) {
 }
 
 // stderr functions — for action/confirmation/progress output.
-// These use ANSI styling per the unified design.
 
 pub fn stderr_detail(message: impl Display) {
-    eprintln!("{} {}", dim("-"), message);
+    eprintln!("{} {}", apply_dim("-"), message);
 }
 
 pub fn stderr_detail_kv(label: &str, value: impl Display) {
-    eprintln!("{} {}: {}", dim("-"), label, value);
+    eprintln!("{} {}: {}", apply_dim("-"), label, value);
 }
 
 pub fn stderr_section(header: impl Display) {
     eprintln!();
-    eprintln!("{}", bold(&header.to_string()));
+    eprintln!("{}", apply_bold(&header.to_string()));
 }
 
 pub fn stderr_status(message: impl Display) {
@@ -130,11 +130,11 @@ pub fn stderr_status(message: impl Display) {
 }
 
 pub fn stderr_warn(message: impl Display) {
-    eprintln!("{} {}", yellow("\u{26A0}"), message);
+    eprintln!("{} {}", apply_yellow("\u{26A0}"), message);
 }
 
 pub fn stderr_error(message: impl Display) {
-    eprintln!("{} {}", red("\u{2717}"), message);
+    eprintln!("{} {}", apply_red("\u{2717}"), message);
 }
 
 // Verbose-only stderr
@@ -143,14 +143,14 @@ pub fn verbose_detail(message: impl Display) {
     if is_quiet() || !is_verbose() {
         return;
     }
-    eprintln!("{} {}", dim("-"), message);
+    eprintln!("{} {}", apply_dim("-"), message);
 }
 
 pub fn verbose_detail_kv(label: &str, value: impl Display) {
     if is_quiet() || !is_verbose() {
         return;
     }
-    eprintln!("{} {}: {}", dim("-"), label, value);
+    eprintln!("{} {}: {}", apply_dim("-"), label, value);
 }
 
 // ── Unified design components ──────────────────────────────────────
@@ -170,8 +170,8 @@ pub fn chapter_line_ok(
         "\r\x1b[K  {}  {}  {}  {}{}",
         ok(),
         name,
-        dim(&time.to_string()),
-        dim(&tokens.to_string()),
+        apply_dim(&time.to_string()),
+        apply_dim(&tokens.to_string()),
         tag_str
     );
 }
@@ -186,9 +186,9 @@ pub fn chapter_line_fail(
         "\r\x1b[K  {}  {}  {}  {}  {}",
         fail_mark(),
         name,
-        dim(&time.to_string()),
-        dim(&tokens.to_string()),
-        red(&error.to_string())
+        apply_dim(&time.to_string()),
+        apply_dim(&tokens.to_string()),
+        apply_red(&error.to_string())
     );
 }
 
@@ -196,36 +196,36 @@ pub fn cancel_banner(completed: usize, total: usize) {
     eprintln!();
     eprintln!(
         " {} {} after {} chapters",
-        yellow("\u{26A0}"),
-        yellow("Translation cancelled (Ctrl-C)"),
-        dim(&format!("{completed}/{total}"))
+        apply_yellow("\u{26A0}"),
+        apply_yellow("Translation cancelled (Ctrl-C)"),
+        apply_dim(&format!("{completed}/{total}"))
     );
     eprintln!();
 }
 
 pub fn summary_header() {
-    eprintln!(" {}", bold("Summary"));
+    eprintln!(" {}", apply_bold("Summary"));
 }
 
 pub fn summary_item(label: impl Display, value: impl Display) {
     eprintln!(
         "  {}  {}  {}",
-        dim("\u{2502}"),
-        bold(&label.to_string()),
+        apply_dim("\u{2502}"),
+        apply_bold(&label.to_string()),
         value
     );
 }
 
 pub fn styled_green(s: impl Display) -> String {
-    green(&s.to_string())
+    apply_green(&s.to_string())
 }
 
 pub fn styled_red(s: impl Display) -> String {
-    red(&s.to_string())
+    apply_red(&s.to_string())
 }
 
 pub fn styled_yellow(s: impl Display) -> String {
-    yellow(&s.to_string())
+    apply_yellow(&s.to_string())
 }
 
 #[cfg(test)]
@@ -282,5 +282,41 @@ mod tests {
         stderr_status("test");
         stderr_warn("test");
         stderr_error("test");
+    }
+
+    fn with_colors(enabled: bool, f: impl FnOnce()) {
+        let prev = console::colors_enabled();
+        console::set_colors_enabled(enabled);
+        f();
+        console::set_colors_enabled(prev);
+    }
+
+    #[test]
+    fn styled_green_returns_ansi_when_colors_enabled() {
+        with_colors(true, || {
+            let result = styled_green("hello");
+            assert!(result.contains("hello"));
+            assert_ne!(result, "hello");
+        });
+    }
+
+    #[test]
+    fn styled_green_returns_plain_text_when_colors_disabled() {
+        with_colors(false, || {
+            let result = styled_green("hello");
+            assert_eq!(result, "hello");
+        });
+    }
+
+    #[test]
+    fn styled_red_and_yellow_also_use_console() {
+        with_colors(true, || {
+            assert_ne!(styled_red("x"), "x");
+            assert_ne!(styled_yellow("x"), "x");
+        });
+        with_colors(false, || {
+            assert_eq!(styled_red("x"), "x");
+            assert_eq!(styled_yellow("x"), "x");
+        });
     }
 }
