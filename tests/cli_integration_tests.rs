@@ -319,3 +319,76 @@ fn status_json_output_is_valid() {
         parsed.as_object().map(|o| o.keys().collect::<Vec<_>>())
     );
 }
+
+#[test]
+fn translate_json_output_is_valid_report() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("translate-json-book");
+
+    let init = cipher_binary()
+        .arg("init")
+        .arg(&book_path)
+        .output()
+        .expect("init failed");
+    assert!(init.status.success());
+    std::fs::write(
+        book_path.join("raw").join("001.md"),
+        "# Chapter 1\n\nText\n",
+    )
+    .expect("write chapter");
+
+    let output = cipher_binary()
+        .arg("translate")
+        .arg("--json")
+        .arg("--dry-run")
+        .arg(&book_path)
+        .output()
+        .expect("translate --json failed");
+
+    assert!(
+        output.status.success(),
+        "translate --json: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("translate --json should be valid JSON");
+    for key in [
+        "book",
+        "chapters",
+        "summary",
+        "usage",
+        "cancelled",
+        "exit_code",
+    ] {
+        assert!(
+            parsed.get(key).is_some(),
+            "json report should contain '{key}', got keys: {:?}",
+            parsed.as_object().map(|o| o.keys().collect::<Vec<_>>())
+        );
+    }
+}
+
+#[test]
+fn translate_json_emits_typed_error_envelope_on_failure() {
+    let dir = temp_dir();
+    let book_path = dir.path().join("not-a-book");
+
+    let output = cipher_binary()
+        .arg("translate")
+        .arg("--json")
+        .arg(&book_path)
+        .output()
+        .expect("translate --json failed");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("translate --json error should be valid JSON");
+    assert_eq!(parsed["error"]["code"], "E006");
+    assert_eq!(parsed["error"]["exit_code"], 1);
+    assert!(
+        parsed["error"]["message"].is_string(),
+        "error envelope should carry a message"
+    );
+}

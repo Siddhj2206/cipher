@@ -12,8 +12,9 @@ use crate::state::{
     load_glossary_state, save_run_metadata,
 };
 use crate::translate::orchestrate::{
-    ChapterContext, ChapterPaths, Translators, checkpoint_chapter_progress, print_profile_details,
-    resolve_translate_profiles, translate_single_chapter, validate_translate_profiles,
+    ChapterContext, ChapterPaths, ChapterResult, Translators, checkpoint_chapter_progress,
+    print_profile_details, resolve_translate_profiles, translate_single_chapter,
+    validate_translate_profiles,
 };
 use crate::translate::preview::preview_translation_run;
 use crate::translate::rerun::{
@@ -21,7 +22,7 @@ use crate::translate::rerun::{
     build_source_rerun_plan, combine_rerun_decisions, finalize_glossary_baseline,
     migrate_legacy_full_tracking,
 };
-use crate::translate::{TranslationUsage, Translator};
+use crate::translate::{TranslationUsage, Translator, report};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -52,6 +53,17 @@ impl TranslateOptions {
 }
 
 pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Result<i32> {
+    match translate_book_inner(book_dir, options).await {
+        Ok(code) => Ok(code),
+        Err(e) if output::is_json() => {
+            report::print_error_report(&e)?;
+            Ok(e.exit_code())
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Result<i32> {
     let layout = BookLayout::discover(book_dir);
 
     if !layout.is_valid_book() {
@@ -73,6 +85,12 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         .into_iter()
         .collect();
     if chapters.is_empty() {
+        if output::is_json() {
+            report::print_run_report(&report::build_run_report(&report::ReportData::empty(
+                book_dir.display().to_string(),
+            )))?;
+            return Ok(0);
+        }
         stderr_status("No chapters found");
         stderr_detail_kv("Directory", layout.paths.raw_dir.display());
         return Ok(0);
@@ -140,6 +158,12 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     };
 
     if options.dry_run {
+        if output::is_json() {
+            report::print_run_report(&report::build_run_report(&report::ReportData::empty(
+                book_dir.display().to_string(),
+            )))?;
+            return Ok(0);
+        }
         stderr_status("Translation preview");
         stderr_detail_kv("Book", book_dir.display());
         if let Some(profile_names) = resolve_translate_profiles(
@@ -199,7 +223,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         glossary: Translator::from_config(&global_config, profile_names.glossary_name)?,
     };
 
-    stderr_status("Translating chapters");
+    if !output::is_json() {
+        stderr_status("Translating chapters");
+    }
     verbose_detail_kv("Chapters found", chapters.len());
 
     let to_process = if options.overwrite {
@@ -215,7 +241,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
             .count()
     };
 
-    if !output::is_quiet() {
+    if !output::is_quiet() && !output::is_json() {
         output::stderr_section(format!(
             "Translating {} {}",
             to_process,
@@ -247,7 +273,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     );
     save_run_metadata(book_dir, &run_metadata)?;
 
-    let (translated, skipped, failed, new_glossary_terms, total_usage, cancelled) =
+    let (translated, skipped, failed, new_glossary_terms, total_usage, cancelled, chapter_results) =
         iterate_translation(
             &translators,
             &mut glossary,
@@ -268,7 +294,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         )
         .await?;
 
-    let exit_code = finalize_run(
+    let (exit_code, run_metadata) = finalize_run(
         book_dir,
         &chapters,
         &layout.paths.raw_dir,
@@ -283,10 +309,26 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         translated,
         skipped,
         new_glossary_terms,
-        total_usage,
+        &total_usage,
         run_metadata,
         cancelled,
     )?;
+
+    if output::is_json() {
+        report::print_run_report(&report::build_run_report(&report::ReportData {
+            book: book_dir.display().to_string(),
+            run: Some(run_metadata),
+            chapters: chapter_results,
+            total: chapters.len(),
+            translated,
+            skipped,
+            failed,
+            new_glossary_terms,
+            usage: total_usage,
+            cancelled,
+            exit_code,
+        }))?;
+    }
 
     Ok(exit_code)
 }
@@ -309,13 +351,22 @@ async fn iterate_translation(
     source_rerun_plan: &SourceRerunPlan,
     previous_chapter_states: &mut BTreeMap<String, ChapterState>,
     previous_glossary_state: Option<&GlossaryState>,
-) -> Result<(usize, usize, usize, usize, TranslationUsage, bool)> {
+) -> Result<(
+    usize,
+    usize,
+    usize,
+    usize,
+    TranslationUsage,
+    bool,
+    Vec<ChapterResult>,
+)> {
     let mut translated = 0;
     let mut skipped = 0;
     let mut failed = 0;
     let mut new_glossary_terms = 0;
     let mut total_usage = TranslationUsage::default();
     let mut cancelled = false;
+    let mut chapter_results: Vec<ChapterResult> = Vec::new();
 
     let mut remaining_chapters = chapters;
     let ctrl_c = tokio::signal::ctrl_c();
@@ -341,7 +392,7 @@ async fn iterate_translation(
         );
         let paths = ChapterPaths::new(&chapter_file, &out_path, &chapter_path);
 
-        if !output::is_quiet() {
+        if !output::is_quiet() && !output::is_json() {
             let short = Path::new(&chapter_path)
                 .file_name()
                 .map(|f| f.to_string_lossy())
@@ -368,7 +419,7 @@ async fn iterate_translation(
         checkpoint_chapter_progress(book_dir, &mut *run_metadata, &result.chapter_state)?;
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
 
-        if !output::is_quiet() {
+        if !output::is_quiet() && !output::is_json() {
             if result.translated || result.failed {
                 print_chapter_result(&result, &chapter_path);
             } else {
@@ -376,20 +427,17 @@ async fn iterate_translation(
             }
         }
 
+        let chapter_failed = result.failed;
         if result.translated {
             translated += 1;
         }
         if result.skipped {
             skipped += 1;
         }
-        if result.failed {
+        if chapter_failed {
             failed += 1;
-            if options.fail_fast {
-                verbose_detail("Stopping due to --fail-fast");
-                break;
-            }
         }
-        if let Some(usage) = result.usage {
+        if let Some(usage) = result.usage.clone() {
             total_usage += usage;
         }
         new_glossary_terms += result.new_terms_added;
@@ -408,6 +456,13 @@ async fn iterate_translation(
                 injection_mode,
             )?;
         }
+
+        chapter_results.push(result);
+
+        if chapter_failed && options.fail_fast {
+            verbose_detail("Stopping due to --fail-fast");
+            break;
+        }
     }
 
     Ok((
@@ -417,6 +472,7 @@ async fn iterate_translation(
         new_glossary_terms,
         total_usage,
         cancelled,
+        chapter_results,
     ))
 }
 
@@ -492,10 +548,10 @@ fn finalize_run(
     translated: usize,
     skipped: usize,
     new_glossary_terms: usize,
-    total_usage: TranslationUsage,
+    total_usage: &TranslationUsage,
     mut run_metadata: RunMetadata,
     cancelled: bool,
-) -> Result<i32> {
+) -> Result<(i32, RunMetadata)> {
     let baseline_outcome = finalize_glossary_baseline(
         book_dir,
         rerun_glossary_enabled,
@@ -523,15 +579,19 @@ fn finalize_run(
         failed,
     )?;
 
+    run_metadata.mark_finished();
+    save_run_metadata(book_dir, &run_metadata)?;
+
+    if output::is_json() {
+        return Ok((if failed > 0 { 2 } else { 0 }, run_metadata));
+    }
+
     if baseline_outcome.remaining_forced_chapters > 0 {
         output::stderr_warn(format!(
             "Glossary baseline was not updated because {} affected chapter(s) still need reruns.",
             baseline_outcome.remaining_forced_chapters
         ));
     }
-
-    run_metadata.mark_finished();
-    save_run_metadata(book_dir, &run_metadata)?;
 
     if cancelled {
         output::cancel_banner(translated + skipped + failed, chapters.len());
@@ -580,11 +640,7 @@ fn finalize_run(
         eprintln!(" {} Translation complete", output::styled_green("\u{2713}"));
     }
 
-    if failed > 0 {
-        return Ok(2);
-    }
-
-    Ok(0)
+    Ok((if failed > 0 { 2 } else { 0 }, run_metadata))
 }
 
 #[cfg(test)]

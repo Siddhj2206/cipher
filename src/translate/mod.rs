@@ -4,6 +4,7 @@ pub mod orchestrate;
 pub mod preview;
 pub mod prompt;
 pub mod providers;
+pub(crate) mod report;
 pub mod rerun;
 #[cfg(test)]
 pub mod test_helpers;

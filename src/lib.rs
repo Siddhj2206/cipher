@@ -62,7 +62,7 @@ pub enum Commands {
     },
     /// Translate a book
     #[command(
-        after_long_help = "Examples:\n  cipher translate\n  cipher translate --dry-run\n  cipher translate --rerun=glossary\n  cipher translate --overwrite"
+        after_long_help = "Examples:\n  cipher translate\n  cipher translate --dry-run\n  cipher translate --rerun=glossary\n  cipher translate --overwrite\n  cipher translate --json"
     )]
     Translate {
         /// Directory containing the book (defaults to current directory)
@@ -98,6 +98,9 @@ pub enum Commands {
         /// Show detailed per-chapter progress and glossary info
         #[arg(long, short)]
         verbose: bool,
+        /// Output a machine-readable JSON report instead of human output
+        #[arg(long)]
+        json: bool,
     },
     /// Show book translation status
     #[command(after_long_help = "Examples:\n  cipher status\n  cipher status --json")]
@@ -349,9 +352,11 @@ pub async fn run_command(command: Commands) -> Result<i32> {
             dry_run,
             quiet,
             verbose,
+            json,
         } => {
             output::set_quiet(quiet);
             output::set_verbose(verbose);
+            output::set_json(json);
             run_translate_command(
                 book_dir,
                 profile,

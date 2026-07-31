@@ -5,9 +5,14 @@ use console::Style;
 
 static QUIET: AtomicBool = AtomicBool::new(false);
 static VERBOSE: AtomicBool = AtomicBool::new(false);
+static JSON: AtomicBool = AtomicBool::new(false);
 
 pub fn set_quiet(quiet: bool) {
     QUIET.store(quiet, Ordering::Relaxed);
+}
+
+pub fn set_json(json: bool) {
+    JSON.store(json, Ordering::Relaxed);
 }
 
 pub fn set_verbose(verbose: bool) {
@@ -20,6 +25,10 @@ pub fn is_quiet() -> bool {
 
 pub fn is_verbose() -> bool {
     VERBOSE.load(Ordering::Relaxed)
+}
+
+pub fn is_json() -> bool {
+    JSON.load(Ordering::Relaxed)
 }
 
 fn color_enabled() -> bool {
@@ -244,6 +253,14 @@ mod tests {
     fn verbose_set_does_not_panic() {
         set_verbose(true);
         set_verbose(false);
+    }
+
+    #[test]
+    fn json_toggle() {
+        set_json(true);
+        assert!(is_json());
+        set_json(false);
+        assert!(!is_json());
     }
 
     #[test]

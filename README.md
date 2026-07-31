@@ -144,6 +144,7 @@ cipher translate my-book --rerun=glossary
 cipher translate my-book --rerun=source
 cipher translate my-book -q
 cipher translate my-book -v
+cipher translate my-book --json
 ```
 
 Current translate flags:
@@ -157,6 +158,7 @@ Current translate flags:
 - `--rerun[=MODE]`: retranslate chapters affected by tracked changes. Modes: `all` (glossary + source, default), `glossary`, or `source`
 - `-q, --quiet`: suppress non-essential output (progress bar and detail lines)
 - `-v, --verbose`: show detailed per-chapter progress and diagnostics: provider call details (model, endpoint), per-call timing, retry attempts with reasons, validation failures, repair decisions, glossary and usage info
+- `--json`: emit a machine-readable JSON report on stdout (per-chapter status, tokens, timing, errors, run summary) instead of human output; fatal failures emit a typed error envelope with the error code and exit code
 
 Default behavior:
 
