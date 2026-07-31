@@ -14,6 +14,8 @@ use crate::translate::{
 };
 use rig::client::CompletionClient;
 use rig::providers::gemini;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 const GEMINI_HTTP_MSGS: HttpErrorMessages = HttpErrorMessages {
     not_found: "Check your model name",
@@ -21,6 +23,8 @@ const GEMINI_HTTP_MSGS: HttpErrorMessages = HttpErrorMessages {
     rate_limited: "Rate limit exceeded",
     server_error: "Provider issue",
 };
+
+const GEMINI_ENDPOINT: &str = "https://generativelanguage.googleapis.com/v1beta";
 
 pub struct GeminiProvider {
     client: gemini::Client,
@@ -39,68 +43,83 @@ impl GeminiProvider {
             model: params.model,
         })
     }
+
+    async fn extract_structured<T>(
+        &self,
+        operation: &str,
+        prompt: String,
+        preamble: &str,
+    ) -> Result<(T, rig::completion::Usage)>
+    where
+        T: DeserializeOwned + Serialize + schemars::JsonSchema + Send + Sync + 'static,
+    {
+        shared::tracked_call(operation, "gemini", &self.model, GEMINI_ENDPOINT, async {
+            let extractor = self
+                .client
+                .extractor::<T>(&self.model)
+                .preamble(preamble)
+                .retries(shared::EXTRACTOR_RETRIES)
+                .build();
+
+            match extractor.extract_with_usage(&prompt).await {
+                Ok(extracted) => Ok((extracted.data, extracted.usage)),
+                Err(err) => {
+                    let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
+                    Err(Error::Provider {
+                        kind: "gemini".to_string(),
+                        detail: detailed_error,
+                    })
+                }
+            }
+        })
+        .await
+    }
 }
 
 #[async_trait::async_trait]
 impl Provider for GeminiProvider {
     async fn translate(&self, req: TranslationRequest) -> Result<ProviderTextResult> {
         let prompt = build_translation_prompt(&req);
-        let extractor = self
-            .client
-            .extractor::<shared::TranslationOnlyResponse>(&self.model)
-            .preamble(shared::TRANSLATION_PREAMBLE)
-            .retries(shared::EXTRACTOR_RETRIES)
-            .build();
+        let (response, usage) = self
+            .extract_structured::<shared::TranslationOnlyResponse>(
+                "translate",
+                prompt,
+                shared::TRANSLATION_PREAMBLE,
+            )
+            .await?;
 
-        match extractor.extract_with_usage(&prompt).await {
-            Ok(extracted) => Ok(ProviderTextResult {
-                chapter: StructuredChapter {
-                    chapter_number: extracted.data.chapter_number,
-                    chapter_title: extracted.data.chapter_title,
-                    content: extracted.data.content,
-                }
-                .normalized(),
-                usage: extracted.usage.into(),
-            }),
-            Err(err) => {
-                let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
-                Err(Error::Provider {
-                    kind: "gemini".to_string(),
-                    detail: detailed_error,
-                })
+        Ok(ProviderTextResult {
+            chapter: StructuredChapter {
+                chapter_number: response.chapter_number,
+                chapter_title: response.chapter_title,
+                content: response.content,
             }
-        }
+            .normalized(),
+            usage: usage.into(),
+        })
     }
 
     async fn repair(&self, req: RepairRequest) -> Result<ProviderTextResult> {
         let glossary_section = build_glossary_section(&req.glossary_terms);
         let style_section = build_style_section(&req.style_guide);
         let prompt = build_repair_prompt(&req, &glossary_section, &style_section);
-        let extractor = self
-            .client
-            .extractor::<shared::TranslationOnlyResponse>(&self.model)
-            .preamble(shared::TRANSLATION_PREAMBLE)
-            .retries(shared::EXTRACTOR_RETRIES)
-            .build();
+        let (response, usage) = self
+            .extract_structured::<shared::TranslationOnlyResponse>(
+                "repair",
+                prompt,
+                shared::TRANSLATION_PREAMBLE,
+            )
+            .await?;
 
-        match extractor.extract_with_usage(&prompt).await {
-            Ok(extracted) => Ok(ProviderTextResult {
-                chapter: StructuredChapter {
-                    chapter_number: extracted.data.chapter_number,
-                    chapter_title: extracted.data.chapter_title,
-                    content: extracted.data.content,
-                }
-                .normalized(),
-                usage: extracted.usage.into(),
-            }),
-            Err(err) => {
-                let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
-                Err(Error::Provider {
-                    kind: "gemini".to_string(),
-                    detail: detailed_error,
-                })
+        Ok(ProviderTextResult {
+            chapter: StructuredChapter {
+                chapter_number: response.chapter_number,
+                chapter_title: response.chapter_title,
+                content: response.content,
             }
-        }
+            .normalized(),
+            usage: usage.into(),
+        })
     }
 
     async fn extract_glossary(
@@ -108,26 +127,18 @@ impl Provider for GeminiProvider {
         req: GlossaryExtractionRequest,
     ) -> Result<ProviderGlossaryResult> {
         let prompt = build_glossary_extraction_prompt(&req);
-        let extractor = self
-            .client
-            .extractor::<shared::GlossaryExtractionResponse>(&self.model)
-            .preamble(shared::GLOSSARY_PREAMBLE)
-            .retries(shared::EXTRACTOR_RETRIES)
-            .build();
+        let (response, usage) = self
+            .extract_structured::<shared::GlossaryExtractionResponse>(
+                "glossary",
+                prompt,
+                shared::GLOSSARY_PREAMBLE,
+            )
+            .await?;
 
-        match extractor.extract_with_usage(&prompt).await {
-            Ok(extracted) => Ok(ProviderGlossaryResult {
-                new_glossary_terms: extracted.data.new_glossary_terms,
-                usage: extracted.usage.into(),
-            }),
-            Err(err) => {
-                let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
-                Err(Error::Provider {
-                    kind: "gemini".to_string(),
-                    detail: detailed_error,
-                })
-            }
-        }
+        Ok(ProviderGlossaryResult {
+            new_glossary_terms: response.new_glossary_terms,
+            usage: usage.into(),
+        })
     }
 }
 

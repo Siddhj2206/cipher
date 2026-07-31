@@ -323,6 +323,10 @@ fn print_glossary_info(selection: &SelectionResult, injection_mode: InjectionMod
 
 const MAX_API_RETRIES: usize = 3;
 
+fn retry_delay_secs(attempt: u32) -> u64 {
+    2u64.pow(attempt)
+}
+
 async fn call_translation_with_retry(
     translator: &Translator,
     chapter_text: &str,
@@ -331,6 +335,7 @@ async fn call_translation_with_retry(
     output_config: &OutputConfig,
 ) -> (Option<ProviderTextResult>, Option<String>, u32) {
     for attempt in 1..=MAX_API_RETRIES as u32 {
+        let attempt_start = Instant::now();
         match translator
             .translate_chapter(
                 chapter_text,
@@ -343,16 +348,21 @@ async fn call_translation_with_retry(
             Ok(resp) => return (Some(resp), None, attempt),
             Err(e) => {
                 let msg = format!("API error: {e}");
+                let elapsed_ms = attempt_start.elapsed().as_millis();
                 if attempt < MAX_API_RETRIES as u32 {
-                    let delay = 2u64.pow(attempt);
+                    let delay = retry_delay_secs(attempt);
                     verbose_detail_kv(
                         "Attempt",
                         format!(
-                            "Attempt {attempt}/{MAX_API_RETRIES} failed: {e}. Retrying in {delay}s."
+                            "{attempt}/{MAX_API_RETRIES} failed after {elapsed_ms} ms: {e}. Retrying in {delay}s."
                         ),
                     );
                     tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
                 } else {
+                    verbose_detail_kv(
+                        "Attempt",
+                        format!("{attempt}/{MAX_API_RETRIES} failed after {elapsed_ms} ms: {e}."),
+                    );
                     return (None, Some(msg), attempt);
                 }
             }
@@ -419,12 +429,10 @@ async fn attempt_translation(
     ));
     let mut failed_usage = Some(original_usage.clone());
 
-    if api_attempt == 1 {
-        verbose_detail_kv(
-            "Validation",
-            format!("{} Attempting repair.", validation_errors.join(", ")),
-        );
+    verbose_detail_kv("Validation", validation_errors.join(", "));
 
+    if api_attempt == 1 {
+        verbose_detail("Attempting repair.");
         match translators
             .repair
             .repair_chapter(
@@ -476,6 +484,11 @@ async fn attempt_translation(
                 last_error = Some(msg);
             }
         }
+    } else {
+        verbose_detail_kv(
+            "Repair",
+            format!("skipped (API call already retried {api_attempt} times)"),
+        );
     }
 
     (None, last_error, failed_usage)
@@ -777,6 +790,37 @@ mod tests {
         }
     }
 
+    struct SucceedingProvider;
+
+    #[async_trait::async_trait]
+    impl Provider for SucceedingProvider {
+        async fn translate(
+            &self,
+            _req: crate::translate::TranslationRequest,
+        ) -> Result<ProviderTextResult> {
+            Ok(ProviderTextResult {
+                chapter: StructuredChapter {
+                    chapter_number: None,
+                    chapter_title: None,
+                    content: "translated".to_string(),
+                },
+                usage: TranslationUsage::default(),
+            })
+        }
+        async fn repair(
+            &self,
+            _req: crate::translate::RepairRequest,
+        ) -> Result<ProviderTextResult> {
+            unreachable!()
+        }
+        async fn extract_glossary(
+            &self,
+            _req: GlossaryExtractionRequest,
+        ) -> Result<ProviderGlossaryResult> {
+            unreachable!()
+        }
+    }
+
     fn profile_options(
         profile: Option<&str>,
         repair_profile: Option<&str>,
@@ -878,6 +922,28 @@ mod tests {
             skipped_chapter_source_hash(&raw_path, Some(&previous_chapter_state), false).unwrap();
 
         assert_eq!(source_text_hash, None);
+    }
+
+    #[test]
+    fn test_retry_delay_secs_backs_off_exponentially() {
+        assert_eq!(retry_delay_secs(1), 2);
+        assert_eq!(retry_delay_secs(2), 4);
+        assert_eq!(retry_delay_secs(3), 8);
+    }
+
+    #[tokio::test]
+    async fn test_call_translation_with_retry_returns_first_success() {
+        let translator = Translator {
+            provider: Box::new(SucceedingProvider),
+        };
+        let output_config = OutputConfig::default();
+
+        let (response, error, attempt) =
+            call_translation_with_retry(&translator, "text", &[], &None, &output_config).await;
+
+        assert!(response.is_some());
+        assert!(error.is_none());
+        assert_eq!(attempt, 1);
     }
 
     #[test]

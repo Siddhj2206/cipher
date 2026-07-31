@@ -27,9 +27,12 @@ const OPENAI_HTTP_MSGS: HttpErrorMessages = HttpErrorMessages {
     server_error: "Provider issue",
 };
 
+const OPENAI_ENDPOINT: &str = "https://api.openai.com/v1";
+
 pub struct OpenAiProvider {
     client: openai::Client,
     model: String,
+    endpoint: String,
     use_completions_api: bool,
 }
 
@@ -51,53 +54,61 @@ impl OpenAiProvider {
             })?
         };
 
+        let endpoint = base_url
+            .map(str::to_string)
+            .unwrap_or_else(|| OPENAI_ENDPOINT.to_string());
         let use_completions_api = base_url.is_some();
 
         Ok(Self {
             client,
             model: params.model,
+            endpoint,
             use_completions_api,
         })
     }
 
     async fn extract_structured<T>(
         &self,
+        operation: &str,
         prompt: String,
         preamble: &str,
     ) -> Result<(T, rig::completion::Usage)>
     where
         T: DeserializeOwned + Serialize + schemars::JsonSchema + Send + Sync + 'static,
     {
-        let result = if self.use_completions_api {
-            let completions_client = self.client.clone().completions_api();
-            let extractor = completions_client
-                .extractor::<T>(&self.model)
-                .preamble(preamble)
-                .retries(shared::EXTRACTOR_RETRIES)
-                .build();
+        shared::tracked_call(operation, "openai", &self.model, &self.endpoint, async {
+            let result = if self.use_completions_api {
+                let completions_client = self.client.clone().completions_api();
+                let extractor = completions_client
+                    .extractor::<T>(&self.model)
+                    .preamble(preamble)
+                    .retries(shared::EXTRACTOR_RETRIES)
+                    .build();
 
-            extractor.extract_with_usage(&prompt).await
-        } else {
-            let extractor = self
-                .client
-                .extractor::<T>(&self.model)
-                .preamble(preamble)
-                .retries(shared::EXTRACTOR_RETRIES)
-                .build();
+                extractor.extract_with_usage(&prompt).await
+            } else {
+                let extractor = self
+                    .client
+                    .extractor::<T>(&self.model)
+                    .preamble(preamble)
+                    .retries(shared::EXTRACTOR_RETRIES)
+                    .build();
 
-            extractor.extract_with_usage(&prompt).await
-        };
+                extractor.extract_with_usage(&prompt).await
+            };
 
-        match result {
-            Ok(extracted) => Ok((extracted.data, extracted.usage)),
-            Err(err) => {
-                let detailed_error = shared::format_extraction_error(&err, &OPENAI_HTTP_MSGS);
-                Err(Error::Provider {
-                    kind: "openai".to_string(),
-                    detail: detailed_error,
-                })
+            match result {
+                Ok(extracted) => Ok((extracted.data, extracted.usage)),
+                Err(err) => {
+                    let detailed_error = shared::format_extraction_error(&err, &OPENAI_HTTP_MSGS);
+                    Err(Error::Provider {
+                        kind: "openai".to_string(),
+                        detail: detailed_error,
+                    })
+                }
             }
-        }
+        })
+        .await
     }
 }
 
@@ -107,6 +118,7 @@ impl Provider for OpenAiProvider {
         let prompt = build_translation_prompt(&req);
         let (response, usage) = self
             .extract_structured::<shared::TranslationOnlyResponse>(
+                "translate",
                 prompt,
                 shared::TRANSLATION_PREAMBLE,
             )
@@ -129,6 +141,7 @@ impl Provider for OpenAiProvider {
         let prompt = build_repair_prompt(&req, &glossary_section, &style_section);
         let (response, usage) = self
             .extract_structured::<shared::TranslationOnlyResponse>(
+                "repair",
                 prompt,
                 shared::TRANSLATION_PREAMBLE,
             )
@@ -152,6 +165,7 @@ impl Provider for OpenAiProvider {
         let prompt = build_glossary_extraction_prompt(&req);
         let (response, usage) = self
             .extract_structured::<shared::GlossaryExtractionResponse>(
+                "glossary",
                 prompt,
                 shared::GLOSSARY_PREAMBLE,
             )

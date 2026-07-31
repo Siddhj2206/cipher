@@ -156,7 +156,7 @@ Current translate flags:
 - `--fail-fast`: stop on the first failed chapter
 - `--rerun[=MODE]`: retranslate chapters affected by tracked changes. Modes: `all` (glossary + source, default), `glossary`, or `source`
 - `-q, --quiet`: suppress non-essential output (progress bar and detail lines)
-- `-v, --verbose`: show detailed per-chapter progress and glossary info
+- `-v, --verbose`: show detailed per-chapter progress and diagnostics: provider call details (model, endpoint), per-call timing, retry attempts with reasons, validation failures, repair decisions, glossary and usage info
 
 Default behavior:
 
