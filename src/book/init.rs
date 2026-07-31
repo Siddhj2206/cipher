@@ -1,4 +1,4 @@
-use anyhow::Context;
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File};
 use std::io::Write;
@@ -68,7 +68,7 @@ pub fn init_book(
     profile: Option<&str>,
     from: Option<&Path>,
     import_glossary: Option<&Path>,
-) -> anyhow::Result<InitReport> {
+) -> Result<InitReport> {
     let book_dir = book_dir.as_ref();
     let paths = BookPaths::resolve(book_dir);
 
@@ -127,9 +127,10 @@ pub fn init_book(
     Ok(report)
 }
 
-fn create_dir_if_missing(path: &Path, report: &mut InitReport) -> anyhow::Result<()> {
+fn create_dir_if_missing(path: &Path, report: &mut InitReport) -> Result<()> {
     if !path.exists() {
-        fs::create_dir_all(path)?;
+        fs::create_dir_all(path)
+            .map_err(|e| Error::io(format!("Failed to create directory {}", path.display()), e))?;
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_dirs.push(name.to_string());
         }
@@ -141,12 +142,16 @@ fn write_toml_if_missing<T: Serialize>(
     path: &Path,
     value: &T,
     report: &mut InitReport,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     if !path.exists() {
-        let toml = toml::to_string_pretty(value)?;
-        let mut file = File::create_new(path)?;
-        file.write_all(toml.as_bytes())?;
-        file.write_all(b"\n")?;
+        let toml = toml::to_string_pretty(value)
+            .map_err(|e| Error::Config(format!("Failed to serialize {}: {e}", path.display())))?;
+        let mut file = File::create_new(path)
+            .map_err(|e| Error::io(format!("Failed to create {}", path.display()), e))?;
+        file.write_all(toml.as_bytes())
+            .map_err(|e| Error::io(format!("Failed to write {}", path.display()), e))?;
+        file.write_all(b"\n")
+            .map_err(|e| Error::io(format!("Failed to write {}", path.display()), e))?;
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
@@ -160,12 +165,16 @@ fn write_json_if_missing<T: Serialize>(
     path: &Path,
     value: &T,
     report: &mut InitReport,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     if !path.exists() {
-        let json = serde_json::to_string_pretty(value)?;
-        let mut file = File::create_new(path)?;
-        file.write_all(json.as_bytes())?;
-        file.write_all(b"\n")?;
+        let json = serde_json::to_string_pretty(value)
+            .map_err(|e| Error::Glossary(format!("Failed to serialize {}: {e}", path.display())))?;
+        let mut file = File::create_new(path)
+            .map_err(|e| Error::io(format!("Failed to create {}", path.display()), e))?;
+        file.write_all(json.as_bytes())
+            .map_err(|e| Error::io(format!("Failed to write {}", path.display()), e))?;
+        file.write_all(b"\n")
+            .map_err(|e| Error::io(format!("Failed to write {}", path.display()), e))?;
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
@@ -175,14 +184,12 @@ fn write_json_if_missing<T: Serialize>(
     Ok(())
 }
 
-fn write_file_if_missing(
-    path: &Path,
-    content: &str,
-    report: &mut InitReport,
-) -> anyhow::Result<()> {
+fn write_file_if_missing(path: &Path, content: &str, report: &mut InitReport) -> Result<()> {
     if !path.exists() {
-        let mut file = File::create_new(path)?;
-        file.write_all(content.as_bytes())?;
+        let mut file = File::create_new(path)
+            .map_err(|e| Error::io(format!("Failed to create {}", path.display()), e))?;
+        file.write_all(content.as_bytes())
+            .map_err(|e| Error::io(format!("Failed to write {}", path.display()), e))?;
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
@@ -192,9 +199,14 @@ fn write_file_if_missing(
     Ok(())
 }
 
-fn copy_file_if_missing(src: &Path, dst: &Path, report: &mut InitReport) -> anyhow::Result<()> {
+fn copy_file_if_missing(src: &Path, dst: &Path, report: &mut InitReport) -> Result<()> {
     if !dst.exists() {
-        fs::copy(src, dst)?;
+        fs::copy(src, dst).map_err(|e| {
+            Error::io(
+                format!("Failed to copy {} to {}", src.display(), dst.display()),
+                e,
+            )
+        })?;
         if let Some(name) = dst.file_name().and_then(|n| n.to_str()) {
             report.created_files.push(name.to_string());
         }
@@ -274,13 +286,21 @@ style_path = "style.md"
     }
 }
 
-pub fn load_book_config(path: &Path) -> anyhow::Result<BookConfig> {
+pub fn load_book_config(path: &Path) -> Result<BookConfig> {
     if !path.exists() {
         return Ok(BookConfig::default());
     }
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read book config from {}", path.display()))?;
-    let config: BookConfig = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse book config from {}", path.display()))?;
+    let content = fs::read_to_string(path).map_err(|e| {
+        Error::Config(format!(
+            "Failed to read book config from {}: {e}",
+            path.display()
+        ))
+    })?;
+    let config: BookConfig = toml::from_str(&content).map_err(|e| {
+        Error::Config(format!(
+            "Failed to parse book config from {}: {e}",
+            path.display()
+        ))
+    })?;
     Ok(config)
 }

@@ -1,4 +1,4 @@
-use anyhow::Result;
+use crate::error::{Error, Result};
 
 use crate::ProfileCommands;
 use crate::config::GlobalConfig;
@@ -37,15 +37,17 @@ pub fn run_profile_command(
                     set_default,
                 )?;
             } else if no_input {
-                anyhow::bail!(
-                    "Interactive input required. Provide flags: --name, --provider, --model, --api-key-file"
-                );
+                return Err(Error::Validation {
+                    message:
+                        "Interactive input required. Provide flags: --name, --provider, --model, --api-key-file"
+                            .to_string(),
+                });
             } else {
                 create_profile_interactive(config)?;
             }
         }
         ProfileCommands::List { json } => {
-            super::profile::list_profiles(config, json);
+            super::profile::list_profiles(config, json)?;
         }
         ProfileCommands::Show { name, json } => {
             super::profile::show_profile(config, &name, json)?;
@@ -57,7 +59,7 @@ pub fn run_profile_command(
             let name = name
                 .or_else(|| config.default_profile.clone())
                 .ok_or_else(|| {
-                    anyhow::anyhow!("No profile name provided and no default profile set")
+                    Error::Config("No profile name provided and no default profile set".to_string())
                 })?;
             super::profile::test_profile(config, &name);
         }

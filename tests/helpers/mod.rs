@@ -1,4 +1,5 @@
 use cipher::book::StructuredChapter;
+use cipher::error::{Error, Result};
 use cipher::translate::providers::Provider;
 use cipher::translate::{
     GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
@@ -6,9 +7,9 @@ use cipher::translate::{
 };
 
 pub struct MockProvider {
-    translate_result: Option<anyhow::Result<ProviderTextResult>>,
-    repair_result: Option<anyhow::Result<ProviderTextResult>>,
-    extract_result: Option<anyhow::Result<ProviderGlossaryResult>>,
+    translate_result: Option<Result<ProviderTextResult>>,
+    repair_result: Option<Result<ProviderTextResult>>,
+    extract_result: Option<Result<ProviderGlossaryResult>>,
 }
 
 impl MockProvider {
@@ -25,7 +26,7 @@ impl MockProvider {
         self
     }
 
-    pub fn with_translation_error(mut self, err: anyhow::Error) -> Self {
+    pub fn with_translation_error(mut self, err: Error) -> Self {
         self.translate_result = Some(Err(err));
         self
     }
@@ -61,21 +62,21 @@ fn default_extract_result() -> ProviderGlossaryResult {
 
 #[async_trait::async_trait]
 impl Provider for MockProvider {
-    async fn translate(&self, _req: TranslationRequest) -> anyhow::Result<ProviderTextResult> {
+    async fn translate(&self, _req: TranslationRequest) -> Result<ProviderTextResult> {
         match &self.translate_result {
             Some(result) => match result {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(anyhow::anyhow!("{}", e)),
+                Err(e) => Err(Error::Other(anyhow::anyhow!("{e}"))),
             },
             None => Ok(default_text_result()),
         }
     }
 
-    async fn repair(&self, _req: RepairRequest) -> anyhow::Result<ProviderTextResult> {
+    async fn repair(&self, _req: RepairRequest) -> Result<ProviderTextResult> {
         match &self.repair_result {
             Some(result) => match result {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(anyhow::anyhow!("{}", e)),
+                Err(e) => Err(Error::Other(anyhow::anyhow!("{e}"))),
             },
             None => Ok(default_text_result()),
         }
@@ -84,11 +85,11 @@ impl Provider for MockProvider {
     async fn extract_glossary(
         &self,
         _req: GlossaryExtractionRequest,
-    ) -> anyhow::Result<ProviderGlossaryResult> {
+    ) -> Result<ProviderGlossaryResult> {
         match &self.extract_result {
             Some(result) => match result {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(anyhow::anyhow!("{}", e)),
+                Err(e) => Err(Error::Other(anyhow::anyhow!("{e}"))),
             },
             None => Ok(default_extract_result()),
         }

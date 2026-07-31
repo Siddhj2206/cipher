@@ -1,4 +1,5 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key};
+use crate::error::{Error, Result};
 use crate::glossary::{GlossaryTerm, InjectionMode, select_terms_for_text};
 use crate::state::{
     ChapterGlossaryUsage, ChapterState, GlossaryState, normalized_source_text_hash,
@@ -8,7 +9,6 @@ use crate::translate::rerun::glossary::{
     glossary_terms_from_state, selection_fingerprints, usage_fingerprint_map,
 };
 use crate::translate::rerun::types::{GlossaryRerunPlan, RerunDecision, SourceRerunPlan};
-use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
@@ -30,7 +30,7 @@ pub(crate) fn exact_rerun_decision(
         return Ok(None);
     };
 
-    let current_fingerprints = selection_fingerprints(current_glossary);
+    let current_fingerprints = selection_fingerprints(current_glossary)?;
 
     let fingerprint_changed_keys: Vec<String> = usage
         .terms
@@ -114,7 +114,7 @@ pub(crate) fn approximate_smart_rerun_decision(
     changed_term_keys: &BTreeSet<String>,
 ) -> Result<Option<RerunDecision>> {
     let chapter_text = std::fs::read_to_string(raw_path)
-        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+        .map_err(|e| Error::io(format!("Failed to read {}", raw_path.display()), e))?;
 
     if chapter_text.trim().is_empty() {
         return Ok(None);
@@ -143,8 +143,8 @@ pub(crate) fn approximate_smart_rerun_decision(
         }));
     }
 
-    let previous_terms = selection_fingerprints(&previous_selection.terms);
-    let current_terms = selection_fingerprints(&current_selection.terms);
+    let previous_terms = selection_fingerprints(&previous_selection.terms)?;
+    let current_terms = selection_fingerprints(&current_selection.terms)?;
     let changed = changed_selected_term_keys(&previous_terms, &current_terms);
 
     if changed.is_empty() {
@@ -186,7 +186,7 @@ pub(crate) fn build_glossary_rerun_plan(
     injection_mode: InjectionMode,
 ) -> Result<GlossaryRerunPlan> {
     let mut plan = GlossaryRerunPlan::default();
-    let current_glossary_state = build_glossary_state(current_glossary, injection_mode);
+    let current_glossary_state = build_glossary_state(current_glossary, injection_mode)?;
 
     let changed_term_keys = previous_glossary_state
         .map(|glossary| {
@@ -289,7 +289,7 @@ pub(crate) fn build_source_rerun_plan(
         };
 
         let chapter_text = std::fs::read_to_string(chapter_file)
-            .with_context(|| format!("Failed to read {}", chapter_file.display()))?;
+            .map_err(|e| Error::io(format!("Failed to read {}", chapter_file.display()), e))?;
         let current_hash = normalized_source_text_hash(&chapter_text);
 
         if current_hash != *previous_hash {
@@ -339,7 +339,7 @@ mod tests {
         glossary: &[crate::glossary::GlossaryTerm],
         injection_mode: InjectionMode,
     ) {
-        let expected = build_glossary_state(glossary, injection_mode);
+        let expected = build_glossary_state(glossary, injection_mode).unwrap();
         assert_eq!(actual.injection_mode, expected.injection_mode);
         assert_eq!(
             snapshot_fingerprints(&actual.terms),
@@ -482,7 +482,7 @@ mod tests {
 
         assert!(selection.used_fallback_to_full);
 
-        let usage = build_chapter_glossary_usage(&selection, InjectionMode::Smart);
+        let usage = build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap();
 
         assert_eq!(usage.injection_mode, InjectionMode::Smart);
         assert!(usage.used_fallback_to_full);
@@ -505,7 +505,8 @@ mod tests {
         let selection =
             select_terms_for_text(&old_glossary, "hero appears here", InjectionMode::Full);
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Full);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Full).unwrap();
         let previous_chapter_states = BTreeMap::from([(
             "chapter1.md".to_string(),
             ChapterState::new(
@@ -514,10 +515,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Full,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Full).unwrap()),
                 vec![],
                 None,
             ),
@@ -556,7 +554,8 @@ mod tests {
         let selection = select_terms_for_text(&old_glossary, smart_text(), InjectionMode::Smart);
         assert!(!selection.used_fallback_to_full);
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
         let previous_chapter_states = BTreeMap::from([(
             "chapter1.md".to_string(),
             ChapterState::new(
@@ -565,10 +564,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Smart,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                 vec![],
                 None,
             ),
@@ -603,7 +599,8 @@ mod tests {
 
         let old_glossary = smart_glossary("Old hero definition");
         let new_glossary = smart_glossary("New hero definition");
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
 
         let plan = build_glossary_rerun_plan(
             &[chapter],
@@ -644,7 +641,8 @@ mod tests {
             glossary_term("Mage", Some("mage"), "New term"),
         ];
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Full);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Full).unwrap();
 
         let plan = build_glossary_rerun_plan(
             &[chapter],
@@ -674,7 +672,8 @@ mod tests {
         std::fs::write(out_dir.join("chapter1.md"), "translated").unwrap();
 
         let glossary = smart_glossary("Hero definition");
-        let previous_glossary_state = build_glossary_state(&glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&glossary, InjectionMode::Smart).unwrap();
 
         let plan = build_glossary_rerun_plan(
             &[chapter],
@@ -717,10 +716,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Smart,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                 vec![],
                 None,
             ),
@@ -758,7 +754,8 @@ mod tests {
             select_terms_for_text(&old_glossary, "hero appears here", InjectionMode::Smart);
         assert!(selection.used_fallback_to_full);
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
         let previous_chapter_states = BTreeMap::from([(
             "chapter1.md".to_string(),
             ChapterState::new(
@@ -767,10 +764,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Smart,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                 vec![],
                 None,
             ),
@@ -808,7 +802,8 @@ mod tests {
 
         let old_glossary = smart_glossary("Old hero definition");
         let current_glossary = smart_glossary("New hero definition");
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
 
         let old_selection =
             select_terms_for_text(&old_glossary, smart_text(), InjectionMode::Smart);
@@ -826,10 +821,10 @@ mod tests {
                     None,
                     Some(100),
                     None,
-                    Some(build_chapter_glossary_usage(
-                        &current_selection,
-                        InjectionMode::Smart,
-                    )),
+                    Some(
+                        build_chapter_glossary_usage(&current_selection, InjectionMode::Smart)
+                            .unwrap(),
+                    ),
                     vec![],
                     None,
                 ),
@@ -842,10 +837,9 @@ mod tests {
                     None,
                     Some(100),
                     None,
-                    Some(build_chapter_glossary_usage(
-                        &old_selection,
-                        InjectionMode::Smart,
-                    )),
+                    Some(
+                        build_chapter_glossary_usage(&old_selection, InjectionMode::Smart).unwrap(),
+                    ),
                     vec![],
                     None,
                 ),
@@ -885,14 +879,16 @@ mod tests {
         let selection =
             select_terms_for_text(&old_glossary, "hero appears here", InjectionMode::Smart);
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
         let exported_terms = vec![ChapterGlossaryTerm {
             key: "hero".to_string(),
             fingerprint: glossary_term_prompt_fingerprint(&glossary_term(
                 "Hero",
                 Some("hero"),
                 "Old definition",
-            )),
+            ))
+            .unwrap(),
         }];
         let previous_chapter_states = BTreeMap::from([(
             "chapter1.md".to_string(),
@@ -902,10 +898,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Smart,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                 exported_terms,
                 None,
             ),
@@ -960,7 +953,8 @@ mod tests {
         let selection = select_terms_for_text(&old_glossary, chapter_text, InjectionMode::Smart);
         assert!(!selection.used_fallback_to_full, "Selection used fallback");
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
         let previous_chapter_states = BTreeMap::from([(
             "chapter1.md".to_string(),
             ChapterState::new(
@@ -969,10 +963,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Smart,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                 vec![],
                 None,
             ),
@@ -1027,7 +1018,8 @@ mod tests {
         let selection = select_terms_for_text(&old_glossary, chapter_text, InjectionMode::Smart);
         assert!(!selection.used_fallback_to_full, "Selection used fallback");
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
         let previous_chapter_states = BTreeMap::from([(
             "chapter1.md".to_string(),
             ChapterState::new(
@@ -1036,10 +1028,7 @@ mod tests {
                 None,
                 Some(100),
                 None,
-                Some(build_chapter_glossary_usage(
-                    &selection,
-                    InjectionMode::Smart,
-                )),
+                Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                 vec![],
                 None,
             ),
@@ -1087,7 +1076,8 @@ mod tests {
         let old_glossary = smart_glossary("Old hero definition");
         let new_glossary = smart_glossary("New hero definition");
 
-        let previous_glossary_state = build_glossary_state(&old_glossary, InjectionMode::Smart);
+        let previous_glossary_state =
+            build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
 
         let selection = select_terms_for_text(&old_glossary, smart_text(), InjectionMode::Smart);
         assert!(!selection.used_fallback_to_full);
@@ -1101,10 +1091,7 @@ mod tests {
                     None,
                     Some(100),
                     None,
-                    Some(build_chapter_glossary_usage(
-                        &selection,
-                        InjectionMode::Smart,
-                    )),
+                    Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                     vec![],
                     None,
                 ),
@@ -1117,10 +1104,7 @@ mod tests {
                     None,
                     Some(100),
                     None,
-                    Some(build_chapter_glossary_usage(
-                        &selection,
-                        InjectionMode::Smart,
-                    )),
+                    Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                     vec![],
                     None,
                 ),
@@ -1133,10 +1117,7 @@ mod tests {
                     None,
                     Some(100),
                     None,
-                    Some(build_chapter_glossary_usage(
-                        &selection,
-                        InjectionMode::Smart,
-                    )),
+                    Some(build_chapter_glossary_usage(&selection, InjectionMode::Smart).unwrap()),
                     vec![],
                     None,
                 ),
@@ -1164,7 +1145,8 @@ mod tests {
     fn test_checkpoint_chapter_progress_does_not_advance_glossary_baseline() {
         let dir = tempfile::tempdir().unwrap();
         let previous_glossary = vec![glossary_term("Hero", Some("hero"), "Old definition")];
-        let previous_state = build_glossary_state(&previous_glossary, InjectionMode::Smart);
+        let previous_state =
+            build_glossary_state(&previous_glossary, InjectionMode::Smart).unwrap();
         save_glossary_state(dir.path(), &previous_state).unwrap();
 
         let chapter_state = ChapterState::new(

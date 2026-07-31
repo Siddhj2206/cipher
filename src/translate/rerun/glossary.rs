@@ -1,4 +1,5 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key};
+use crate::error::{Error, Result};
 use crate::glossary::{
     GlossaryTerm, InjectionMode, glossary_term_key, glossary_term_prompt_fingerprint,
     select_terms_for_text,
@@ -6,59 +7,59 @@ use crate::glossary::{
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, GlossaryState, GlossaryStateTerm,
 };
-use anyhow::{Context, Result};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn build_glossary_state(
     glossary: &[GlossaryTerm],
     injection_mode: InjectionMode,
-) -> GlossaryState {
-    GlossaryState::new(
-        injection_mode,
-        glossary
-            .iter()
-            .map(|term| {
-                (
-                    glossary_term_key(term),
-                    GlossaryStateTerm {
-                        term: term.term.clone(),
-                        og_term: term.og_term.clone(),
-                        definition: term.definition.clone(),
-                        fingerprint: glossary_term_prompt_fingerprint(term),
-                    },
-                )
-            })
-            .collect(),
-    )
+) -> Result<GlossaryState> {
+    let terms = glossary
+        .iter()
+        .map(|term| {
+            Ok((
+                glossary_term_key(term),
+                GlossaryStateTerm {
+                    term: term.term.clone(),
+                    og_term: term.og_term.clone(),
+                    definition: term.definition.clone(),
+                    fingerprint: glossary_term_prompt_fingerprint(term)?,
+                },
+            ))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    Ok(GlossaryState::new(injection_mode, terms))
 }
 
 pub(crate) fn build_chapter_glossary_usage(
     selection: &crate::glossary::SelectionResult,
     injection_mode: InjectionMode,
-) -> ChapterGlossaryUsage {
-    ChapterGlossaryUsage {
+) -> Result<ChapterGlossaryUsage> {
+    let terms = selection
+        .terms
+        .iter()
+        .map(|term| {
+            Ok(ChapterGlossaryTerm {
+                key: glossary_term_key(term),
+                fingerprint: glossary_term_prompt_fingerprint(term)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(ChapterGlossaryUsage {
         injection_mode,
         used_fallback_to_full: selection.used_fallback_to_full,
-        terms: selection
-            .terms
-            .iter()
-            .map(|term| ChapterGlossaryTerm {
-                key: glossary_term_key(term),
-                fingerprint: glossary_term_prompt_fingerprint(term),
-            })
-            .collect(),
-    }
+        terms,
+    })
 }
 
-pub(crate) fn selection_fingerprints(terms: &[GlossaryTerm]) -> BTreeMap<String, String> {
+pub(crate) fn selection_fingerprints(terms: &[GlossaryTerm]) -> Result<BTreeMap<String, String>> {
     terms
         .iter()
         .map(|term| {
-            (
+            Ok((
                 glossary_term_key(term),
-                glossary_term_prompt_fingerprint(term),
-            )
+                glossary_term_prompt_fingerprint(term)?,
+            ))
         })
         .collect()
 }
@@ -130,7 +131,7 @@ pub(crate) fn current_expected_glossary_usage(
     injection_mode: InjectionMode,
 ) -> Result<Option<ChapterGlossaryUsage>> {
     let chapter_text = std::fs::read_to_string(raw_path)
-        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+        .map_err(|e| Error::io(format!("Failed to read {}", raw_path.display()), e))?;
     if chapter_text.trim().is_empty() {
         return Ok(None);
     }
@@ -139,7 +140,7 @@ pub(crate) fn current_expected_glossary_usage(
     Ok(Some(build_chapter_glossary_usage(
         &selection,
         injection_mode,
-    )))
+    )?))
 }
 
 pub(crate) fn chapter_matches_current_glossary(
@@ -152,7 +153,7 @@ pub(crate) fn chapter_matches_current_glossary(
         return Ok(false);
     };
 
-    let current_fingerprints = selection_fingerprints(current_glossary);
+    let current_fingerprints = selection_fingerprints(current_glossary)?;
 
     let tracked_terms_match = usage
         .terms
@@ -244,7 +245,7 @@ mod tests {
 
     #[test]
     fn selection_fingerprints_empty() {
-        assert!(selection_fingerprints(&[]).is_empty());
+        assert!(selection_fingerprints(&[]).unwrap().is_empty());
     }
 
     #[test]
@@ -254,16 +255,16 @@ mod tests {
             test_term("hero", "Hero", "A hero"),
             test_term("city", "City", "A city"),
         ];
-        let result = selection_fingerprints(&terms);
+        let result = selection_fingerprints(&terms).unwrap();
         let key0 = glossary_term_key(&terms[0]);
         let key1 = glossary_term_key(&terms[1]);
         assert_eq!(
             result.get(&key0).unwrap(),
-            &glossary_term_prompt_fingerprint(&terms[0])
+            &glossary_term_prompt_fingerprint(&terms[0]).unwrap()
         );
         assert_eq!(
             result.get(&key1).unwrap(),
-            &glossary_term_prompt_fingerprint(&terms[1])
+            &glossary_term_prompt_fingerprint(&terms[1]).unwrap()
         );
         assert_eq!(result.len(), 2);
     }

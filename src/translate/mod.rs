@@ -17,8 +17,8 @@ pub use crate::translate::types::{
 
 use crate::book::OutputConfig;
 use crate::config::GlobalConfig;
+use crate::error::Result;
 use crate::glossary::GlossaryTerm;
-use anyhow::{Context, Result};
 
 pub struct Translator {
     provider: Box<dyn providers::Provider>,
@@ -30,8 +30,7 @@ impl Translator {
     }
 
     pub fn from_config(config: &GlobalConfig, profile_name: &str) -> Result<Self> {
-        let provider = providers::build_provider(config, profile_name)
-            .with_context(|| format!("Failed to build provider for profile '{}'", profile_name))?;
+        let provider = providers::build_provider(config, profile_name)?;
 
         Ok(Self { provider })
     }

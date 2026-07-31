@@ -1,5 +1,6 @@
 pub mod book;
 pub mod config;
+pub mod error;
 pub mod glossary;
 pub mod io;
 pub mod output;
@@ -8,9 +9,9 @@ pub mod translate;
 pub mod ui;
 pub mod validate;
 
+use crate::error::{Error, Result};
 use std::path::PathBuf;
 
-use anyhow::Context;
 use clap::Parser;
 use clap::Subcommand;
 
@@ -225,8 +226,9 @@ pub enum ProfileCommands {
     },
 }
 
-fn load_global_config() -> anyhow::Result<config::GlobalConfig> {
-    config::GlobalConfig::load().context("Failed to load global config")
+fn load_global_config() -> Result<config::GlobalConfig> {
+    config::GlobalConfig::load()
+        .map_err(|e| Error::Config(format!("Failed to load global config: {e}")))
 }
 
 fn run_init_command(
@@ -234,14 +236,13 @@ fn run_init_command(
     profile: Option<String>,
     from_book: Option<PathBuf>,
     import_glossary: Option<PathBuf>,
-) -> anyhow::Result<()> {
+) -> Result<()> {
     let report = book::init_book(
         &book_dir,
         profile.as_deref(),
         from_book.as_deref(),
         import_glossary.as_deref(),
-    )
-    .with_context(|| format!("Failed to initialize book at {}", book_dir.display()))?;
+    )?;
 
     output::stderr_status("Book initialized");
     output::stderr_detail_kv("Directory", report.book_dir.display());
@@ -280,7 +281,7 @@ async fn run_translate_command(
     fail_fast: bool,
     rerun: Option<RerunMode>,
     dry_run: bool,
-) -> anyhow::Result<i32> {
+) -> Result<i32> {
     let options = translate::TranslateOptions {
         profile,
         repair_profile,
@@ -294,11 +295,11 @@ async fn run_translate_command(
     translate::translate_book(&book_dir, options).await
 }
 
-fn run_status_command(book_dir: PathBuf, json: bool) -> anyhow::Result<()> {
+fn run_status_command(book_dir: PathBuf, json: bool) -> Result<()> {
     ui::status::show_status(&book_dir, json)
 }
 
-fn run_glossary_command(command: GlossaryCommands) -> anyhow::Result<()> {
+fn run_glossary_command(command: GlossaryCommands) -> Result<()> {
     match command {
         GlossaryCommands::List { book_dir, json } => glossary::cli::list_glossary(&book_dir, json),
         GlossaryCommands::Import { book_dir, file } => {
@@ -310,7 +311,7 @@ fn run_glossary_command(command: GlossaryCommands) -> anyhow::Result<()> {
     }
 }
 
-fn run_doctor_command(book_dir: Option<PathBuf>) -> anyhow::Result<()> {
+fn run_doctor_command(book_dir: Option<PathBuf>) -> Result<()> {
     let config = load_global_config()?;
 
     if let Some(dir) = book_dir {
@@ -321,12 +322,12 @@ fn run_doctor_command(book_dir: Option<PathBuf>) -> anyhow::Result<()> {
     }
 }
 
-fn run_profile_subcommand(command: ProfileCommands, no_input: bool) -> anyhow::Result<()> {
+fn run_profile_subcommand(command: ProfileCommands, no_input: bool) -> Result<()> {
     let mut config = load_global_config()?;
     config::cli::run_profile_command(&mut config, command, no_input)
 }
 
-pub async fn run_command(command: Commands) -> anyhow::Result<i32> {
+pub async fn run_command(command: Commands) -> Result<i32> {
     match command {
         Commands::Init {
             book_dir,
@@ -386,9 +387,15 @@ pub async fn run_command(command: Commands) -> anyhow::Result<i32> {
     }
 }
 
-pub fn exit_with_error(message: impl std::fmt::Display) -> ! {
-    output::stderr_error(message);
-    std::process::exit(1)
+pub fn exit_with_error(err: Error) -> ! {
+    match &err {
+        Error::Validation { .. } => output::stderr_error(format_args!("{err}")),
+        _ => output::stderr_error(format_args!("[{}] {}", err.code(), err)),
+    }
+    if let Some(suggestion) = err.suggestion() {
+        output::stderr_detail(format_args!("suggestion: {suggestion}"));
+    }
+    std::process::exit(err.exit_code())
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 use crate::book::paths::BookPaths;
+use crate::error::{Error, Result};
 use crate::glossary::InjectionMode;
 use crate::translate::TranslationUsage;
-use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -303,9 +303,12 @@ fn collect_chapter_state_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(
         return Ok(());
     }
 
-    for entry in std::fs::read_dir(dir)
-        .with_context(|| format!("Failed to read chapter state dir {}", dir.display()))?
-    {
+    for entry in std::fs::read_dir(dir).map_err(|e| {
+        Error::io(
+            format!("Failed to read chapter state dir {}", dir.display()),
+            e,
+        )
+    })? {
         let entry = entry?;
         let path = entry.path();
 
@@ -339,9 +342,9 @@ where
     T: for<'de> Deserialize<'de>,
 {
     let content = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .map_err(|e| Error::io(format!("Failed to read {}", path.display()), e))?;
     let value = serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse {}", path.display()))?;
+        .map_err(|e| Error::State(format!("Failed to parse {}: {e}", path.display())))?;
     Ok(value)
 }
 

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use anyhow::Result;
+use crate::error::Result;
 use serde::Serialize;
 
 use crate::book::BookLayout;

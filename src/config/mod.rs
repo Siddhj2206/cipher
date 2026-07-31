@@ -1,7 +1,7 @@
 pub mod cli;
 pub mod profile;
 
-use anyhow::{Context, Result};
+use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
@@ -20,7 +20,7 @@ pub struct GlobalConfig {
 impl GlobalConfig {
     pub fn config_path() -> Result<PathBuf> {
         let dirs = directories::ProjectDirs::from("", "", "cipher")
-            .context("Failed to determine config directory")?;
+            .ok_or_else(|| Error::Config("Failed to determine config directory".to_string()))?;
         let path = dirs.config_dir().join("config.toml");
         Ok(path)
     }
@@ -30,16 +30,25 @@ impl GlobalConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read config from {}", path.display()))?;
-        let config: Self = toml::from_str(&content)
-            .with_context(|| format!("Failed to parse config from {}", path.display()))?;
+        let content = fs::read_to_string(&path).map_err(|e| {
+            Error::Config(format!(
+                "Failed to read config from {}: {e}",
+                path.display()
+            ))
+        })?;
+        let config: Self = toml::from_str(&content).map_err(|e| {
+            Error::Config(format!(
+                "Failed to parse config from {}: {e}",
+                path.display()
+            ))
+        })?;
         Ok(config)
     }
 
     pub fn save(&self) -> Result<()> {
         let path = Self::config_path()?;
-        let content = toml::to_string_pretty(self)?;
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| Error::Config(format!("Failed to serialize config: {e}")))?;
         crate::io::atomic_write(&path, &content)
     }
 

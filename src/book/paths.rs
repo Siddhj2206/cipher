@@ -1,5 +1,5 @@
+use crate::error::{Error, Result};
 use crate::state::normalize_chapter_path;
-use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -129,14 +129,14 @@ impl BookLayout {
 pub fn chapter_state_key(raw_dir: &Path, chapter_file: &Path) -> Result<String> {
     let relative_path = chapter_file
         .strip_prefix(raw_dir)
-        .with_context(|| format!("Failed to relativize {}", chapter_file.display()))?;
+        .map_err(|_| Error::State(format!("Failed to relativize {}", chapter_file.display())))?;
     Ok(normalize_chapter_path(relative_path))
 }
 
 pub fn chapter_output_path(out_dir: &Path, chapter_file: &Path) -> Result<PathBuf> {
-    let filename = chapter_file
-        .file_name()
-        .context("Invalid chapter filename")?;
+    let filename = chapter_file.file_name().ok_or_else(|| Error::Validation {
+        message: "Invalid chapter filename".to_string(),
+    })?;
     Ok(out_dir.join(filename))
 }
 

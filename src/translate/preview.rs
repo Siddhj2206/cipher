@@ -1,9 +1,9 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key};
+use crate::error::{Error, Result};
 use crate::output::{stderr_detail_kv, stderr_status, verbose_detail_kv};
 use crate::translate::rerun::{
     GlossaryRerunPlan, RerunDecision, SourceRerunPlan, combine_rerun_decisions,
 };
-use anyhow::{Context, Result};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 
@@ -123,7 +123,7 @@ pub(crate) fn preview_for_chapter(
     rerun_decision: Option<&RerunDecision>,
 ) -> Result<ChapterPreview> {
     let chapter_text = std::fs::read_to_string(raw_path)
-        .with_context(|| format!("Failed to read {}", raw_path.display()))?;
+        .map_err(|e| Error::io(format!("Failed to read {}", raw_path.display()), e))?;
 
     if chapter_text.trim().is_empty() {
         return Ok(ChapterPreview {

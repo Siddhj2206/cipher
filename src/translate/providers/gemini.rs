@@ -1,10 +1,7 @@
 //! Gemini provider implementation.
 
-use anyhow::Result;
-use rig::client::CompletionClient;
-use rig::providers::gemini;
-
 use crate::book::StructuredChapter;
+use crate::error::{Error, Result};
 use crate::translate::prompt::{
     build_glossary_extraction_prompt, build_glossary_section, build_repair_prompt,
     build_style_section, build_translation_prompt,
@@ -15,6 +12,8 @@ use crate::translate::{
     GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
     TranslationRequest,
 };
+use rig::client::CompletionClient;
+use rig::providers::gemini;
 
 const GEMINI_HTTP_MSGS: HttpErrorMessages = HttpErrorMessages {
     not_found: "Check your model name",
@@ -30,8 +29,10 @@ pub struct GeminiProvider {
 
 impl GeminiProvider {
     pub fn new(params: ProviderParams) -> Result<Self> {
-        let client = gemini::Client::new(&params.api_key)
-            .map_err(|e| anyhow::anyhow!("Failed to build Gemini client: {}", e))?;
+        let client = gemini::Client::new(&params.api_key).map_err(|e| Error::Provider {
+            kind: "gemini".to_string(),
+            detail: format!("Failed to build Gemini client: {e}"),
+        })?;
 
         Ok(Self {
             client,
@@ -63,7 +64,10 @@ impl Provider for GeminiProvider {
             }),
             Err(err) => {
                 let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
-                Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
+                Err(Error::Provider {
+                    kind: "gemini".to_string(),
+                    detail: detailed_error,
+                })
             }
         }
     }
@@ -91,7 +95,10 @@ impl Provider for GeminiProvider {
             }),
             Err(err) => {
                 let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
-                Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
+                Err(Error::Provider {
+                    kind: "gemini".to_string(),
+                    detail: detailed_error,
+                })
             }
         }
     }
@@ -115,7 +122,10 @@ impl Provider for GeminiProvider {
             }),
             Err(err) => {
                 let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
-                Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
+                Err(Error::Provider {
+                    kind: "gemini".to_string(),
+                    detail: detailed_error,
+                })
             }
         }
     }

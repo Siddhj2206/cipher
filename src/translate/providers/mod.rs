@@ -7,11 +7,11 @@ pub mod openai;
 pub mod shared;
 
 use crate::config::{GlobalConfig, ProviderKind};
+use crate::error::{Error, Result};
 use crate::translate::{
     GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
     TranslationRequest,
 };
-use anyhow::Result;
 
 /// Trait for LLM providers
 #[async_trait::async_trait]
@@ -39,23 +39,24 @@ pub struct ProviderParams {
 pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<dyn Provider>> {
     let profile = config
         .resolve_profile(profile_name)
-        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_name))?;
+        .ok_or_else(|| Error::ProfileNotFound {
+            name: profile_name.to_string(),
+        })?;
 
     let provider_config = config
         .resolve_provider(&profile.provider)
-        .ok_or_else(|| anyhow::anyhow!("Provider '{}' not found", profile.provider))?;
+        .ok_or_else(|| Error::Config(format!("Provider '{}' not found", profile.provider)))?;
 
     let api_key = config
         .get_provider_key_by_label(&profile.provider, profile.key.as_deref())
         .ok_or_else(|| {
             if let Some(label) = profile.key.as_deref() {
-                anyhow::anyhow!(
+                Error::Config(format!(
                     "No API key labeled '{}' for provider '{}'",
-                    label,
-                    profile.provider
-                )
+                    label, profile.provider
+                ))
             } else {
-                anyhow::anyhow!("No API key for provider '{}'", profile.provider)
+                Error::Config(format!("No API key for provider '{}'", profile.provider))
             }
         })?;
 
@@ -68,10 +69,12 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
         ProviderKind::Gemini => Ok(Box::new(gemini::GeminiProvider::new(params)?)),
         ProviderKind::Openai => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
         ProviderKind::OpenaiCompatible => {
-            let base_url = provider_config
-                .base_url
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("OpenAI-compatible provider requires base_url"))?;
+            let base_url = provider_config.base_url.as_deref().ok_or_else(|| {
+                Error::Config(format!(
+                    "OpenAI-compatible provider '{}' requires base_url",
+                    profile.provider
+                ))
+            })?;
             Ok(Box::new(openai::OpenAiProvider::new(
                 params,
                 Some(base_url),

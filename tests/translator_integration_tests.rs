@@ -29,8 +29,8 @@ async fn translator_with_mock_provider_returns_configured_translation() {
 
 #[tokio::test]
 async fn translator_propagates_translation_error() {
-    let provider =
-        helpers::MockProvider::new().with_translation_error(anyhow::anyhow!("API error"));
+    let provider = helpers::MockProvider::new()
+        .with_translation_error(cipher::error::Error::Other(anyhow::anyhow!("API error")));
     let translator = Translator::new(Box::new(provider));
 
     let result = translator

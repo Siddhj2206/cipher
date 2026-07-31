@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use crate::error::{Error, Result};
 use std::path::{Path, PathBuf};
 
 pub(crate) fn create_backup(book_dir: &Path, path: &Path) -> Result<PathBuf> {
@@ -7,7 +7,9 @@ pub(crate) fn create_backup(book_dir: &Path, path: &Path) -> Result<PathBuf> {
     let timestamp = Local::now().format("%Y%m%d_%H%M%S");
     let filename = path
         .file_stem()
-        .context("Cannot determine file stem for backup")?
+        .ok_or_else(|| Error::Validation {
+            message: "Cannot determine file stem for backup".to_string(),
+        })?
         .to_string_lossy();
     let backup_name = format!("{}_{}.md", filename, timestamp);
 

@@ -4,12 +4,8 @@
 //! - OpenAI: Uses Responses API (best structured output support)
 //! - OpenAI-compatible: Uses Chat Completions API (more widely supported)
 
-use anyhow::Result;
-use rig::providers::openai;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
-
 use crate::book::StructuredChapter;
+use crate::error::{Error, Result};
 use crate::translate::prompt::{
     build_glossary_extraction_prompt, build_glossary_section, build_repair_prompt,
     build_style_section, build_translation_prompt,
@@ -20,6 +16,9 @@ use crate::translate::{
     GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
     TranslationRequest,
 };
+use rig::providers::openai;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 const OPENAI_HTTP_MSGS: HttpErrorMessages = HttpErrorMessages {
     not_found: "Check your base URL and model name",
@@ -41,10 +40,15 @@ impl OpenAiProvider {
                 .api_key(&params.api_key)
                 .base_url(url)
                 .build()
-                .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {}", e))?
+                .map_err(|e| Error::Provider {
+                    kind: "openai".to_string(),
+                    detail: format!("Failed to build OpenAI client: {e}"),
+                })?
         } else {
-            openai::Client::new(&params.api_key)
-                .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {}", e))?
+            openai::Client::new(&params.api_key).map_err(|e| Error::Provider {
+                kind: "openai".to_string(),
+                detail: format!("Failed to build OpenAI client: {e}"),
+            })?
         };
 
         let use_completions_api = base_url.is_some();
@@ -88,7 +92,10 @@ impl OpenAiProvider {
             Ok(extracted) => Ok((extracted.data, extracted.usage)),
             Err(err) => {
                 let detailed_error = shared::format_extraction_error(&err, &OPENAI_HTTP_MSGS);
-                Err(anyhow::anyhow!("LLM request failed: {}", detailed_error))
+                Err(Error::Provider {
+                    kind: "openai".to_string(),
+                    detail: detailed_error,
+                })
             }
         }
     }

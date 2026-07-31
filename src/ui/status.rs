@@ -1,11 +1,11 @@
 use crate::book::BookLayout;
+use crate::error::Result;
 use crate::glossary::InjectionMode;
 use crate::output;
 use crate::output::{detail_kv, section, status};
 use crate::state::{
     ChapterState, failed_chapters, load_all_chapter_states, load_run_metadata, summarize_chapters,
 };
-use anyhow::Result;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::Path;

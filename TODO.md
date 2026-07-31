@@ -43,6 +43,7 @@ What we are not doing right now:
 - `main()` refactored into command-specific runners, `translate_single_chapter` simplified
 - Domain glossary (CONTEXT.md) and ADRs created
 - README and TODO documented; final cleanup pass
+- Structured error system: typed `Error` enum (E001–E099), stable exit codes, no `anyhow` in production code
 
 ---
 

@@ -1,15 +1,13 @@
 pub mod cli;
 mod closest_match;
 
-use anyhow::{Context, Result};
+use crate::error::{Error, Result};
+use crate::output::stderr_warn;
+use closest_match::ClosestMatch;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-
-use closest_match::ClosestMatch;
-
-use crate::output::stderr_warn;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, schemars::JsonSchema)]
 pub struct GlossaryTerm {
@@ -76,10 +74,18 @@ pub fn load_glossary<P: AsRef<Path>>(path: P) -> Result<Vec<GlossaryTerm>> {
         return Ok(Vec::new());
     }
 
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read glossary file {}", path.display()))?;
-    let terms: Vec<GlossaryTerm> = serde_json::from_str(&content)
-        .with_context(|| format!("Failed to parse glossary JSON in {}", path.display()))?;
+    let content = fs::read_to_string(path).map_err(|e| {
+        Error::io(
+            format!("Failed to read glossary file {}", path.display()),
+            e,
+        )
+    })?;
+    let terms: Vec<GlossaryTerm> = serde_json::from_str(&content).map_err(|e| {
+        Error::Glossary(format!(
+            "Failed to parse glossary JSON in {}: {e}",
+            path.display()
+        ))
+    })?;
     Ok(terms)
 }
 
@@ -88,9 +94,14 @@ pub fn save_glossary<P: AsRef<Path>>(path: P, terms: &[GlossaryTerm]) -> Result<
     dedupe_terms(&mut deduped);
 
     let path = path.as_ref();
-    let json = serde_json::to_string_pretty(&deduped)?;
-    fs::write(path, json + "\n")?;
-    Ok(())
+    let json = serde_json::to_string_pretty(&deduped)
+        .map_err(|e| Error::Glossary(format!("Failed to serialize glossary: {e}")))?;
+    fs::write(path, json + "\n").map_err(|e| {
+        Error::io(
+            format!("Failed to write glossary file {}", path.display()),
+            e,
+        )
+    })
 }
 
 fn dedupe_terms(terms: &mut Vec<GlossaryTerm>) {
@@ -102,7 +113,7 @@ pub fn glossary_term_key(term: &GlossaryTerm) -> String {
     normalize_key(term.og_term.as_deref().unwrap_or(&term.term))
 }
 
-pub fn glossary_term_prompt_fingerprint(term: &GlossaryTerm) -> String {
+pub fn glossary_term_prompt_fingerprint(term: &GlossaryTerm) -> Result<String> {
     #[derive(Serialize)]
     struct PromptFingerprint<'a> {
         term: &'a str,
@@ -116,7 +127,12 @@ pub fn glossary_term_prompt_fingerprint(term: &GlossaryTerm) -> String {
         og_term: term.og_term.as_deref(),
         definition: &term.definition,
     })
-    .expect("prompt fingerprint should serialize")
+    .map_err(|e| {
+        Error::Glossary(format!(
+            "Failed to serialize prompt fingerprint for '{}': {e}",
+            term.term
+        ))
+    })
 }
 
 fn normalize_key(s: &str) -> String {
@@ -551,8 +567,8 @@ mod tests {
         second.notes = Some("second note".into());
 
         assert_eq!(
-            glossary_term_prompt_fingerprint(&first),
-            glossary_term_prompt_fingerprint(&second)
+            glossary_term_prompt_fingerprint(&first).unwrap(),
+            glossary_term_prompt_fingerprint(&second).unwrap()
         );
     }
 }

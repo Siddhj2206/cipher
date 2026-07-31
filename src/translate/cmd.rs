@@ -1,6 +1,7 @@
 use crate::book::paths::{chapter_output_path, chapter_state_key, discover_chapters};
 use crate::book::{BookLayout, OutputConfig, load_book_config};
 use crate::config::GlobalConfig;
+use crate::error::{Error, Result};
 use crate::glossary::{GlossaryTerm, InjectionMode, book_config_injection_mode, load_glossary};
 use crate::output;
 use crate::output::{
@@ -21,7 +22,6 @@ use crate::translate::rerun::{
     migrate_legacy_full_tracking,
 };
 use crate::translate::{TranslationUsage, Translator};
-use anyhow::{Context, Result};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -55,13 +55,16 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     let layout = BookLayout::discover(book_dir);
 
     if !layout.is_valid_book() {
-        anyhow::bail!(
-            "Invalid book layout. Run 'cipher doctor {}' for details.",
-            book_dir.display()
-        );
+        return Err(Error::Validation {
+            message: format!(
+                "Invalid book layout. Run 'cipher doctor {}' for details.",
+                book_dir.display()
+            ),
+        });
     }
 
-    let global_config = GlobalConfig::load().context("Failed to load global config")?;
+    let global_config = GlobalConfig::load()
+        .map_err(|e| Error::Config(format!("Failed to load global config: {e}")))?;
 
     let book_config = load_book_config(&layout.paths.config_toml).unwrap_or_default();
     let injection_mode = book_config_injection_mode(&book_config.glossary_injection);
@@ -76,7 +79,7 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     }
 
     let mut glossary = load_glossary(&layout.paths.glossary_json)?;
-    let run_start_glossary_state = build_glossary_state(&glossary, injection_mode);
+    let run_start_glossary_state = build_glossary_state(&glossary, injection_mode)?;
 
     let out_dir = layout.effective_out_dir();
 
@@ -165,18 +168,24 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
         options.repair_profile.as_deref(),
         options.glossary_profile.as_deref(),
     )
-    .ok_or_else(|| {
-        anyhow::anyhow!("No profile configured. Run 'cipher profile new' to create one.")
+    .ok_or_else(|| Error::Validation {
+        message: "No profile configured. Run 'cipher profile new' to create one.".to_string(),
     })?;
 
     validate_translate_profiles(&global_config, &profile_names)?;
 
-    std::fs::create_dir_all(out_dir)
-        .with_context(|| format!("Failed to create output directory {}", out_dir.display()))?;
+    std::fs::create_dir_all(out_dir).map_err(|e| {
+        Error::io(
+            format!("Failed to create output directory {}", out_dir.display()),
+            e,
+        )
+    })?;
 
     let profile = global_config
         .resolve_profile(profile_names.translation_name)
-        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", profile_names.translation_name))?;
+        .ok_or_else(|| Error::ProfileNotFound {
+            name: profile_names.translation_name.to_string(),
+        })?;
 
     verbose_detail_kv("Using profiles", "");
     print_profile_details(&global_config, &profile_names);
@@ -185,12 +194,9 @@ pub async fn translate_book(book_dir: &Path, options: TranslateOptions) -> Resul
     }
 
     let translators = Translators {
-        translation: Translator::from_config(&global_config, profile_names.translation_name)
-            .context("Failed to create translation translator")?,
-        repair: Translator::from_config(&global_config, profile_names.repair_name)
-            .context("Failed to create repair translator")?,
-        glossary: Translator::from_config(&global_config, profile_names.glossary_name)
-            .context("Failed to create glossary translator")?,
+        translation: Translator::from_config(&global_config, profile_names.translation_name)?,
+        repair: Translator::from_config(&global_config, profile_names.repair_name)?,
+        glossary: Translator::from_config(&global_config, profile_names.glossary_name)?,
     };
 
     stderr_status("Translating chapters");

@@ -4,10 +4,12 @@ use crate::book::{
     validate_structured_chapter,
 };
 use crate::config::{GlobalConfig, validate_profile};
+use crate::error::{Error, Result};
 use crate::glossary::{
     GlossaryTerm, InjectionMode, SelectionResult, glossary_term_key,
     glossary_term_prompt_fingerprint, merge_terms, save_glossary, select_terms_for_text,
 };
+use crate::io;
 use crate::output::{stderr_detail, stderr_status, verbose_detail, verbose_detail_kv};
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus,
@@ -21,11 +23,8 @@ use crate::translate::{
     Translator,
 };
 use crate::validate::{ValidationOptions, validate_translation};
-use anyhow::{Context, Result};
 use std::path::Path;
 use std::time::Instant;
-
-use crate::io;
 
 pub(crate) struct TranslateProfiles<'a> {
     pub translation_name: &'a str,
@@ -77,7 +76,9 @@ pub(crate) fn validate_translate_profiles(
             for error in &validation.errors {
                 stderr_detail(error);
             }
-            anyhow::bail!("Cannot translate with invalid {} profile", label);
+            return Err(Error::Validation {
+                message: format!("Cannot translate with invalid {} profile", label),
+            });
         }
     }
 
@@ -279,7 +280,7 @@ fn failed_chapter_source_hash(
 
 fn source_text_hash_for_path(path: &Path) -> Result<String> {
     let chapter_text = std::fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+        .map_err(|e| Error::io(format!("Failed to read {}", path.display()), e))?;
     Ok(normalized_source_text_hash(&chapter_text))
 }
 
@@ -545,11 +546,13 @@ fn merge_new_glossary_terms(
 
     let added_term_fingerprints: Vec<ChapterGlossaryTerm> = added_terms
         .iter()
-        .map(|term| ChapterGlossaryTerm {
-            key: glossary_term_key(term),
-            fingerprint: glossary_term_prompt_fingerprint(term),
+        .map(|term| {
+            Ok(ChapterGlossaryTerm {
+                key: glossary_term_key(term),
+                fingerprint: glossary_term_prompt_fingerprint(term)?,
+            })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     if added > 0 {
         if dupes > 0 {
@@ -657,7 +660,7 @@ pub(crate) async fn translate_single_chapter(
     }
 
     let chapter_text = std::fs::read_to_string(paths.raw_path)
-        .with_context(|| format!("Failed to read {}", paths.raw_path.display()))?;
+        .map_err(|e| Error::io(format!("Failed to read {}", paths.raw_path.display()), e))?;
     let source_text_hash = normalized_source_text_hash(&chapter_text);
 
     if chapter_text.trim().is_empty() {
@@ -702,8 +705,7 @@ pub(crate) async fn translate_single_chapter(
         let rendered_translation =
             render_chapter_markdown(&resp.response.chapter, ctx.output_config);
 
-        io::atomic_write(paths.out_path, &rendered_translation)
-            .with_context(|| format!("Failed to write {}", paths.out_path.display()))?;
+        io::atomic_write(paths.out_path, &rendered_translation)?;
 
         let (new_terms_added, exported_terms) = merge_new_glossary_terms(
             glossary,
@@ -716,7 +718,7 @@ pub(crate) async fn translate_single_chapter(
             paths.chapter_path,
             duration.as_millis() as u64,
             resp.usage,
-            build_chapter_glossary_usage(&selection, ctx.injection_mode),
+            build_chapter_glossary_usage(&selection, ctx.injection_mode)?,
             exported_terms,
             source_text_hash,
             new_terms_added,
@@ -768,7 +770,10 @@ mod tests {
             &self,
             _req: GlossaryExtractionRequest,
         ) -> Result<ProviderGlossaryResult> {
-            Err(anyhow::anyhow!("extractor unavailable"))
+            Err(Error::Provider {
+                kind: "test".to_string(),
+                detail: "extractor unavailable".to_string(),
+            })
         }
     }
 

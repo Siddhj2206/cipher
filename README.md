@@ -247,6 +247,23 @@ cipher doctor my-book
 Without a book directory, `doctor` checks global configuration.
 With a book directory, it checks book layout and effective profile resolution.
 
+## Errors and exit codes
+
+Errors carry a stable code and exit status so scripts can react to failure classes:
+
+| Code | Meaning | Exit |
+| ---- | ------- | ---- |
+| E001 | Global/book config read or parse failed | 2 |
+| E002 | I/O failure | 3 |
+| E003 | Profile not found | 2 |
+| E004 | Glossary JSON failure | 1 |
+| E005 | Provider (API key, client, request) | 4 |
+| E006 | Invalid input or usage | 1 |
+| E007 | Corrupt `.cipher` state | 70 |
+| E099 | Unclassified | 70 |
+
+Errors print as `[E00N] message` (validation errors print as the bare message) with an optional `suggestion:` line. See `docs/adr/0003-structured-error-system.md` for details.
+
 ## Configuration
 
 ## Global config

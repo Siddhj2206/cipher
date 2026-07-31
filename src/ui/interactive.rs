@@ -1,10 +1,9 @@
-use anyhow::{Context, Result};
-use inquire::ui::{Color, ErrorMessageRenderConfig, RenderConfig, StyleSheet, Styled};
-use inquire::{Confirm, InquireError, Password, Select, Text};
-
 use crate::config::profile::{generate_unique_key_label, provider_display_name};
 use crate::config::{ApiKey, GlobalConfig, ProviderConfig, ProviderKind};
+use crate::error::{Error, Result};
 use crate::output::{stderr_detail, stderr_detail_kv};
+use inquire::ui::{Color, ErrorMessageRenderConfig, RenderConfig, StyleSheet, Styled};
+use inquire::{Confirm, InquireError, Password, Select, Text};
 
 pub fn set_cipher_theme() {
     inquire::set_global_render_config(cipher_render_config());
@@ -30,7 +29,9 @@ fn handle_inquire_error<T>(result: std::result::Result<T, InquireError>) -> Resu
         Err(InquireError::OperationInterrupted | InquireError::OperationCanceled) => {
             std::process::exit(0);
         }
-        Err(e) => Err(anyhow::anyhow!(e)),
+        Err(e) => Err(Error::Validation {
+            message: format!("Failed to read input: {e}"),
+        }),
     }
 }
 
@@ -55,7 +56,7 @@ pub fn prompt_select(prompt: &str, items: &[&str]) -> Result<usize> {
     items
         .iter()
         .position(|&x| x == result)
-        .context("Selected item not found in list")
+        .ok_or_else(|| Error::State("Selected item not found in list".to_string()))
 }
 
 pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
@@ -77,7 +78,9 @@ pub fn prompt_profile_name(config: &GlobalConfig) -> Result<String> {
                 false,
             )?;
             if !overwrite {
-                anyhow::bail!("Cancelled.");
+                return Err(Error::Validation {
+                    message: "Cancelled.".to_string(),
+                });
             }
         }
 
@@ -143,7 +146,9 @@ fn create_provider_interactive(config: &mut GlobalConfig) -> Result<String> {
                     false,
                 )?;
                 if !overwrite {
-                    anyhow::bail!("Cancelled.");
+                    return Err(Error::Validation {
+                        message: "Cancelled.".to_string(),
+                    });
                 }
             }
 
@@ -160,7 +165,7 @@ fn create_provider_interactive(config: &mut GlobalConfig) -> Result<String> {
 
             return Ok(name);
         },
-        _ => anyhow::bail!("Unexpected provider selection"),
+        _ => Err(Error::State("Unexpected provider selection".to_string())),
     }
 }
 
@@ -222,13 +227,14 @@ pub fn select_or_create_api_key(
     let provider = config
         .providers
         .get_mut(provider_name)
-        .ok_or_else(|| anyhow::anyhow!("Provider '{provider_name}' not found"))?;
+        .ok_or_else(|| Error::Config(format!("Provider '{provider_name}' not found")))?;
     let provider_keys = &mut provider.keys;
 
     if let Some(selection) = select_existing_api_key(provider_keys)? {
         let key = &provider_keys[selection];
         if key.name.is_none() {
-            let label = prompt_key_label(provider_keys, true)?.expect("require_label ensures Some");
+            let label = prompt_key_label(provider_keys, true)?
+                .ok_or_else(|| Error::State("Key label required but not provided".to_string()))?;
             provider_keys[selection].name = Some(label.clone());
             Ok(Some(label))
         } else {

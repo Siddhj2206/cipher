@@ -1,11 +1,10 @@
-use anyhow::{Context, Result};
-use serde::Serialize;
-use std::path::PathBuf;
-
 use crate::config::{ApiKey, GlobalConfig, ProfileConfig, ProviderConfig, ProviderKind};
+use crate::error::{Error, Result};
 use crate::output::{
     detail, detail_kv, section, status, stderr_detail, stderr_detail_kv, stderr_section,
 };
+use serde::Serialize;
+use std::path::PathBuf;
 
 pub(crate) fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String {
     match cfg.kind {
@@ -64,29 +63,40 @@ fn create_profile_noninteractive(
     api_key_file: Option<PathBuf>,
     set_default: Option<bool>,
 ) -> Result<()> {
-    let profile_name = name.ok_or_else(|| {
-        anyhow::anyhow!("--name is required for non-interactive profile creation")
+    let profile_name = name.ok_or_else(|| Error::Validation {
+        message: "--name is required for non-interactive profile creation".to_string(),
     })?;
-    let provider = provider_name.ok_or_else(|| {
-        anyhow::anyhow!("--provider is required for non-interactive profile creation")
+    let provider = provider_name.ok_or_else(|| Error::Validation {
+        message: "--provider is required for non-interactive profile creation".to_string(),
     })?;
 
     if profile_name.is_empty() {
-        anyhow::bail!("Profile name cannot be empty");
+        return Err(Error::Validation {
+            message: "Profile name cannot be empty".to_string(),
+        });
     }
     if provider.is_empty() {
-        anyhow::bail!("Provider name cannot be empty");
+        return Err(Error::Validation {
+            message: "Provider name cannot be empty".to_string(),
+        });
     }
 
     let model_name = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
 
     let api_key = if let Some(ref key_file) = api_key_file {
         std::fs::read_to_string(key_file)
-            .with_context(|| format!("Failed to read API key from {}", key_file.display()))?
+            .map_err(|e| {
+                Error::io(
+                    format!("Failed to read API key from {}", key_file.display()),
+                    e,
+                )
+            })?
             .trim()
             .to_string()
     } else {
-        anyhow::bail!("--api-key-file is required for non-interactive profile creation");
+        return Err(Error::Validation {
+            message: "--api-key-file is required for non-interactive profile creation".to_string(),
+        });
     };
 
     if !config.providers.contains_key(&provider) {
@@ -99,10 +109,9 @@ fn create_profile_noninteractive(
         };
 
         let base_url = if kind == ProviderKind::OpenaiCompatible {
-            anyhow::bail!(
-                "Provider '{}' not found. Create it first or use 'gemini'/'openai'.",
-                provider
-            );
+            return Err(Error::Config(format!(
+                "Provider '{provider}' not found. Create it first or use 'gemini'/'openai'."
+            )));
         } else {
             None
         };
@@ -120,7 +129,10 @@ fn create_profile_noninteractive(
     let resolved_key_label =
         key_label.or_else(|| Some(generate_unique_key_label(&config.providers[&provider].keys)));
 
-    let provider_cfg = config.providers.get_mut(&provider).unwrap();
+    let provider_cfg = config
+        .providers
+        .get_mut(&provider)
+        .ok_or_else(|| Error::Config(format!("Provider '{provider}' not found after creation")))?;
     provider_cfg.keys.push(ApiKey {
         value: api_key,
         name: resolved_key_label.clone(),
@@ -177,7 +189,7 @@ struct ProfileShowOutput {
     key_label: Option<String>,
 }
 
-pub fn list_profiles(config: &GlobalConfig, json: bool) {
+pub fn list_profiles(config: &GlobalConfig, json: bool) -> Result<()> {
     if json {
         let output = ProfileListOutput {
             profiles: config
@@ -191,14 +203,14 @@ pub fn list_profiles(config: &GlobalConfig, json: bool) {
                 })
                 .collect(),
         };
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
-        return;
+        println!("{}", serde_json::to_string_pretty(&output)?);
+        return Ok(());
     }
 
     if config.profiles.is_empty() {
         section("No profiles configured");
         detail("Run: cipher profile new");
-        return;
+        return Ok(());
     }
 
     section("Profiles");
@@ -210,11 +222,14 @@ pub fn list_profiles(config: &GlobalConfig, json: bool) {
         detail_kv("Provider", &profile.provider);
         detail_kv("Model", &profile.model);
     }
+    Ok(())
 }
 
 pub fn show_profile(config: &GlobalConfig, name: &str, json: bool) -> Result<()> {
     let Some(profile) = config.resolve_profile(name) else {
-        anyhow::bail!("Profile '{}' not found", name);
+        return Err(Error::ProfileNotFound {
+            name: name.to_string(),
+        });
     };
 
     if json {
@@ -233,7 +248,7 @@ pub fn show_profile(config: &GlobalConfig, name: &str, json: bool) -> Result<()>
             base_url,
             key_label: profile.key.clone(),
         };
-        println!("{}", serde_json::to_string_pretty(&output).unwrap());
+        println!("{}", serde_json::to_string_pretty(&output)?);
         return Ok(());
     }
 
@@ -258,9 +273,11 @@ pub fn show_profile(config: &GlobalConfig, name: &str, json: bool) -> Result<()>
     Ok(())
 }
 
-pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> anyhow::Result<()> {
+pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> Result<()> {
     if !config.profiles.contains_key(name) {
-        anyhow::bail!("Profile '{}' not found", name);
+        return Err(Error::ProfileNotFound {
+            name: name.to_string(),
+        });
     }
     config.default_profile = Some(name.to_string());
     config.save()?;
@@ -422,8 +439,8 @@ mod tests {
 
     #[test]
     fn list_profiles_empty_does_not_panic() {
-        list_profiles(&empty_config(), false);
-        list_profiles(&empty_config(), true);
+        assert!(list_profiles(&empty_config(), false).is_ok());
+        assert!(list_profiles(&empty_config(), true).is_ok());
     }
 
     #[test]
