@@ -236,9 +236,6 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
         glossary: Translator::from_config(&global_config, profile_names.glossary_name)?,
     };
 
-    if !output::is_json() {
-        stderr_status("Translating chapters");
-    }
     verbose_detail_kv("Chapters found", chapters.len());
 
     let to_process = if options.overwrite {
