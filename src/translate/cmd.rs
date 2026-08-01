@@ -78,7 +78,7 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
     let global_config = GlobalConfig::load()
         .map_err(|e| Error::Config(format!("Failed to load global config: {e}")))?;
 
-    let book_config = load_book_config(&layout.paths.config_toml).unwrap_or_default();
+    let book_config = load_book_config(&layout.paths.config_toml)?;
     let injection_mode = book_config_injection_mode(&book_config.glossary_injection);
 
     let chapters: VecDeque<PathBuf> = discover_chapters(&layout.paths.raw_dir)?
@@ -699,5 +699,61 @@ mod tests {
 
         assert!(options.rerun_glossary_enabled());
         assert!(options.rerun_chapters_enabled());
+    }
+
+    fn run_metadata_sample() -> RunMetadata {
+        RunMetadata::new(
+            "default".to_string(),
+            "gemini".to_string(),
+            "gemini-2.5-flash".to_string(),
+            None,
+        )
+    }
+
+    fn empty_glossary_state() -> GlossaryState {
+        GlossaryState::new(InjectionMode::Smart, BTreeMap::new())
+    }
+
+    fn finalize_for_failed_count(failed: usize) -> i32 {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_dir = dir.path().join("raw");
+        let out_dir = dir.path().join("tl");
+
+        let (exit_code, metadata) = finalize_run(
+            dir.path(),
+            &VecDeque::new(),
+            &raw_dir,
+            &out_dir,
+            &BTreeMap::new(),
+            &[],
+            InjectionMode::Smart,
+            false,
+            None,
+            &empty_glossary_state(),
+            failed,
+            0,
+            0,
+            0,
+            &TranslationUsage::default(),
+            run_metadata_sample(),
+            false,
+        )
+        .unwrap();
+
+        assert!(
+            metadata.finished_at.is_some(),
+            "run must be marked finished"
+        );
+        exit_code
+    }
+
+    #[test]
+    fn finalize_run_exits_2_when_chapters_failed() {
+        assert_eq!(finalize_for_failed_count(1), 2);
+    }
+
+    #[test]
+    fn finalize_run_exits_0_when_nothing_failed() {
+        assert_eq!(finalize_for_failed_count(0), 0);
     }
 }

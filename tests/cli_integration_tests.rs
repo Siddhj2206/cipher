@@ -8,6 +8,48 @@ fn temp_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("Failed to create temp dir")
 }
 
+/// Command with an isolated global config: XDG_CONFIG_HOME and HOME point at
+/// the temp dir so tests never touch the real `~/.config/cipher/config.toml`.
+fn isolated_command(home: &tempfile::TempDir) -> Command {
+    let xdg = home.path().join("config");
+    std::fs::create_dir_all(&xdg).expect("Failed to create isolated config dir");
+    let mut cmd = cipher_binary();
+    cmd.env("XDG_CONFIG_HOME", &xdg).env("HOME", home.path());
+    cmd
+}
+
+fn init_book(cmd: &mut Command, book_dir: &std::path::Path) {
+    let output = cmd.arg("init").arg(book_dir).output().expect("init failed");
+    assert!(
+        output.status.success(),
+        "init failed: {:?}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn write_chapter(book_dir: &std::path::Path) {
+    std::fs::write(book_dir.join("raw").join("001.md"), "# Chapter 1\n\nText\n")
+        .expect("write chapter");
+}
+
+fn write_global_config(home: &tempfile::TempDir, content: &str) {
+    let config_path = home
+        .path()
+        .join("config")
+        .join("cipher")
+        .join("config.toml");
+    std::fs::create_dir_all(config_path.parent().unwrap()).expect("create config dir");
+    std::fs::write(&config_path, content).expect("write global config");
+}
+
+/// Isolated book with one raw chapter, ready to translate.
+fn book_with_chapter(home: &tempfile::TempDir, name: &str) -> std::path::PathBuf {
+    let book_path = home.path().join(name);
+    init_book(&mut isolated_command(home), &book_path);
+    write_chapter(&book_path);
+    book_path
+}
+
 #[test]
 fn init_creates_book_structure() {
     let dir = temp_dir();
@@ -391,4 +433,216 @@ fn translate_json_emits_typed_error_envelope_on_failure() {
         parsed["error"]["message"].is_string(),
         "error envelope should carry a message"
     );
+}
+
+#[test]
+fn translate_on_invalid_book_layout_fails_with_e006() {
+    let home = temp_dir();
+    let book_path = home.path().join("not-a-book");
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg(&book_path)
+        .output()
+        .expect("translate failed");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Invalid book layout"), "got: {stderr}");
+}
+
+#[test]
+fn translate_without_global_config_fails_with_e006() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg(&book_path)
+        .output()
+        .expect("translate failed");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No profile configured"), "got: {stderr}");
+}
+
+#[test]
+fn translate_json_without_global_config_emits_e006_envelope() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg("--json")
+        .arg(&book_path)
+        .output()
+        .expect("translate --json failed");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("error envelope should be valid JSON");
+    assert_eq!(parsed["error"]["code"], "E006");
+    assert_eq!(parsed["error"]["exit_code"], 1);
+    assert!(
+        parsed["error"]["message"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("No profile configured"),
+        "got: {parsed}"
+    );
+}
+
+#[test]
+fn translate_with_profile_missing_api_key_fails_with_e006() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+    write_global_config(
+        &home,
+        r#"
+        default_profile = "nokey"
+
+        [providers.gemini]
+        kind = "gemini"
+
+        [profiles.nokey]
+        provider = "gemini"
+        model = "gemini-2.5-flash"
+        "#,
+    );
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg(&book_path)
+        .output()
+        .expect("translate failed");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No API key configured for provider 'gemini'"),
+        "got: {stderr}"
+    );
+    assert!(
+        stderr.contains("Cannot translate with invalid translation profile"),
+        "got: {stderr}"
+    );
+}
+
+#[test]
+fn translate_with_provider_failure_marks_chapter_failed_and_exits_2() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+    write_global_config(
+        &home,
+        r#"
+        default_profile = "local"
+
+        [providers.local]
+        kind = "openai_compatible"
+        base_url = "http://127.0.0.1:1/v1"
+        keys = [{ value = "fake-key" }]
+
+        [profiles.local]
+        provider = "local"
+        model = "test-model"
+        "#,
+    );
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg(&book_path)
+        .output()
+        .expect("translate failed");
+
+    // Provider errors surface as typed chapter failures; the run then exits
+    // with the chapters-failed code.
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("API error") && stderr.contains("request failed"),
+        "provider error should surface in chapter failure, got: {stderr}"
+    );
+    assert!(stderr.contains("1 failed"), "got: {stderr}");
+}
+
+#[test]
+fn glossary_import_missing_file_fails_with_e002() {
+    let home = temp_dir();
+    let book_path = home.path().join("book");
+    init_book(&mut isolated_command(&home), &book_path);
+
+    let output = isolated_command(&home)
+        .arg("glossary")
+        .arg("import")
+        .arg("--file")
+        .arg(home.path().join("missing.json"))
+        .arg(&book_path)
+        .output()
+        .expect("glossary import failed");
+
+    assert_eq!(output.status.code(), Some(3));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[E002]"), "got: {stderr}");
+    assert!(
+        stderr.contains("missing.json"),
+        "error should name the missing import file: {stderr}"
+    );
+}
+
+#[test]
+fn translate_with_malformed_book_config_fails_with_e001() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+    std::fs::write(book_path.join("cipher.toml"), "this is not valid toml [[[[")
+        .expect("write malformed book config");
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg(&book_path)
+        .output()
+        .expect("translate failed");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[E001]"), "got: {stderr}");
+}
+
+#[test]
+fn glossary_import_invalid_json_fails_with_e004() {
+    let home = temp_dir();
+    let book_path = home.path().join("book");
+    init_book(&mut isolated_command(&home), &book_path);
+    let import_file = home.path().join("broken.json");
+    std::fs::write(&import_file, "this is not json").expect("write broken import file");
+
+    let output = isolated_command(&home)
+        .arg("glossary")
+        .arg("import")
+        .arg("--file")
+        .arg(&import_file)
+        .arg(&book_path)
+        .output()
+        .expect("glossary import failed");
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[E004]"), "got: {stderr}");
+}
+
+#[test]
+fn profile_show_missing_profile_fails_with_e003() {
+    let home = temp_dir();
+
+    let output = isolated_command(&home)
+        .arg("profile")
+        .arg("show")
+        .arg("nope")
+        .output()
+        .expect("profile show failed");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("[E003]"), "got: {stderr}");
 }

@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use serde::Serialize;
 
 use crate::book::BookLayout;
@@ -57,6 +57,15 @@ pub fn list_glossary(book_dir: &Path, json: bool) -> Result<()> {
 
 pub fn import_glossary(book_dir: &Path, import_path: &Path) -> Result<()> {
     let layout = BookLayout::discover(book_dir);
+    if !import_path.is_file() {
+        return Err(Error::io(
+            format!(
+                "Glossary import file {} is not a file",
+                import_path.display()
+            ),
+            std::io::Error::new(std::io::ErrorKind::NotFound, "import file missing"),
+        ));
+    }
     let incoming = load_glossary(import_path)?;
 
     if incoming.is_empty() {

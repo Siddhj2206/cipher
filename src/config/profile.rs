@@ -286,6 +286,91 @@ pub fn set_default_profile(config: &mut GlobalConfig, name: &str) -> Result<()> 
     Ok(())
 }
 
+pub fn test_profile(config: &GlobalConfig, name: &str) {
+    use crate::config::validate_profile;
+
+    stderr_section("Profile test");
+    stderr_detail_kv("Name", name);
+
+    let validation = validate_profile(config, name);
+
+    stderr_detail_kv(
+        "Profile",
+        if validation.profile_exists {
+            "found"
+        } else {
+            "missing"
+        },
+    );
+    stderr_detail_kv(
+        "Provider",
+        if validation.provider_exists {
+            "configured"
+        } else {
+            "missing"
+        },
+    );
+    stderr_detail_kv(
+        "API key",
+        if validation.has_key {
+            "configured"
+        } else {
+            "missing"
+        },
+    );
+
+    if !validation.errors.is_empty() {
+        stderr_section("Validation errors");
+        for err in &validation.errors {
+            stderr_detail(err);
+        }
+    }
+
+    if validation.is_valid() {
+        stderr_detail("Profile configuration is valid");
+    } else {
+        stderr_detail("Profile configuration has errors");
+    }
+}
+
+pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
+    use crate::config::validate_profile;
+
+    let config_path = GlobalConfig::config_path()?;
+
+    section("Global configuration");
+    detail_kv("Config path", config_path.display());
+    detail_kv(
+        "Config exists",
+        if config_path.exists() { "yes" } else { "no" },
+    );
+
+    if config_path.exists() {
+        detail_kv("Providers", config.providers.len());
+        detail_kv("Profiles", config.profiles.len());
+        if let Some(default) = &config.default_profile {
+            detail_kv("Default profile", default);
+        }
+
+        if !config.profiles.is_empty() {
+            section("Profile validation");
+            for name in config.profiles.keys() {
+                let validation = validate_profile(config, name);
+                detail_kv(
+                    name,
+                    if validation.is_valid() {
+                        "valid"
+                    } else {
+                        "has errors"
+                    },
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -492,89 +577,4 @@ mod tests {
         let result = run_global_doctor(&empty_config());
         assert!(result.is_ok());
     }
-}
-
-pub fn test_profile(config: &GlobalConfig, name: &str) {
-    use crate::config::validate_profile;
-
-    stderr_section("Profile test");
-    stderr_detail_kv("Name", name);
-
-    let validation = validate_profile(config, name);
-
-    stderr_detail_kv(
-        "Profile",
-        if validation.profile_exists {
-            "found"
-        } else {
-            "missing"
-        },
-    );
-    stderr_detail_kv(
-        "Provider",
-        if validation.provider_exists {
-            "configured"
-        } else {
-            "missing"
-        },
-    );
-    stderr_detail_kv(
-        "API key",
-        if validation.has_key {
-            "configured"
-        } else {
-            "missing"
-        },
-    );
-
-    if !validation.errors.is_empty() {
-        stderr_section("Validation errors");
-        for err in &validation.errors {
-            stderr_detail(err);
-        }
-    }
-
-    if validation.is_valid() {
-        stderr_detail("Profile configuration is valid");
-    } else {
-        stderr_detail("Profile configuration has errors");
-    }
-}
-
-pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
-    use crate::config::validate_profile;
-
-    let config_path = GlobalConfig::config_path()?;
-
-    section("Global configuration");
-    detail_kv("Config path", config_path.display());
-    detail_kv(
-        "Config exists",
-        if config_path.exists() { "yes" } else { "no" },
-    );
-
-    if config_path.exists() {
-        detail_kv("Providers", config.providers.len());
-        detail_kv("Profiles", config.profiles.len());
-        if let Some(default) = &config.default_profile {
-            detail_kv("Default profile", default);
-        }
-
-        if !config.profiles.is_empty() {
-            section("Profile validation");
-            for name in config.profiles.keys() {
-                let validation = validate_profile(config, name);
-                detail_kv(
-                    name,
-                    if validation.is_valid() {
-                        "valid"
-                    } else {
-                        "has errors"
-                    },
-                );
-            }
-        }
-    }
-
-    Ok(())
 }

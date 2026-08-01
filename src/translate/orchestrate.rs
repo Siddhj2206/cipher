@@ -759,9 +759,364 @@ mod tests {
     use super::*;
     use crate::config::GlobalConfig;
 
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tempfile::TempDir;
+
     use crate::translate::providers::Provider;
 
     use crate::translate::{GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult};
+
+    struct ScriptedProvider {
+        translate_result: Option<ProviderTextResult>,
+        repair_result: Option<ProviderTextResult>,
+        repair_error: Option<String>,
+    }
+
+    impl ScriptedProvider {
+        fn new() -> Self {
+            Self {
+                translate_result: None,
+                repair_result: None,
+                repair_error: None,
+            }
+        }
+
+        fn with_translate_ok(mut self, result: ProviderTextResult) -> Self {
+            self.translate_result = Some(result);
+            self
+        }
+
+        fn with_repair_ok(mut self, result: ProviderTextResult) -> Self {
+            self.repair_result = Some(result);
+            self
+        }
+
+        fn with_repair_err(mut self, detail: &str) -> Self {
+            self.repair_error = Some(detail.to_string());
+            self
+        }
+
+        fn provider_error(detail: &str) -> Error {
+            Error::Provider {
+                kind: "gemini".to_string(),
+                detail: detail.to_string(),
+            }
+        }
+    }
+
+    fn scripted_text_result(content: &str) -> ProviderTextResult {
+        ProviderTextResult {
+            chapter: StructuredChapter {
+                chapter_number: None,
+                chapter_title: None,
+                content: content.to_string(),
+            },
+            usage: TranslationUsage::default(),
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for ScriptedProvider {
+        async fn translate(
+            &self,
+            _req: crate::translate::TranslationRequest,
+        ) -> Result<ProviderTextResult> {
+            match &self.translate_result {
+                Some(result) => Ok(result.clone()),
+                None => panic!("unexpected translate call"),
+            }
+        }
+
+        async fn repair(
+            &self,
+            _req: crate::translate::RepairRequest,
+        ) -> Result<ProviderTextResult> {
+            match (&self.repair_result, &self.repair_error) {
+                (Some(result), None) => Ok(result.clone()),
+                (None, Some(detail)) => Err(Self::provider_error(detail)),
+                _ => panic!("unexpected repair call"),
+            }
+        }
+
+        async fn extract_glossary(
+            &self,
+            _req: GlossaryExtractionRequest,
+        ) -> Result<ProviderGlossaryResult> {
+            Ok(ProviderGlossaryResult {
+                new_glossary_terms: vec![],
+                usage: TranslationUsage::default(),
+            })
+        }
+    }
+
+    fn scripted_translators(
+        translate: Box<dyn Provider>,
+        repair: Box<dyn Provider>,
+    ) -> Translators {
+        Translators {
+            translation: Translator::new(translate),
+            repair: Translator::new(repair),
+            glossary: Translator::new(Box::new(ScriptedProvider::new())),
+        }
+    }
+
+    /// Fails `failures_before_success` translate calls, then succeeds.
+    struct FlakyProvider {
+        failures_before_success: usize,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl FlakyProvider {
+        fn new(failures_before_success: usize) -> (Self, Arc<AtomicUsize>) {
+            let calls = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    failures_before_success,
+                    calls: calls.clone(),
+                },
+                calls,
+            )
+        }
+
+        fn always_failing() -> (Self, Arc<AtomicUsize>) {
+            Self::new(usize::MAX)
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for FlakyProvider {
+        async fn translate(
+            &self,
+            _req: crate::translate::TranslationRequest,
+        ) -> Result<ProviderTextResult> {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call < self.failures_before_success {
+                Err(ScriptedProvider::provider_error("timeout"))
+            } else {
+                Ok(scripted_text_result("flaky success"))
+            }
+        }
+
+        async fn repair(
+            &self,
+            _req: crate::translate::RepairRequest,
+        ) -> Result<ProviderTextResult> {
+            unreachable!()
+        }
+
+        async fn extract_glossary(
+            &self,
+            _req: GlossaryExtractionRequest,
+        ) -> Result<ProviderGlossaryResult> {
+            unreachable!()
+        }
+    }
+
+    /// Drive a paused-time task forward in 1s steps until it finishes, failing
+    /// cleanly instead of hanging if it never does.
+    async fn advance_until_finished<T>(task: &tokio::task::JoinHandle<T>, max_paused_seconds: u64) {
+        let mut elapsed = 0u64;
+        while !task.is_finished() {
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+            elapsed += 1;
+            assert!(
+                elapsed <= max_paused_seconds,
+                "task did not finish within {max_paused_seconds}s of paused time"
+            );
+        }
+    }
+
+    async fn translate_chapter_with(
+        translate: ScriptedProvider,
+        repair: ScriptedProvider,
+        raw_content: &str,
+    ) -> TestChapter {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("raw").join("chapter1.md");
+        std::fs::create_dir_all(raw_path.parent().unwrap()).unwrap();
+        std::fs::write(&raw_path, raw_content).unwrap();
+        let glossary_path = dir.path().join("glossary.json");
+        let style_guide: Option<String> = None;
+        let output_config = OutputConfig::default();
+        let translators = scripted_translators(Box::new(translate), Box::new(repair));
+        let ctx = ChapterContext::new(
+            &translators,
+            &style_guide,
+            &output_config,
+            InjectionMode::Smart,
+            &glossary_path,
+            dir.path(),
+        );
+        let out_path = dir.path().join("tl").join("chapter1.md");
+        let paths = ChapterPaths::new(&raw_path, &out_path, "chapter1.md");
+
+        let result = translate_single_chapter(&ctx, &paths, false, false, None, None, &mut vec![])
+            .await
+            .unwrap();
+        TestChapter {
+            _dir: dir,
+            result,
+            out_path,
+        }
+    }
+
+    struct TestChapter {
+        _dir: TempDir,
+        result: ChapterResult,
+        out_path: PathBuf,
+    }
+
+    #[tokio::test]
+    async fn test_empty_chapter_is_skipped_without_provider_call() {
+        let chapter =
+            translate_chapter_with(ScriptedProvider::new(), ScriptedProvider::new(), "  \n\n  ")
+                .await;
+        let result = &chapter.result;
+
+        assert!(result.skipped);
+        assert!(!result.translated);
+        assert!(!result.failed);
+        assert_eq!(result.chapter_state.status, ChapterStatus::Skipped);
+        assert_eq!(
+            result.chapter_state.error.as_deref(),
+            Some(EMPTY_CHAPTER_SKIP_REASON)
+        );
+        assert!(
+            !chapter.out_path.exists(),
+            "empty chapters must not be written"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repair_fallback_accepts_repaired_translation() {
+        let chapter = translate_chapter_with(
+            ScriptedProvider::new().with_translate_ok(scripted_text_result("```rust\nlet x = 1;")),
+            ScriptedProvider::new().with_repair_ok(scripted_text_result("repaired content")),
+            "# Chapter 1\n\nSource text\n",
+        )
+        .await;
+        let result = &chapter.result;
+
+        assert!(result.translated, "repaired chapter should be accepted");
+        assert!(!result.failed);
+        assert_eq!(result.chapter_state.status, ChapterStatus::Success);
+        assert!(result.chapter_state.error.is_none());
+        let written = std::fs::read_to_string(&chapter.out_path).unwrap();
+        assert!(
+            written.contains("repaired content"),
+            "output should contain repaired translation, got: {written}"
+        );
+        assert!(
+            !written.contains("```rust"),
+            "output must not contain the invalid first attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repair_fallback_fails_when_repair_also_invalid() {
+        let chapter = translate_chapter_with(
+            ScriptedProvider::new().with_translate_ok(scripted_text_result("```rust\nlet x = 1;")),
+            ScriptedProvider::new().with_repair_ok(scripted_text_result("```rust\nstill broken")),
+            "# Chapter 1\n\nSource text\n",
+        )
+        .await;
+        let result = &chapter.result;
+
+        assert!(result.failed);
+        assert!(!result.translated);
+        assert_eq!(result.chapter_state.status, ChapterStatus::Failed);
+        let error = result.chapter_state.error.as_deref().unwrap();
+        assert!(error.contains("Repair failed validation"), "got: {error}");
+        assert!(
+            !chapter.out_path.exists(),
+            "invalid repair must not be written"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_repair_fallback_fails_when_repair_request_errors() {
+        let chapter = translate_chapter_with(
+            ScriptedProvider::new().with_translate_ok(scripted_text_result("```rust\nlet x = 1;")),
+            ScriptedProvider::new().with_repair_err("repair backend down"),
+            "# Chapter 1\n\nSource text\n",
+        )
+        .await;
+        let result = &chapter.result;
+
+        assert!(result.failed);
+        assert_eq!(result.chapter_state.status, ChapterStatus::Failed);
+        let error = result.chapter_state.error.as_deref().unwrap();
+        assert!(
+            error.contains("Repair request failed") && error.contains("repair backend down"),
+            "got: {error}"
+        );
+        assert!(!chapter.out_path.exists());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_translation_provider_error_exhausts_retries_and_fails_chapter() {
+        let dir = tempfile::tempdir().unwrap();
+        let raw_path = dir.path().join("raw").join("chapter1.md");
+        std::fs::create_dir_all(raw_path.parent().unwrap()).unwrap();
+        std::fs::write(&raw_path, "# Chapter 1\n\nSource text\n").unwrap();
+        let glossary_path = dir.path().join("glossary.json");
+        let out_path = dir.path().join("tl").join("chapter1.md");
+        let out_path_check = out_path.clone();
+        let (flaky, calls) = FlakyProvider::always_failing();
+
+        let task = tokio::spawn(async move {
+            let style_guide: Option<String> = None;
+            let output_config = OutputConfig::default();
+            let translators =
+                scripted_translators(Box::new(flaky), Box::new(ScriptedProvider::new()));
+            let ctx = ChapterContext::new(
+                &translators,
+                &style_guide,
+                &output_config,
+                InjectionMode::Smart,
+                &glossary_path,
+                dir.path(),
+            );
+            let paths = ChapterPaths::new(&raw_path, &out_path, "chapter1.md");
+            translate_single_chapter(&ctx, &paths, false, false, None, None, &mut vec![]).await
+        });
+        advance_until_finished(&task, 60).await;
+        let result = task.await.unwrap().unwrap();
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            3,
+            "provider should be called once per retry"
+        );
+        assert!(result.failed);
+        assert_eq!(result.chapter_state.status, ChapterStatus::Failed);
+        let error = result.chapter_state.error.as_deref().unwrap();
+        assert!(
+            error.contains("API error") && error.contains("gemini request failed: timeout"),
+            "typed provider error should surface in the chapter error, got: {error}"
+        );
+        assert!(!out_path_check.exists());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_call_translation_with_retry_recovers_on_later_attempt() {
+        let (flaky, calls) = FlakyProvider::new(1);
+        let output_config = OutputConfig::default();
+
+        let task = tokio::spawn(async move {
+            let translator = Translator::new(Box::new(flaky));
+            call_translation_with_retry(&translator, "text", &[], &None, &output_config).await
+        });
+        advance_until_finished(&task, 60).await;
+        let (response, error, attempt) = task.await.unwrap();
+
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(response.is_some(), "should recover after the first failure");
+        assert!(error.is_none());
+        assert_eq!(attempt, 2, "recovery should happen on the second attempt");
+    }
 
     struct FailingGlossaryProvider;
 
