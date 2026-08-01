@@ -2,8 +2,6 @@
 //!
 //! Codes E001–E007 are a public API contract — stable strings that are never
 //! removed or repurposed across releases (only deprecated and replaced).
-//! `E099` is the migration bridge for untyped `anyhow` errors and is removed
-//! once every error site is typed.
 
 use serde_json::Error as JsonError;
 
@@ -15,12 +13,11 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// |-------|---------------------------|-----------|
 /// | E001  | Configuration             | 2         |
 /// | E002  | I/O                       | 3         |
-/// | E003  | Profile                   | 2         |
-/// | E004  | Glossary                  | 1         |
+/// | E003  | Profile                   | 5         |
+/// | E004  | Glossary                  | 6         |
 /// | E005  | Translation / Provider    | 4         |
 /// | E006  | Validation                | 1         |
 /// | E007  | State                     | 70        |
-/// | E099  | Untyped (migration)       | 70        |
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// E001 — Configuration
@@ -50,10 +47,25 @@ pub enum Error {
     /// E007 — State / internal invariant
     #[error("state error: {0}")]
     State(String),
+}
 
-    /// E099 — Migration bridge for untyped errors (see module docs).
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+impl Clone for Error {
+    fn clone(&self) -> Self {
+        match self {
+            Error::Config(s) => Error::Config(s.clone()),
+            Error::Io(e) => Error::Io(std::io::Error::new(e.kind(), e.to_string())),
+            Error::ProfileNotFound { name } => Error::ProfileNotFound { name: name.clone() },
+            Error::Glossary(s) => Error::Glossary(s.clone()),
+            Error::Provider { kind, detail } => Error::Provider {
+                kind: kind.clone(),
+                detail: detail.clone(),
+            },
+            Error::Validation { message } => Error::Validation {
+                message: message.clone(),
+            },
+            Error::State(s) => Error::State(s.clone()),
+        }
+    }
 }
 
 impl Error {
@@ -66,7 +78,6 @@ impl Error {
             Error::Provider { .. } => "E005",
             Error::Validation { .. } => "E006",
             Error::State(_) => "E007",
-            Error::Other(_) => "E099",
         }
     }
 
@@ -74,12 +85,11 @@ impl Error {
         match self {
             Error::Config(_) => 2,
             Error::Io(_) => 3,
-            Error::ProfileNotFound { .. } => 2,
-            Error::Glossary(_) => 1,
+            Error::ProfileNotFound { .. } => 5,
+            Error::Glossary(_) => 6,
             Error::Provider { .. } => 4,
             Error::Validation { .. } => 1,
             Error::State(_) => 70,
-            Error::Other(_) => 70,
         }
     }
 
@@ -98,7 +108,6 @@ impl Error {
             Error::State(_) => {
                 Some("This looks like an internal error — rerun with --verbose and report it.")
             }
-            Error::Other(_) => None,
         }
     }
 
@@ -139,15 +148,12 @@ mod tests {
                 message: "no chapters found".to_string(),
             },
             Error::State("corrupt state file".into()),
-            Error::Other(anyhow::anyhow!("untyped error")),
         ]
     }
 
     #[test]
     fn codes_follow_contract() {
-        let expected = [
-            "E001", "E002", "E003", "E004", "E005", "E006", "E007", "E099",
-        ];
+        let expected = ["E001", "E002", "E003", "E004", "E005", "E006", "E007"];
         for (err, code) in sample_errors().into_iter().zip(expected) {
             assert_eq!(err.code(), code, "for {err:?}");
         }
@@ -155,15 +161,15 @@ mod tests {
 
     #[test]
     fn exit_codes_follow_table() {
-        let expected = [2, 3, 2, 1, 4, 1, 70, 70];
+        let expected = [2, 3, 5, 6, 4, 1, 70];
         for (err, code) in sample_errors().into_iter().zip(expected) {
             assert_eq!(err.exit_code(), code, "for {err:?}");
         }
     }
 
     #[test]
-    fn suggestions_cover_all_variants_except_other() {
-        let expected = [true, true, true, true, true, true, true, false];
+    fn suggestions_cover_all_variants() {
+        let expected = [true, true, true, true, true, true, true];
         for (err, has) in sample_errors().into_iter().zip(expected) {
             assert_eq!(err.suggestion().is_some(), has, "for {err:?}");
         }

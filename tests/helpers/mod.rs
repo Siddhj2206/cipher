@@ -66,7 +66,7 @@ impl Provider for MockProvider {
         match &self.translate_result {
             Some(result) => match result {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(Error::Other(anyhow::anyhow!("{e}"))),
+                Err(e) => Err(e.clone()),
             },
             None => Ok(default_text_result()),
         }
@@ -76,7 +76,7 @@ impl Provider for MockProvider {
         match &self.repair_result {
             Some(result) => match result {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(Error::Other(anyhow::anyhow!("{e}"))),
+                Err(e) => Err(e.clone()),
             },
             None => Ok(default_text_result()),
         }
@@ -89,7 +89,7 @@ impl Provider for MockProvider {
         match &self.extract_result {
             Some(result) => match result {
                 Ok(v) => Ok(v.clone()),
-                Err(e) => Err(Error::Other(anyhow::anyhow!("{e}"))),
+                Err(e) => Err(e.clone()),
             },
             None => Ok(default_extract_result()),
         }

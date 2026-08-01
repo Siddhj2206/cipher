@@ -370,10 +370,13 @@ pub async fn run_command(command: Commands) -> Result<i32> {
             .await
         }
         Commands::Status { book_dir, json } => {
+            output::set_json(json);
             run_status_command(book_dir, json)?;
             Ok(0)
         }
         Commands::Glossary { command } => {
+            let json = matches!(&command, GlossaryCommands::List { json: true, .. });
+            output::set_json(json);
             run_glossary_command(command)?;
             Ok(0)
         }
@@ -386,6 +389,11 @@ pub async fn run_command(command: Commands) -> Result<i32> {
                 ProfileCommands::New { no_input, .. } => *no_input,
                 _ => false,
             };
+            let json = matches!(
+                &command,
+                ProfileCommands::List { json: true } | ProfileCommands::Show { json: true, .. }
+            );
+            output::set_json(json);
             run_profile_subcommand(command, no_input)?;
             Ok(0)
         }
@@ -393,6 +401,10 @@ pub async fn run_command(command: Commands) -> Result<i32> {
 }
 
 pub fn exit_with_error(err: Error) -> ! {
+    if output::is_json() {
+        let _ = crate::translate::report::print_error_report(&err);
+        std::process::exit(err.exit_code())
+    }
     match &err {
         Error::Validation { .. } => output::stderr_error(format_args!("{err}")),
         _ => output::stderr_error(format_args!("[{}] {}", err.code(), err)),

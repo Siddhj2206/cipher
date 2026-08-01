@@ -158,7 +158,7 @@ Current translate flags:
 - `--rerun[=MODE]`: retranslate chapters affected by tracked changes. Modes: `all` (glossary + source, default), `glossary`, or `source`
 - `-q, --quiet`: suppress non-essential output (progress bar and detail lines)
 - `-v, --verbose`: show detailed per-chapter progress and diagnostics: provider call details (model, endpoint), per-call timing, retry attempts with reasons, validation failures, repair decisions, glossary and usage info
-- `--json`: emit a machine-readable JSON report on stdout (per-chapter status, tokens, timing, errors, run summary) instead of human output; fatal failures emit a typed error envelope with the error code and exit code
+- `--json`: emit a machine-readable JSON report on stdout (per-chapter status, tokens, timing, errors, run summary) instead of human output; fatal failures emit a typed error envelope with the error code and exit code. With `--dry-run`, the report contains the planned per-chapter actions (translate/rerun/skip) and a summary instead of an empty report
 
 Default behavior:
 
@@ -257,14 +257,13 @@ Errors carry a stable code and exit status so scripts can react to failure class
 | ---- | ------- | ---- |
 | E001 | Global/book config read or parse failed | 2 |
 | E002 | I/O failure | 3 |
-| E003 | Profile not found | 2 |
-| E004 | Glossary JSON failure | 1 |
+| E003 | Profile not found | 5 |
+| E004 | Glossary JSON failure | 6 |
 | E005 | Provider (API key, client, request) | 4 |
 | E006 | Invalid input or usage | 1 |
 | E007 | Corrupt `.cipher` state | 70 |
-| E099 | Unclassified | 70 |
 
-Errors print as `[E00N] message` (validation errors print as the bare message) with an optional `suggestion:` line. See `docs/adr/0003-structured-error-system.md` for details.
+Every error code maps to a distinct exit code. Errors print as `[E00N] message` (validation errors print as the bare message) with an optional `suggestion:` line. Commands invoked with `--json` emit the typed error envelope `{"error": {"code", "message", "exit_code"}}` on stdout instead of the human-readable text. See `docs/adr/0003-structured-error-system.md` for details.
 
 ## Configuration
 

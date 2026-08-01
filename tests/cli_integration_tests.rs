@@ -395,20 +395,17 @@ fn translate_json_output_is_valid_report() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("translate --json should be valid JSON");
-    for key in [
-        "book",
-        "chapters",
-        "summary",
-        "usage",
-        "cancelled",
-        "exit_code",
-    ] {
+    assert_eq!(parsed["dry_run"], true, "got keys: {parsed}");
+    for key in ["book", "chapters", "summary", "exit_code"] {
         assert!(
             parsed.get(key).is_some(),
             "json report should contain '{key}', got keys: {:?}",
             parsed.as_object().map(|o| o.keys().collect::<Vec<_>>())
         );
     }
+    assert_eq!(parsed["chapters"].as_array().map(Vec::len), Some(1));
+    assert_eq!(parsed["chapters"][0]["action"], "translate");
+    assert_eq!(parsed["summary"]["translate"], 1);
 }
 
 #[test]
@@ -626,7 +623,7 @@ fn glossary_import_invalid_json_fails_with_e004() {
         .output()
         .expect("glossary import failed");
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(6));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("[E004]"), "got: {stderr}");
 }
@@ -642,7 +639,93 @@ fn profile_show_missing_profile_fails_with_e003() {
         .output()
         .expect("profile show failed");
 
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(5));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("[E003]"), "got: {stderr}");
+}
+
+#[test]
+fn verbose_dry_run_emits_per_chapter_reasons() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg("--verbose")
+        .arg("--dry-run")
+        .arg(&book_path)
+        .output()
+        .expect("verbose dry-run failed");
+
+    assert!(output.status.success(), "got: {:?}", output);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Reason"),
+        "verbose should include reasons: {stderr}"
+    );
+    assert!(
+        stderr.contains("No output exists yet"),
+        "verbose should include the preview reason: {stderr}"
+    );
+}
+
+#[test]
+fn status_json_on_corrupt_state_emits_e007_envelope() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+
+    let state_dir = book_path.join(".cipher");
+    std::fs::create_dir_all(&state_dir).expect("create state dir");
+    std::fs::write(state_dir.join("run.json"), "this is not json").expect("write corrupt state");
+
+    let output = isolated_command(&home)
+        .arg("status")
+        .arg("--json")
+        .arg(&book_path)
+        .output()
+        .expect("status --json failed");
+
+    assert_eq!(output.status.code(), Some(70));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("error envelope should be valid JSON");
+    assert_eq!(parsed["error"]["code"], "E007");
+    assert_eq!(parsed["error"]["exit_code"], 70);
+}
+
+#[test]
+fn translate_json_provider_failure_marks_chapter_failed_and_exits_2() {
+    let home = temp_dir();
+    let book_path = book_with_chapter(&home, "book");
+
+    write_global_config(
+        &home,
+        r#"
+        default_profile = "badbase"
+
+        [providers.badbase]
+        kind = "openai_compatible"
+        base_url = "://not-a-url"
+        keys = [{ value = "fake-key" }]
+
+        [profiles.badbase]
+        provider = "badbase"
+        model = "test-model"
+        "#,
+    );
+
+    let output = isolated_command(&home)
+        .arg("translate")
+        .arg("--json")
+        .arg(&book_path)
+        .output()
+        .expect("translate --json failed");
+
+    assert_eq!(output.status.code(), Some(2));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout).expect("report should be valid JSON");
+    assert_eq!(parsed["summary"]["failed"], 1, "got: {parsed}");
+    assert_eq!(parsed["chapters"][0]["status"], "failed", "got: {parsed}");
+    assert_eq!(parsed["exit_code"], 2, "got: {parsed}");
 }

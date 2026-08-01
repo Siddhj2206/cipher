@@ -46,7 +46,7 @@ pub(crate) fn preview_translation_run(
     glossary_rerun_plan: &GlossaryRerunPlan,
     source_rerun_plan: &SourceRerunPlan,
 ) -> Result<i32> {
-    let previews = build_chapter_previews(
+    let (previews, summary) = build_preview_data(
         chapters,
         raw_dir,
         out_dir,
@@ -54,7 +54,6 @@ pub(crate) fn preview_translation_run(
         glossary_rerun_plan,
         source_rerun_plan,
     )?;
-    let summary = summarize_previews(&previews);
 
     stderr_status("Planned actions");
     for preview in &previews {
@@ -83,6 +82,28 @@ pub(crate) fn preview_translation_run(
     }
 
     Ok(0)
+}
+
+/// Build per-chapter preview decisions and their summary without printing.
+/// Shared by the human-readable and `--json` dry-run paths.
+pub(crate) fn build_preview_data(
+    chapters: &VecDeque<PathBuf>,
+    raw_dir: &Path,
+    out_dir: &Path,
+    options: &crate::translate::TranslateOptions,
+    glossary_rerun_plan: &GlossaryRerunPlan,
+    source_rerun_plan: &SourceRerunPlan,
+) -> Result<(Vec<ChapterPreview>, PreviewSummary)> {
+    let previews = build_chapter_previews(
+        chapters,
+        raw_dir,
+        out_dir,
+        options,
+        glossary_rerun_plan,
+        source_rerun_plan,
+    )?;
+    let summary = summarize_previews(&previews);
+    Ok((previews, summary))
 }
 
 fn build_chapter_previews(

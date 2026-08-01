@@ -8,6 +8,7 @@ use crate::error::Error;
 use crate::state::{ChapterStatus, RunMetadata};
 use crate::translate::TranslationUsage;
 use crate::translate::orchestrate::ChapterResult;
+use crate::translate::preview::{ChapterPreview, PreviewAction, PreviewSummary};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -112,6 +113,75 @@ pub(crate) fn build_run_report(data: &ReportData) -> RunReport {
     }
 }
 
+/// Machine-readable dry-run report: per-chapter planned actions and a summary.
+#[derive(Debug, Serialize)]
+pub(crate) struct PreviewReport {
+    book: String,
+    dry_run: bool,
+    chapters: Vec<PreviewChapterEntry>,
+    summary: PreviewSummaryEntry,
+    exit_code: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct PreviewChapterEntry {
+    chapter: String,
+    action: &'static str,
+    reason: String,
+    approximate: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct PreviewSummaryEntry {
+    translate: usize,
+    rerun: usize,
+    skip: usize,
+    approximate_reruns: usize,
+    exact_reruns: usize,
+    empty_skips: usize,
+    output_exists_skips: usize,
+    output_missing: usize,
+}
+
+pub(crate) fn build_preview_report(
+    book: String,
+    previews: &[ChapterPreview],
+    summary: &PreviewSummary,
+) -> PreviewReport {
+    PreviewReport {
+        book,
+        dry_run: true,
+        chapters: previews
+            .iter()
+            .map(|p| PreviewChapterEntry {
+                chapter: p.chapter_path.clone(),
+                action: preview_action_str(p.action),
+                reason: p.reason.clone(),
+                approximate: p.approximate,
+            })
+            .collect(),
+        summary: PreviewSummaryEntry {
+            translate: summary.translate,
+            rerun: summary.rerun,
+            skip: summary.skip,
+            approximate_reruns: summary.approximate_reruns,
+            exact_reruns: summary.exact_reruns,
+            empty_skips: summary.empty_skips,
+            output_exists_skips: summary.output_exists_skips,
+            output_missing: summary.output_missing,
+        },
+        exit_code: 0,
+    }
+}
+
+fn preview_action_str(action: PreviewAction) -> &'static str {
+    match action {
+        PreviewAction::Translate => "translate",
+        PreviewAction::Rerun => "rerun",
+        PreviewAction::Skip => "skip",
+    }
+}
+
 fn run_meta(metadata: &RunMetadata) -> RunMeta {
     RunMeta {
         profile: metadata.profile.clone(),
@@ -136,7 +206,7 @@ fn chapter_entry(result: &ChapterResult) -> ChapterEntry {
     }
 }
 
-pub(crate) fn print_run_report(report: &RunReport) -> Result<(), Error> {
+pub(crate) fn print_run_report<T: Serialize>(report: &T) -> Result<(), Error> {
     println!("{}", serde_json::to_string_pretty(report)?);
     Ok(())
 }
@@ -369,5 +439,58 @@ mod tests {
             "No profile configured. Run 'cipher profile new' to create one."
         );
         assert_eq!(json["error"]["exit_code"], 1);
+    }
+
+    #[test]
+    fn preview_report_serializes_planned_actions() {
+        let previews = vec![
+            ChapterPreview {
+                chapter_path: "raw/001.md".to_string(),
+                action: PreviewAction::Translate,
+                reason: "No output exists yet".to_string(),
+                approximate: false,
+            },
+            ChapterPreview {
+                chapter_path: "raw/002.md".to_string(),
+                action: PreviewAction::Rerun,
+                reason: "Chapter source changed".to_string(),
+                approximate: true,
+            },
+            ChapterPreview {
+                chapter_path: "raw/003.md".to_string(),
+                action: PreviewAction::Skip,
+                reason: "Chapter is empty".to_string(),
+                approximate: false,
+            },
+        ];
+        let summary = PreviewSummary {
+            translate: 1,
+            rerun: 1,
+            skip: 1,
+            approximate_reruns: 1,
+            exact_reruns: 0,
+            empty_skips: 1,
+            output_exists_skips: 0,
+            output_missing: 1,
+        };
+
+        let json = serde_json::to_value(build_preview_report(
+            "/books/demo".to_string(),
+            &previews,
+            &summary,
+        ))
+        .unwrap();
+
+        assert_eq!(json["book"], "/books/demo");
+        assert_eq!(json["dry_run"], true);
+        assert_eq!(json["chapters"].as_array().map(Vec::len), Some(3));
+        assert_eq!(json["chapters"][0]["chapter"], "raw/001.md");
+        assert_eq!(json["chapters"][0]["action"], "translate");
+        assert_eq!(json["chapters"][1]["action"], "rerun");
+        assert_eq!(json["chapters"][1]["approximate"], true);
+        assert_eq!(json["chapters"][2]["action"], "skip");
+        assert_eq!(json["summary"]["translate"], 1);
+        assert_eq!(json["summary"]["approximate_reruns"], 1);
+        assert_eq!(json["exit_code"], 0);
     }
 }

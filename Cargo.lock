@@ -1259,7 +1259,6 @@ dependencies = [
 name = "cipher"
 version = "0.2.1"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "clap",

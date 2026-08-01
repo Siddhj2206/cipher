@@ -126,8 +126,12 @@ fn create_profile_noninteractive(
         );
     }
 
-    let resolved_key_label =
-        key_label.or_else(|| Some(generate_unique_key_label(&config.providers[&provider].keys)));
+    let existing_keys = config
+        .providers
+        .get(&provider)
+        .map(|cfg| cfg.keys.as_slice())
+        .unwrap_or(&[]);
+    let resolved_key_label = key_label.or_else(|| Some(generate_unique_key_label(existing_keys)));
 
     let provider_cfg = config
         .providers

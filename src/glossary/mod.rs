@@ -229,11 +229,11 @@ fn select_terms_smart(all_terms: &[GlossaryTerm], text: &str) -> SelectionResult
 
     let mut indices: Vec<usize> = matched_indices.into_iter().collect();
     indices.sort_unstable();
-    let selected_count = indices.len();
     let terms: Vec<GlossaryTerm> = indices
         .into_iter()
-        .map(|idx| all_terms[idx].clone())
+        .filter_map(|idx| all_terms.get(idx).cloned())
         .collect();
+    let selected_count = terms.len();
 
     SelectionResult {
         terms,

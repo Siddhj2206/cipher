@@ -51,7 +51,15 @@ pub(crate) fn finalize_glossary_baseline(
     }
 
     let current_glossary_state = build_glossary_state(glossary, injection_mode)?;
-    let previous_glossary_state = previous_glossary_state.expect("checked above");
+    let previous_glossary_state = match previous_glossary_state {
+        Some(state) => state,
+        None => {
+            return Ok(GlossaryBaselineOutcome {
+                action: BaselineAction::KeepExisting,
+                remaining_forced_chapters: 0,
+            });
+        }
+    };
 
     if previous_glossary_state.injection_mode == current_glossary_state.injection_mode
         && changed_prompt_relevant_keys(

@@ -16,7 +16,7 @@ use crate::translate::orchestrate::{
     print_profile_details, resolve_translate_profiles, translate_single_chapter,
     validate_translate_profiles,
 };
-use crate::translate::preview::preview_translation_run;
+use crate::translate::preview::{build_preview_data, preview_translation_run};
 use crate::translate::rerun::{
     GlossaryRerunPlan, SourceRerunPlan, build_glossary_rerun_plan, build_glossary_state,
     build_source_rerun_plan, combine_rerun_decisions, finalize_glossary_baseline,
@@ -159,9 +159,19 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
 
     if options.dry_run {
         if output::is_json() {
-            report::print_run_report(&report::build_run_report(&report::ReportData::empty(
+            let (previews, summary) = build_preview_data(
+                &chapters,
+                &layout.paths.raw_dir,
+                out_dir,
+                &options,
+                &rerun_plan,
+                &source_rerun_plan,
+            )?;
+            report::print_run_report(&report::build_preview_report(
                 book_dir.display().to_string(),
-            )))?;
+                &previews,
+                &summary,
+            ))?;
             return Ok(0);
         }
         stderr_status("Translation preview");
