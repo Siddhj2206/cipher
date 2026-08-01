@@ -18,9 +18,9 @@ use crate::translate::orchestrate::{
 };
 use crate::translate::preview::{build_preview_data, preview_translation_run};
 use crate::translate::rerun::{
-    GlossaryRerunPlan, SourceRerunPlan, build_glossary_rerun_plan, build_glossary_state,
-    build_source_rerun_plan, combine_rerun_decisions, finalize_glossary_baseline,
-    migrate_legacy_full_tracking,
+    GlossaryRerunPlan, RerunPlanContext, SourceRerunPlan, build_glossary_rerun_plan,
+    build_glossary_state, build_source_rerun_plan, combine_rerun_decisions,
+    finalize_glossary_baseline, migrate_legacy_full_tracking,
 };
 use crate::translate::{TranslationUsage, Translator, report};
 use std::collections::{BTreeMap, VecDeque};
@@ -115,15 +115,15 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
 
     let rerun_plan = if options.rerun_glossary_enabled() {
         verbose_detail_kv("Planning", "glossary-affected chapter reruns");
-        let plan = build_glossary_rerun_plan(
-            &Vec::from(chapters.clone()),
-            &layout.paths.raw_dir,
+        let ctx = RerunPlanContext {
+            chapters: &Vec::from(chapters.clone()),
+            raw_dir: &layout.paths.raw_dir,
             out_dir,
-            previous_glossary_state.as_ref(),
-            &previous_chapter_states,
-            &glossary,
+            chapter_states: &previous_chapter_states,
+            glossary: &glossary,
             injection_mode,
-        )?;
+        };
+        let plan = build_glossary_rerun_plan(&ctx, previous_glossary_state.as_ref())?;
         verbose_detail_kv("Changed glossary entries", plan.changed_term_count);
         verbose_detail_kv("Affected chapters", plan.forced_chapters.len());
         if plan.approximate_smart_checks > 0 {
@@ -142,12 +142,15 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
 
     let source_rerun_plan = if options.rerun_chapters_enabled() {
         verbose_detail_kv("Planning", "source-affected chapter reruns");
-        let plan = build_source_rerun_plan(
-            &Vec::from(chapters.clone()),
-            &layout.paths.raw_dir,
+        let ctx = RerunPlanContext {
+            chapters: &Vec::from(chapters.clone()),
+            raw_dir: &layout.paths.raw_dir,
             out_dir,
-            &previous_chapter_states,
-        )?;
+            chapter_states: &previous_chapter_states,
+            glossary: &glossary,
+            injection_mode,
+        };
+        let plan = build_source_rerun_plan(&ctx)?;
         verbose_detail_kv("Affected chapters", plan.forced_chapters.len());
         if plan.untracked_chapters > 0 {
             verbose_detail_kv("Untracked chapters", plan.untracked_chapters);
@@ -430,18 +433,18 @@ async fn iterate_translation(
         previous_chapter_states.insert(chapter_path.clone(), result.chapter_state.clone());
 
         if !output::is_quiet() && !output::is_json() {
-            if result.translated || result.failed {
+            if result.translated() || result.failed() {
                 print_chapter_result(&result, &chapter_path);
             } else {
                 eprint!("\r\x1b[K");
             }
         }
 
-        let chapter_failed = result.failed;
-        if result.translated {
+        let chapter_failed = result.failed();
+        if result.translated() {
             translated += 1;
         }
-        if result.skipped {
+        if result.skipped() {
             skipped += 1;
         }
         if chapter_failed {
@@ -456,15 +459,15 @@ async fn iterate_translation(
             && options.rerun_glossary_enabled()
             && !remaining_chapters.is_empty()
         {
-            rerun_plan = build_glossary_rerun_plan(
-                &Vec::from(remaining_chapters.clone()),
+            let ctx = RerunPlanContext {
+                chapters: &Vec::from(remaining_chapters.clone()),
                 raw_dir,
                 out_dir,
-                previous_glossary_state,
-                previous_chapter_states,
+                chapter_states: previous_chapter_states,
                 glossary,
                 injection_mode,
-            )?;
+            };
+            rerun_plan = build_glossary_rerun_plan(&ctx, previous_glossary_state)?;
         }
 
         chapter_results.push(result);
@@ -498,7 +501,7 @@ fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path
         .map(|u| fmt_tokens(u.total_tokens))
         .unwrap_or_else(|| "\u{2014}".to_string());
 
-    if result.translated {
+    if result.translated() {
         let mut tags: Vec<String> = Vec::new();
         if result.new_terms_added > 0 {
             let label = if result.new_terms_added == 1 {
@@ -512,10 +515,13 @@ fn print_chapter_result(result: &super::orchestrate::ChapterResult, chapter_path
             )));
         }
         if let Some(ref err) = result.glossary_extraction_error {
-            tags.push(output::styled_yellow(format!("\u{26A0} glos: {}", err)));
+            tags.push(output::styled_yellow(format!(
+                "\u{26A0} glos: {}",
+                err.message
+            )));
         }
         output::chapter_line_ok(chapter_path, &time, &tokens, &tags);
-    } else if result.failed {
+    } else if result.failed() {
         let error = result
             .chapter_state
             .error
@@ -562,17 +568,21 @@ fn finalize_run(
     mut run_metadata: RunMetadata,
     cancelled: bool,
 ) -> Result<(i32, RunMetadata)> {
+    let ctx = RerunPlanContext {
+        chapters: &Vec::from(chapters.clone()),
+        raw_dir,
+        out_dir,
+        chapter_states: previous_chapter_states,
+        glossary,
+        injection_mode,
+    };
+
     let baseline_outcome = finalize_glossary_baseline(
         book_dir,
         rerun_glossary_enabled,
         previous_glossary_state,
         run_start_glossary_state,
-        &Vec::from(chapters.clone()),
-        raw_dir,
-        out_dir,
-        previous_chapter_states,
-        glossary,
-        injection_mode,
+        &ctx,
         failed,
     )?;
 
@@ -580,12 +590,7 @@ fn finalize_run(
         book_dir,
         previous_glossary_state,
         baseline_outcome,
-        &Vec::from(chapters.clone()),
-        raw_dir,
-        out_dir,
-        &mut previous_chapter_states.clone(),
-        glossary,
-        injection_mode,
+        &ctx,
         failed,
     )?;
 
@@ -593,7 +598,14 @@ fn finalize_run(
     save_run_metadata(book_dir, &run_metadata)?;
 
     if output::is_json() {
-        return Ok((if failed > 0 { 2 } else { 0 }, run_metadata));
+        return Ok((
+            if failed > 0 {
+                crate::error::PARTIAL_FAILURE_EXIT_CODE
+            } else {
+                0
+            },
+            run_metadata,
+        ));
     }
 
     if baseline_outcome.remaining_forced_chapters > 0 {
@@ -650,7 +662,14 @@ fn finalize_run(
         eprintln!(" {} Translation complete", output::styled_green("\u{2713}"));
     }
 
-    Ok((if failed > 0 { 2 } else { 0 }, run_metadata))
+    Ok((
+        if failed > 0 {
+            crate::error::PARTIAL_FAILURE_EXIT_CODE
+        } else {
+            0
+        },
+        run_metadata,
+    ))
 }
 
 #[cfg(test)]
@@ -758,8 +777,11 @@ mod tests {
     }
 
     #[test]
-    fn finalize_run_exits_2_when_chapters_failed() {
-        assert_eq!(finalize_for_failed_count(1), 2);
+    fn finalize_run_exits_partial_failure_code_when_chapters_failed() {
+        assert_eq!(
+            finalize_for_failed_count(1),
+            crate::error::PARTIAL_FAILURE_EXIT_CODE
+        );
     }
 
     #[test]

@@ -7,8 +7,9 @@ use crate::glossary::{
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, GlossaryState, GlossaryStateTerm,
 };
+use crate::translate::rerun::types::RerunPlanContext;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub(crate) fn build_glossary_state(
     glossary: &[GlossaryTerm],
@@ -185,23 +186,18 @@ pub(crate) fn chapter_matches_current_glossary(
 }
 
 pub(crate) fn count_chapters_still_stale_for_current_glossary(
-    chapters: &[PathBuf],
-    raw_dir: &Path,
-    out_dir: &Path,
-    chapter_states: &BTreeMap<String, ChapterState>,
-    current_glossary: &[GlossaryTerm],
-    injection_mode: InjectionMode,
+    ctx: &RerunPlanContext,
 ) -> Result<usize> {
     let mut remaining = 0;
 
-    for chapter_file in chapters {
-        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
-        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
+    for chapter_file in ctx.chapters {
+        let chapter_path = chapter_state_key(ctx.raw_dir, chapter_file)?;
+        let output_exists = chapter_output_path(ctx.out_dir, chapter_file)?.exists();
         if !output_exists {
             continue;
         }
 
-        let Some(chapter_state) = chapter_states.get(&chapter_path) else {
+        let Some(chapter_state) = ctx.chapter_states.get(&chapter_path) else {
             remaining += 1;
             continue;
         };
@@ -209,8 +205,8 @@ pub(crate) fn count_chapters_still_stale_for_current_glossary(
         if !chapter_matches_current_glossary(
             chapter_file,
             chapter_state,
-            current_glossary,
-            injection_mode,
+            ctx.glossary,
+            ctx.injection_mode,
         )? {
             remaining += 1;
         }

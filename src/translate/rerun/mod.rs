@@ -9,4 +9,4 @@ pub(crate) use decisions::{
     build_glossary_rerun_plan, build_source_rerun_plan, combine_rerun_decisions,
 };
 pub(crate) use glossary::{build_chapter_glossary_usage, build_glossary_state};
-pub(crate) use types::{GlossaryRerunPlan, RerunDecision, SourceRerunPlan};
+pub(crate) use types::{GlossaryRerunPlan, RerunDecision, RerunPlanContext, SourceRerunPlan};

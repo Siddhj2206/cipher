@@ -528,7 +528,7 @@ fn translate_with_profile_missing_api_key_fails_with_e006() {
 }
 
 #[test]
-fn translate_with_provider_failure_marks_chapter_failed_and_exits_2() {
+fn translate_with_provider_failure_marks_chapter_failed_and_exits_partial_failure() {
     let home = temp_dir();
     let book_path = book_with_chapter(&home, "book");
     write_global_config(
@@ -554,8 +554,8 @@ fn translate_with_provider_failure_marks_chapter_failed_and_exits_2() {
         .expect("translate failed");
 
     // Provider errors surface as typed chapter failures; the run then exits
-    // with the chapters-failed code.
-    assert_eq!(output.status.code(), Some(2));
+    // with the chapters-failed code (distinct from every E00N error exit code).
+    assert_eq!(output.status.code(), Some(8));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("API error") && stderr.contains("request failed"),
@@ -694,7 +694,7 @@ fn status_json_on_corrupt_state_emits_e007_envelope() {
 }
 
 #[test]
-fn translate_json_provider_failure_marks_chapter_failed_and_exits_2() {
+fn translate_json_provider_failure_marks_chapter_failed_and_exits_partial_failure() {
     let home = temp_dir();
     let book_path = book_with_chapter(&home, "book");
 
@@ -721,11 +721,16 @@ fn translate_json_provider_failure_marks_chapter_failed_and_exits_2() {
         .output()
         .expect("translate --json failed");
 
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(8));
     let stdout = String::from_utf8_lossy(&output.stdout);
     let parsed: serde_json::Value =
         serde_json::from_str(&stdout).expect("report should be valid JSON");
     assert_eq!(parsed["summary"]["failed"], 1, "got: {parsed}");
     assert_eq!(parsed["chapters"][0]["status"], "failed", "got: {parsed}");
-    assert_eq!(parsed["exit_code"], 2, "got: {parsed}");
+    assert_eq!(
+        parsed["chapters"][0]["error"]["code"], "E005",
+        "per-chapter error should carry the typed E00N code: got {parsed}"
+    );
+    assert!(parsed["chapters"][0]["error"]["message"].is_string());
+    assert_eq!(parsed["exit_code"], 8, "got: {parsed}");
 }

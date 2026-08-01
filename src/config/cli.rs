@@ -20,13 +20,13 @@ pub fn run_profile_command(
             set_default,
             ..
         } => {
-            let has_any_flag = name.is_some()
+            let has_create_flag = name.is_some()
                 || provider.is_some()
                 || model.is_some()
                 || key_label.is_some()
                 || api_key_file.is_some();
 
-            if has_any_flag {
+            if has_create_flag {
                 super::profile::create_profile(
                     config,
                     name,

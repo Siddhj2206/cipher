@@ -4,18 +4,9 @@
 //! - OpenAI: Uses Responses API (best structured output support)
 //! - OpenAI-compatible: Uses Chat Completions API (more widely supported)
 
-use crate::book::StructuredChapter;
 use crate::error::{Error, Result};
-use crate::translate::prompt::{
-    build_glossary_extraction_prompt, build_glossary_section, build_repair_prompt,
-    build_style_section, build_translation_prompt,
-};
+use crate::translate::providers::ProviderParams;
 use crate::translate::providers::shared::{self, HttpErrorMessages};
-use crate::translate::providers::{Provider, ProviderParams};
-use crate::translate::{
-    GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
-    TranslationRequest,
-};
 use rig::providers::openai;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -44,12 +35,12 @@ impl OpenAiProvider {
                 .base_url(url)
                 .build()
                 .map_err(|e| Error::Provider {
-                    kind: "openai".to_string(),
+                    kind: crate::config::ProviderKind::Openai,
                     detail: format!("Failed to build OpenAI client: {e}"),
                 })?
         } else {
             openai::Client::new(&params.api_key).map_err(|e| Error::Provider {
-                kind: "openai".to_string(),
+                kind: crate::config::ProviderKind::Openai,
                 detail: format!("Failed to build OpenAI client: {e}"),
             })?
         };
@@ -66,7 +57,10 @@ impl OpenAiProvider {
             use_completions_api,
         })
     }
+}
 
+#[async_trait::async_trait]
+impl shared::StructuredExtractor for OpenAiProvider {
     async fn extract_structured<T>(
         &self,
         operation: &str,
@@ -102,79 +96,13 @@ impl OpenAiProvider {
                 Err(err) => {
                     let detailed_error = shared::format_extraction_error(&err, &OPENAI_HTTP_MSGS);
                     Err(Error::Provider {
-                        kind: "openai".to_string(),
+                        kind: crate::config::ProviderKind::Openai,
                         detail: detailed_error,
                     })
                 }
             }
         })
         .await
-    }
-}
-
-#[async_trait::async_trait]
-impl Provider for OpenAiProvider {
-    async fn translate(&self, req: TranslationRequest) -> Result<ProviderTextResult> {
-        let prompt = build_translation_prompt(&req);
-        let (response, usage) = self
-            .extract_structured::<shared::TranslationOnlyResponse>(
-                "translate",
-                prompt,
-                shared::TRANSLATION_PREAMBLE,
-            )
-            .await?;
-
-        Ok(ProviderTextResult {
-            chapter: StructuredChapter {
-                chapter_number: response.chapter_number,
-                chapter_title: response.chapter_title,
-                content: response.content,
-            }
-            .normalized(),
-            usage: usage.into(),
-        })
-    }
-
-    async fn repair(&self, req: RepairRequest) -> Result<ProviderTextResult> {
-        let glossary_section = build_glossary_section(&req.glossary_terms);
-        let style_section = build_style_section(&req.style_guide);
-        let prompt = build_repair_prompt(&req, &glossary_section, &style_section);
-        let (response, usage) = self
-            .extract_structured::<shared::TranslationOnlyResponse>(
-                "repair",
-                prompt,
-                shared::TRANSLATION_PREAMBLE,
-            )
-            .await?;
-
-        Ok(ProviderTextResult {
-            chapter: StructuredChapter {
-                chapter_number: response.chapter_number,
-                chapter_title: response.chapter_title,
-                content: response.content,
-            }
-            .normalized(),
-            usage: usage.into(),
-        })
-    }
-
-    async fn extract_glossary(
-        &self,
-        req: GlossaryExtractionRequest,
-    ) -> Result<ProviderGlossaryResult> {
-        let prompt = build_glossary_extraction_prompt(&req);
-        let (response, usage) = self
-            .extract_structured::<shared::GlossaryExtractionResponse>(
-                "glossary",
-                prompt,
-                shared::GLOSSARY_PREAMBLE,
-            )
-            .await?;
-
-        Ok(ProviderGlossaryResult {
-            new_glossary_terms: response.new_glossary_terms,
-            usage: usage.into(),
-        })
     }
 }
 

@@ -96,6 +96,18 @@ impl std::fmt::Display for ProviderKind {
     }
 }
 
+impl ProviderKind {
+    /// Lowercase identifier used in error messages and diagnostics
+    /// (e.g. `gemini request failed`). OpenAI-compatible endpoints report as
+    /// `openai` since they share the OpenAI client.
+    pub fn slug(&self) -> &'static str {
+        match self {
+            ProviderKind::Gemini => "gemini",
+            ProviderKind::Openai | ProviderKind::OpenaiCompatible => "openai",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub kind: ProviderKind,

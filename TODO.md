@@ -44,6 +44,8 @@ What we are not doing right now:
 - Domain glossary (CONTEXT.md) and ADRs created
 - README and TODO documented; final cleanup pass
 - Structured error system: typed `Error` enum (E001–E007), stable exit codes, no `anyhow` dependency
+- Code-review findings (preview branch): partial-failure exit code 8, per-chapter E00N codes in JSON reports, `Provider.kind` as `ProviderKind` enum, HTTP status-code matching in provider errors, `RerunPlanContext` extraction, shared provider operation helpers, dead `&mut` removed from `migrate_legacy_full_tracking`
+- Code-review follow-up (preview branch): `ChapterError` carried whole on `ChapterResult` (report reuses it, `ChapterErrorEntry` deleted), shared `StructuredExtractor` trait so providers only implement extraction, E00N code constants (`CODE_*`), unreachable retry fallthrough removed, distinctness test for exit code 8, CLI test asserts per-chapter error codes
 
 ---
 

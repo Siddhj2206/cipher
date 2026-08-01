@@ -3,6 +3,15 @@ use crate::glossary::GlossaryTerm;
 use serde::{Deserialize, Serialize};
 use std::ops::AddAssign;
 
+/// A chapter-level failure carrying its structured error code (E00N) when
+/// known, for the JSON report.
+#[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
+pub struct ChapterError {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    pub message: String,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
 pub struct TranslationUsage {
     pub input_tokens: u64,
@@ -34,7 +43,7 @@ pub struct ProviderGlossaryResult {
 pub struct AcceptedTranslation {
     pub chapter: StructuredChapter,
     pub new_glossary_terms: Vec<GlossaryTerm>,
-    pub glossary_extraction_error: Option<String>,
+    pub glossary_extraction_error: Option<ChapterError>,
 }
 
 #[derive(Debug, Clone)]

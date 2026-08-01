@@ -14,6 +14,11 @@ Error handling moves from untyped `anyhow::Error` strings to a typed, code-carry
 | E006 | `Validation { message }` | Bad input or unsupported usage; message is the bare display | 1 |
 | E007 | `State(String)` | Corrupt or inconsistent `.cipher` run state; also serde_json failures | 70 |
 
+`cipher translate` additionally exits with code **8** (`PARTIAL_FAILURE_EXIT_CODE`)
+when the run completes but one or more chapters failed — distinct from every
+E00N error exit code so scripts can distinguish a completed-but-partially-failed
+run from a fatal error.
+
 ## Design
 
 - `Error::io(context, source)` attaches a path/action context to an `io::Error` at construction, preserving the underlying `ErrorKind` on the source so callers can match on failure kinds without parsing strings.

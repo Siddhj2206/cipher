@@ -19,8 +19,8 @@ use crate::translate::backup::create_backup;
 use crate::translate::preview::EMPTY_CHAPTER_SKIP_REASON;
 use crate::translate::rerun::{RerunDecision, build_chapter_glossary_usage};
 use crate::translate::{
-    AcceptedTranslation, ProviderTextResult, ProviderTranslationResult, TranslationUsage,
-    Translator,
+    AcceptedTranslation, ChapterError, ProviderTextResult, ProviderTranslationResult,
+    TranslationUsage, Translator,
 };
 use crate::validate::{ValidationOptions, validate_translation};
 use std::path::Path;
@@ -107,13 +107,11 @@ fn print_profile_detail(config: &GlobalConfig, label: &str, name: &str) {
 }
 
 pub(crate) struct ChapterResult {
-    pub translated: bool,
-    pub failed: bool,
-    pub skipped: bool,
     pub new_terms_added: usize,
     pub usage: Option<TranslationUsage>,
     pub chapter_state: ChapterState,
-    pub glossary_extraction_error: Option<String>,
+    pub error: Option<ChapterError>,
+    pub glossary_extraction_error: Option<ChapterError>,
 }
 
 impl ChapterResult {
@@ -121,37 +119,45 @@ impl ChapterResult {
     pub(crate) fn new(
         chapter_path: &str,
         status: ChapterStatus,
-        translated: bool,
-        failed: bool,
-        skipped: bool,
+        error: Option<ChapterError>,
         new_terms_added: usize,
         usage: Option<TranslationUsage>,
-        error: Option<String>,
+        state_error: Option<String>,
         duration_ms: Option<u64>,
         translation_usage: Option<TranslationUsage>,
         glossary_usage: Option<ChapterGlossaryUsage>,
         exported_terms: Vec<ChapterGlossaryTerm>,
         source_text_hash: Option<String>,
-        glossary_extraction_error: Option<String>,
+        glossary_extraction_error: Option<ChapterError>,
     ) -> Self {
         ChapterResult {
-            translated,
-            failed,
-            skipped,
             new_terms_added,
             usage,
             chapter_state: ChapterState::new(
                 chapter_path.to_string(),
                 status,
-                error,
+                state_error,
                 duration_ms,
                 translation_usage,
                 glossary_usage,
                 exported_terms,
                 source_text_hash,
             ),
+            error,
             glossary_extraction_error,
         }
+    }
+
+    pub(crate) fn translated(&self) -> bool {
+        self.chapter_state.status == ChapterStatus::Success
+    }
+
+    pub(crate) fn failed(&self) -> bool {
+        self.chapter_state.status == ChapterStatus::Failed
+    }
+
+    pub(crate) fn skipped(&self) -> bool {
+        self.chapter_state.status == ChapterStatus::Skipped
     }
 }
 
@@ -184,9 +190,7 @@ fn build_skipped_chapter_result(
     ChapterResult::new(
         chapter_path,
         ChapterStatus::Skipped,
-        false,
-        false,
-        true,
+        None,
         0,
         None,
         message,
@@ -208,14 +212,12 @@ fn build_success_chapter_result(
     exported_terms: Vec<ChapterGlossaryTerm>,
     source_text_hash: String,
     new_terms_added: usize,
-    glossary_extraction_error: Option<String>,
+    glossary_extraction_error: Option<ChapterError>,
 ) -> ChapterResult {
     ChapterResult::new(
         chapter_path,
         ChapterStatus::Success,
-        true,
-        false,
-        false,
+        None,
         new_terms_added,
         Some(usage.clone()),
         None,
@@ -230,7 +232,7 @@ fn build_success_chapter_result(
 
 fn build_failed_chapter_result(
     chapter_path: &str,
-    error_msg: String,
+    error: ChapterError,
     duration_ms: u64,
     usage: Option<TranslationUsage>,
     previous_artifacts: PreviousChapterArtifacts,
@@ -239,12 +241,10 @@ fn build_failed_chapter_result(
     ChapterResult::new(
         chapter_path,
         ChapterStatus::Failed,
-        false,
-        true,
-        false,
+        Some(error.clone()),
         0,
         usage.clone(),
-        Some(error_msg),
+        Some(error.message),
         Some(duration_ms),
         usage,
         previous_artifacts.glossary_usage,
@@ -333,7 +333,7 @@ async fn call_translation_with_retry(
     terms: &[GlossaryTerm],
     style_guide: &Option<String>,
     output_config: &OutputConfig,
-) -> (Option<ProviderTextResult>, Option<String>, u32) {
+) -> (Option<ProviderTextResult>, Option<ChapterError>, u32) {
     for attempt in 1..=MAX_API_RETRIES as u32 {
         let attempt_start = Instant::now();
         match translator
@@ -347,6 +347,7 @@ async fn call_translation_with_retry(
         {
             Ok(resp) => return (Some(resp), None, attempt),
             Err(e) => {
+                let code = e.code();
                 let msg = format!("API error: {e}");
                 let elapsed_ms = attempt_start.elapsed().as_millis();
                 if attempt < MAX_API_RETRIES as u32 {
@@ -363,12 +364,19 @@ async fn call_translation_with_retry(
                         "Attempt",
                         format!("{attempt}/{MAX_API_RETRIES} failed after {elapsed_ms} ms: {e}."),
                     );
-                    return (None, Some(msg), attempt);
+                    return (
+                        None,
+                        Some(ChapterError {
+                            code: Some(code.to_string()),
+                            message: msg,
+                        }),
+                        attempt,
+                    );
                 }
             }
         }
     }
-    (None, Some("API error".to_string()), MAX_API_RETRIES as u32)
+    unreachable!("the retry loop always returns")
 }
 
 async fn attempt_translation(
@@ -380,7 +388,7 @@ async fn attempt_translation(
     output_config: &OutputConfig,
 ) -> (
     Option<ProviderTranslationResult>,
-    Option<String>,
+    Option<ChapterError>,
     Option<TranslationUsage>,
 ) {
     let validation_options = ValidationOptions {
@@ -423,10 +431,10 @@ async fn attempt_translation(
         return (Some(result), None, None);
     }
 
-    let mut last_error = Some(format!(
-        "Validation failed: {}",
-        validation_errors.join(", ")
-    ));
+    let mut last_error = Some(ChapterError {
+        code: Some(crate::error::CODE_VALIDATION.to_string()),
+        message: format!("Validation failed: {}", validation_errors.join(", ")),
+    });
     let mut failed_usage = Some(original_usage.clone());
 
     verbose_detail_kv("Validation", validation_errors.join(", "));
@@ -476,12 +484,19 @@ async fn attempt_translation(
 
                 let msg = format!("Repair failed validation: {}", repair_errors.join(", "));
                 verbose_detail_kv("Repair", &msg);
-                last_error = Some(msg);
+                last_error = Some(ChapterError {
+                    code: Some(crate::error::CODE_VALIDATION.to_string()),
+                    message: msg,
+                });
             }
             Err(e) => {
+                let code = e.code();
                 let msg = format!("Repair request failed: {e}");
                 verbose_detail_kv("Repair", &msg);
-                last_error = Some(msg);
+                last_error = Some(ChapterError {
+                    code: Some(code.to_string()),
+                    message: msg,
+                });
             }
         }
     } else {
@@ -512,12 +527,19 @@ async fn finish_accepted_translation(
             (glossary_resp.new_glossary_terms, None)
         }
         Err(e) => {
+            let code = e.code();
             let msg = format!("{:#}", e);
             verbose_detail_kv(
                 "Glossary extraction",
                 format!("failed: {}. Chapter kept without new terms.", msg),
             );
-            (Vec::new(), Some(msg))
+            (
+                Vec::new(),
+                Some(ChapterError {
+                    code: Some(code.to_string()),
+                    message: msg,
+                }),
+            )
         }
     };
 
@@ -739,14 +761,17 @@ pub(crate) async fn translate_single_chapter(
         ));
     }
 
-    let error_msg = last_error.unwrap_or_else(|| "Unknown error".to_string());
+    let error = last_error.unwrap_or_else(|| ChapterError {
+        code: None,
+        message: "Unknown error".to_string(),
+    });
     verbose_detail_kv("Result", "failed");
-    verbose_detail_kv("Error", &error_msg);
+    verbose_detail_kv("Error", &error.message);
     let failed_source_text_hash =
         failed_chapter_source_hash(previous_chapter_state, &source_text_hash);
     Ok(build_failed_chapter_result(
         paths.chapter_path,
-        error_msg,
+        error,
         duration.as_millis() as u64,
         failed_usage,
         prev_artifacts,
@@ -800,7 +825,7 @@ mod tests {
 
         fn provider_error(detail: &str) -> Error {
             Error::Provider {
-                kind: "gemini".to_string(),
+                kind: crate::config::ProviderKind::Gemini,
                 detail: detail.to_string(),
             }
         }
@@ -975,9 +1000,9 @@ mod tests {
                 .await;
         let result = &chapter.result;
 
-        assert!(result.skipped);
-        assert!(!result.translated);
-        assert!(!result.failed);
+        assert!(result.skipped());
+        assert!(!result.translated());
+        assert!(!result.failed());
         assert_eq!(result.chapter_state.status, ChapterStatus::Skipped);
         assert_eq!(
             result.chapter_state.error.as_deref(),
@@ -999,8 +1024,8 @@ mod tests {
         .await;
         let result = &chapter.result;
 
-        assert!(result.translated, "repaired chapter should be accepted");
-        assert!(!result.failed);
+        assert!(result.translated(), "repaired chapter should be accepted");
+        assert!(!result.failed());
         assert_eq!(result.chapter_state.status, ChapterStatus::Success);
         assert!(result.chapter_state.error.is_none());
         let written = std::fs::read_to_string(&chapter.out_path).unwrap();
@@ -1024,8 +1049,8 @@ mod tests {
         .await;
         let result = &chapter.result;
 
-        assert!(result.failed);
-        assert!(!result.translated);
+        assert!(result.failed());
+        assert!(!result.translated());
         assert_eq!(result.chapter_state.status, ChapterStatus::Failed);
         let error = result.chapter_state.error.as_deref().unwrap();
         assert!(error.contains("Repair failed validation"), "got: {error}");
@@ -1045,7 +1070,7 @@ mod tests {
         .await;
         let result = &chapter.result;
 
-        assert!(result.failed);
+        assert!(result.failed());
         assert_eq!(result.chapter_state.status, ChapterStatus::Failed);
         let error = result.chapter_state.error.as_deref().unwrap();
         assert!(
@@ -1090,7 +1115,7 @@ mod tests {
             3,
             "provider should be called once per retry"
         );
-        assert!(result.failed);
+        assert!(result.failed());
         assert_eq!(result.chapter_state.status, ChapterStatus::Failed);
         let error = result.chapter_state.error.as_deref().unwrap();
         assert!(
@@ -1139,7 +1164,7 @@ mod tests {
             _req: GlossaryExtractionRequest,
         ) -> Result<ProviderGlossaryResult> {
             Err(Error::Provider {
-                kind: "test".to_string(),
+                kind: crate::config::ProviderKind::Gemini,
                 detail: "extractor unavailable".to_string(),
             })
         }
@@ -1334,7 +1359,10 @@ mod tests {
 
         let result = build_failed_chapter_result(
             "chapter1.md",
-            "Validation failed".to_string(),
+            ChapterError {
+                code: Some(crate::error::CODE_VALIDATION.to_string()),
+                message: "Validation failed".to_string(),
+            },
             100,
             Some(usage.clone()),
             PreviousChapterArtifacts::default(),
@@ -1342,6 +1370,10 @@ mod tests {
         );
 
         assert_eq!(result.usage, Some(usage.clone()));
+        assert_eq!(
+            result.error.as_ref().and_then(|e| e.code.as_deref()),
+            Some(crate::error::CODE_VALIDATION)
+        );
         assert_eq!(result.chapter_state.translation_usage, Some(usage));
     }
 

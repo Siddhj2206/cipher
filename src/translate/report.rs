@@ -6,11 +6,10 @@
 
 use crate::error::Error;
 use crate::state::{ChapterStatus, RunMetadata};
-use crate::translate::TranslationUsage;
 use crate::translate::orchestrate::ChapterResult;
 use crate::translate::preview::{ChapterPreview, PreviewAction, PreviewSummary};
+use crate::translate::{ChapterError, TranslationUsage};
 use serde::Serialize;
-
 #[derive(Debug, Serialize)]
 pub(crate) struct RunReport {
     book: String,
@@ -44,9 +43,9 @@ struct ChapterEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     time_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+    error: Option<ChapterError>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    glossary_extraction_error: Option<String>,
+    glossary_extraction_error: Option<ChapterError>,
     new_terms_added: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     tokens: Option<TranslationUsage>,
@@ -199,7 +198,7 @@ fn chapter_entry(result: &ChapterResult) -> ChapterEntry {
         chapter: result.chapter_state.chapter_path.clone(),
         status: result.chapter_state.status.clone(),
         time_ms: result.chapter_state.translation_time_ms,
-        error: result.chapter_state.error.clone(),
+        error: result.error.clone(),
         glossary_extraction_error: result.glossary_extraction_error.clone(),
         new_terms_added: result.new_terms_added,
         tokens: result.usage.clone(),
@@ -265,16 +264,19 @@ mod tests {
         usage: Option<TranslationUsage>,
         new_terms_added: usize,
     ) -> ChapterResult {
+        let error = error.map(|message| ChapterError {
+            code: status
+                .eq(&ChapterStatus::Failed)
+                .then_some(crate::error::CODE_VALIDATION.to_string()),
+            message,
+        });
         ChapterResult {
-            translated: status == ChapterStatus::Success,
-            failed: status == ChapterStatus::Failed,
-            skipped: status == ChapterStatus::Skipped,
             new_terms_added,
             usage: usage.clone(),
             chapter_state: ChapterState {
                 chapter_path: path.to_string(),
                 status,
-                error,
+                error: error.as_ref().map(|e| e.message.clone()),
                 translation_time_ms: time_ms,
                 last_attempted: None,
                 translation_usage: usage.clone(),
@@ -282,6 +284,7 @@ mod tests {
                 exported_terms: vec![],
                 source_text_hash: None,
             },
+            error,
             glossary_extraction_error: None,
         }
     }
@@ -331,7 +334,7 @@ mod tests {
             new_glossary_terms: 2,
             usage: usage(150, 225),
             cancelled: false,
-            exit_code: 2,
+            exit_code: crate::error::PARTIAL_FAILURE_EXIT_CODE,
         }
     }
 
@@ -355,7 +358,11 @@ mod tests {
         assert!(chapters[1]["tokens"].is_null());
 
         assert_eq!(chapters[2]["status"], "failed");
-        assert_eq!(chapters[2]["error"], "Validation failed: missing heading");
+        assert_eq!(
+            chapters[2]["error"]["message"],
+            "Validation failed: missing heading"
+        );
+        assert_eq!(chapters[2]["error"]["code"], "E006");
         assert_eq!(chapters[2]["tokens"]["output_tokens"], 25);
     }
 
@@ -380,7 +387,7 @@ mod tests {
 
         assert_eq!(json["usage"]["total_tokens"], 375);
         assert_eq!(json["cancelled"], false);
-        assert_eq!(json["exit_code"], 2);
+        assert_eq!(json["exit_code"], crate::error::PARTIAL_FAILURE_EXIT_CODE);
     }
 
     #[test]
@@ -416,7 +423,7 @@ mod tests {
     #[test]
     fn error_report_carries_code_message_and_exit_code() {
         let err = Error::Provider {
-            kind: "gemini".to_string(),
+            kind: crate::config::ProviderKind::Gemini,
             detail: "timeout".to_string(),
         };
         let json = serde_json::to_value(build_error_report(&err)).unwrap();

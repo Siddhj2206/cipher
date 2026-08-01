@@ -3,9 +3,25 @@
 //! Codes E001–E007 are a public API contract — stable strings that are never
 //! removed or repurposed across releases (only deprecated and replaced).
 
+use crate::config::ProviderKind;
 use serde_json::Error as JsonError;
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// Run-level exit code for `translate` when the run finished but one or more
+/// chapters failed. Distinct from every E00N error exit code so scripts can
+/// distinguish a completed-but-partially-failed run from a fatal error.
+pub const PARTIAL_FAILURE_EXIT_CODE: i32 = 8;
+
+/// Stable error-code constants (E001–E007). These are the single source of
+/// truth referenced by both [`Error::code`] and chapter-level report errors.
+pub const CODE_CONFIG: &str = "E001";
+pub const CODE_IO: &str = "E002";
+pub const CODE_PROFILE: &str = "E003";
+pub const CODE_GLOSSARY: &str = "E004";
+pub const CODE_PROVIDER: &str = "E005";
+pub const CODE_VALIDATION: &str = "E006";
+pub const CODE_STATE: &str = "E007";
 
 /// Structured error type for cipher.
 ///
@@ -37,8 +53,8 @@ pub enum Error {
     Glossary(String),
 
     /// E005 — Translation / Provider
-    #[error("{kind} request failed: {detail}")]
-    Provider { kind: String, detail: String },
+    #[error("{} request failed: {detail}", kind.slug())]
+    Provider { kind: ProviderKind, detail: String },
 
     /// E006 — Validation (user error; displays bare, without a code prefix)
     #[error("{message}")]
@@ -71,13 +87,13 @@ impl Clone for Error {
 impl Error {
     pub fn code(&self) -> &'static str {
         match self {
-            Error::Config(_) => "E001",
-            Error::Io(_) => "E002",
-            Error::ProfileNotFound { .. } => "E003",
-            Error::Glossary(_) => "E004",
-            Error::Provider { .. } => "E005",
-            Error::Validation { .. } => "E006",
-            Error::State(_) => "E007",
+            Error::Config(_) => CODE_CONFIG,
+            Error::Io(_) => CODE_IO,
+            Error::ProfileNotFound { .. } => CODE_PROFILE,
+            Error::Glossary(_) => CODE_GLOSSARY,
+            Error::Provider { .. } => CODE_PROVIDER,
+            Error::Validation { .. } => CODE_VALIDATION,
+            Error::State(_) => CODE_STATE,
         }
     }
 
@@ -141,7 +157,7 @@ mod tests {
             },
             Error::Glossary("bad glossary json".into()),
             Error::Provider {
-                kind: "gemini".to_string(),
+                kind: ProviderKind::Gemini,
                 detail: "timeout".to_string(),
             },
             Error::Validation {
@@ -168,6 +184,19 @@ mod tests {
     }
 
     #[test]
+    fn partial_failure_exit_code_is_distinct_from_all_error_exit_codes() {
+        for err in sample_errors() {
+            assert_ne!(
+                PARTIAL_FAILURE_EXIT_CODE,
+                err.exit_code(),
+                "partial-failure exit code 8 collides with {} ({})",
+                err.code(),
+                err.exit_code()
+            );
+        }
+    }
+
+    #[test]
     fn suggestions_cover_all_variants() {
         let expected = [true, true, true, true, true, true, true];
         for (err, has) in sample_errors().into_iter().zip(expected) {
@@ -189,7 +218,7 @@ mod tests {
         assert_eq!(Error::Glossary("x".into()).to_string(), "glossary error: x");
         assert_eq!(
             Error::Provider {
-                kind: "gemini".into(),
+                kind: ProviderKind::Gemini,
                 detail: "timeout".into()
             }
             .to_string(),

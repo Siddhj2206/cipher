@@ -9,10 +9,10 @@ use crate::translate::rerun::glossary::{
     count_chapters_still_stale_for_current_glossary,
 };
 use crate::translate::rerun::types::{
-    BaselineAction, GlossaryBaselineOutcome, LegacyTrackingMigration,
+    BaselineAction, GlossaryBaselineOutcome, LegacyTrackingMigration, RerunPlanContext,
 };
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn finalize_glossary_baseline(
@@ -20,12 +20,7 @@ pub(crate) fn finalize_glossary_baseline(
     rerun_glossary_enabled: bool,
     previous_glossary_state: Option<&GlossaryState>,
     run_start_glossary_state: &GlossaryState,
-    chapters: &[PathBuf],
-    raw_dir: &Path,
-    out_dir: &Path,
-    chapter_states: &BTreeMap<String, ChapterState>,
-    glossary: &[GlossaryTerm],
-    injection_mode: InjectionMode,
+    ctx: &RerunPlanContext,
     failed: usize,
 ) -> Result<GlossaryBaselineOutcome> {
     if failed > 0 {
@@ -50,7 +45,7 @@ pub(crate) fn finalize_glossary_baseline(
         });
     }
 
-    let current_glossary_state = build_glossary_state(glossary, injection_mode)?;
+    let current_glossary_state = build_glossary_state(ctx.glossary, ctx.injection_mode)?;
     let previous_glossary_state = match previous_glossary_state {
         Some(state) => state,
         None => {
@@ -74,14 +69,7 @@ pub(crate) fn finalize_glossary_baseline(
         });
     }
 
-    let remaining_forced_chapters = count_chapters_still_stale_for_current_glossary(
-        chapters,
-        raw_dir,
-        out_dir,
-        chapter_states,
-        glossary,
-        injection_mode,
-    )?;
+    let remaining_forced_chapters = count_chapters_still_stale_for_current_glossary(ctx)?;
 
     if remaining_forced_chapters == 0 {
         save_glossary_state(book_dir, &current_glossary_state)?;
@@ -102,12 +90,7 @@ pub(crate) fn migrate_legacy_full_tracking(
     book_dir: &Path,
     previous_glossary_state: Option<&GlossaryState>,
     baseline_outcome: GlossaryBaselineOutcome,
-    chapters: &[PathBuf],
-    raw_dir: &Path,
-    out_dir: &Path,
-    chapter_states: &mut BTreeMap<String, ChapterState>,
-    glossary: &[GlossaryTerm],
-    injection_mode: InjectionMode,
+    ctx: &RerunPlanContext,
     failed: usize,
 ) -> Result<LegacyTrackingMigration> {
     if failed > 0 {
@@ -117,13 +100,13 @@ pub(crate) fn migrate_legacy_full_tracking(
     let mut migration = LegacyTrackingMigration::default();
     let mut all_output_chapters_tracked = true;
 
-    for chapter_file in chapters {
-        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
-        if !chapter_output_path(out_dir, chapter_file)?.exists() {
+    for chapter_file in ctx.chapters {
+        let chapter_path = chapter_state_key(ctx.raw_dir, chapter_file)?;
+        if !chapter_output_path(ctx.out_dir, chapter_file)?.exists() {
             continue;
         }
 
-        let Some(chapter_state) = chapter_states.get(&chapter_path).cloned() else {
+        let Some(chapter_state) = ctx.chapter_states.get(&chapter_path).cloned() else {
             all_output_chapters_tracked = false;
             continue;
         };
@@ -138,7 +121,7 @@ pub(crate) fn migrate_legacy_full_tracking(
         }
 
         let Some(migrated_usage) =
-            migrated_legacy_full_usage(chapter_file, &chapter_state, glossary)?
+            migrated_legacy_full_usage(chapter_file, &chapter_state, ctx.glossary)?
         else {
             continue;
         };
@@ -146,7 +129,6 @@ pub(crate) fn migrate_legacy_full_tracking(
         let mut migrated_state = chapter_state.clone();
         migrated_state.glossary_usage = Some(migrated_usage);
         save_chapter_state(book_dir, &migrated_state)?;
-        chapter_states.insert(chapter_path, migrated_state);
         migration.migrated_chapters += 1;
     }
 
@@ -159,7 +141,7 @@ pub(crate) fn migrate_legacy_full_tracking(
         return Ok(migration);
     }
 
-    let current_glossary_state = build_glossary_state(glossary, injection_mode)?;
+    let current_glossary_state = build_glossary_state(ctx.glossary, ctx.injection_mode)?;
     let migrated_glossary_state = match baseline_outcome.action {
         BaselineAction::CommitRunEnd => Some(current_glossary_state),
         BaselineAction::KeepExisting
@@ -275,12 +257,14 @@ mod tests {
             false,
             None,
             &run_start_state,
-            &[],
-            &raw_dir,
-            &out_dir,
-            &BTreeMap::new(),
-            &current_glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: &[],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             0,
         )
         .unwrap();
@@ -318,12 +302,14 @@ mod tests {
             true,
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Full).unwrap(),
-            &[chapter],
-            &raw_dir,
-            &out_dir,
-            &BTreeMap::new(),
-            &current_glossary,
-            InjectionMode::Full,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Full,
+            },
             0,
         )
         .unwrap();
@@ -378,12 +364,14 @@ mod tests {
             true,
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart).unwrap(),
-            &[chapter],
-            &raw_dir,
-            &out_dir,
-            &chapter_states,
-            &current_glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &chapter_states,
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             0,
         )
         .unwrap();
@@ -464,12 +452,14 @@ mod tests {
             true,
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart).unwrap(),
-            &[chapter1, chapter2],
-            &raw_dir,
-            &out_dir,
-            &chapter_states,
-            &current_glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: &[chapter1, chapter2],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &chapter_states,
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             0,
         )
         .unwrap();
@@ -516,7 +506,7 @@ mod tests {
         );
         save_chapter_state(dir.path(), &legacy_chapter_state).unwrap();
 
-        let mut chapter_states =
+        let chapter_states =
             BTreeMap::from([("chapter1.md".to_string(), legacy_chapter_state.clone())]);
 
         let migration = migrate_legacy_full_tracking(
@@ -526,12 +516,14 @@ mod tests {
                 action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             },
-            std::slice::from_ref(&chapter),
-            &raw_dir,
-            &out_dir,
-            &mut chapter_states,
-            &glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: std::slice::from_ref(&chapter),
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &chapter_states,
+                glossary: &glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             0,
         )
         .unwrap();
@@ -543,13 +535,6 @@ mod tests {
                 migrated_glossary_baseline: true,
             }
         );
-
-        let migrated_usage = chapter_states["chapter1.md"]
-            .glossary_usage
-            .as_ref()
-            .unwrap();
-        assert_eq!(migrated_usage.injection_mode, InjectionMode::Smart);
-        assert!(migrated_usage.used_fallback_to_full);
 
         let loaded_chapter = load_chapter_state(dir.path(), "chapter1.md")
             .unwrap()
@@ -595,7 +580,7 @@ mod tests {
         );
         save_chapter_state(dir.path(), &legacy_chapter_state).unwrap();
 
-        let mut chapter_states =
+        let chapter_states =
             BTreeMap::from([("chapter1.md".to_string(), legacy_chapter_state.clone())]);
 
         let migration = migrate_legacy_full_tracking(
@@ -605,12 +590,14 @@ mod tests {
                 action: BaselineAction::KeepExisting,
                 remaining_forced_chapters: 0,
             },
-            std::slice::from_ref(&chapter),
-            &raw_dir,
-            &out_dir,
-            &mut chapter_states,
-            &glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: std::slice::from_ref(&chapter),
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &chapter_states,
+                glossary: &glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             0,
         )
         .unwrap();
@@ -623,12 +610,12 @@ mod tests {
             }
         );
 
-        let migrated_usage = chapter_states["chapter1.md"]
-            .glossary_usage
-            .as_ref()
+        let loaded_chapter = load_chapter_state(dir.path(), "chapter1.md")
+            .unwrap()
             .unwrap();
-        assert_eq!(migrated_usage.injection_mode, InjectionMode::Full);
-        assert!(!migrated_usage.used_fallback_to_full);
+        let loaded_usage = loaded_chapter.glossary_usage.unwrap();
+        assert_eq!(loaded_usage.injection_mode, InjectionMode::Full);
+        assert!(!loaded_usage.used_fallback_to_full);
     }
 
     #[test]
@@ -650,12 +637,14 @@ mod tests {
             true,
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart).unwrap(),
-            &[],
-            &raw_dir,
-            &out_dir,
-            &BTreeMap::new(),
-            &current_glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: &[],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             1,
         )
         .unwrap();
@@ -691,12 +680,14 @@ mod tests {
             false,
             Some(&previous_state),
             &build_glossary_state(&current_glossary, InjectionMode::Smart).unwrap(),
-            &[],
-            &raw_dir,
-            &out_dir,
-            &BTreeMap::new(),
-            &current_glossary,
-            InjectionMode::Smart,
+            &RerunPlanContext {
+                chapters: &[],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             0,
         )
         .unwrap();

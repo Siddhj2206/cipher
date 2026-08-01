@@ -1,10 +1,21 @@
 use rig::completion::CompletionError;
 use rig::extractor::ExtractionError;
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::book::StructuredChapter;
 use crate::error::Result;
 use crate::glossary::GlossaryTerm;
 use crate::output::verbose_detail_kv;
+use crate::translate::prompt::{
+    build_glossary_extraction_prompt, build_glossary_section, build_repair_prompt,
+    build_style_section, build_translation_prompt,
+};
+use crate::translate::providers::Provider;
+use crate::translate::{
+    GlossaryExtractionRequest, ProviderGlossaryResult, ProviderTextResult, RepairRequest,
+    TranslationRequest,
+};
 use std::future::Future;
 use std::time::Instant;
 
@@ -34,24 +45,24 @@ pub struct HttpErrorMessages {
 }
 
 pub fn format_completion_error(err: &CompletionError, http_msgs: &HttpErrorMessages) -> String {
+    // The provider's raw HTTP status (when the error carried one) drives the
+    // user-facing message; matching on the code avoids string-sniffing the
+    // rendered error text.
+    if let Some(status) = err.provider_response_status() {
+        return match status.as_u16() {
+            404 => format!("HTTP 404: Not Found - {}", http_msgs.not_found),
+            401 | 403 => format!("HTTP 401/403: Unauthorized - {}", http_msgs.unauthorized),
+            429 => format!("HTTP 429: Too Many Requests - {}", http_msgs.rate_limited),
+            500 => format!(
+                "HTTP 500: Internal Server Error - {}",
+                http_msgs.server_error
+            ),
+            _ => format!("HTTP error: {}", err),
+        };
+    }
+
     match err {
-        CompletionError::HttpError(http_err) => {
-            let err_str = format!("{}", http_err);
-            if err_str.contains("404") {
-                format!("HTTP 404: Not Found - {}", http_msgs.not_found)
-            } else if err_str.contains("401") || err_str.contains("403") {
-                format!("HTTP 401/403: Unauthorized - {}", http_msgs.unauthorized)
-            } else if err_str.contains("429") {
-                format!("HTTP 429: Too Many Requests - {}", http_msgs.rate_limited)
-            } else if err_str.contains("500") {
-                format!(
-                    "HTTP 500: Internal Server Error - {}",
-                    http_msgs.server_error
-                )
-            } else {
-                format!("HTTP error: {}", err_str)
-            }
-        }
+        CompletionError::HttpError(http_err) => format!("HTTP error: {}", http_err),
         CompletionError::JsonError(json_err) => {
             format!("JSON parsing error: {}", json_err)
         }
@@ -80,6 +91,125 @@ pub fn format_extraction_error(err: &ExtractionError, http_msgs: &HttpErrorMessa
             format!("JSON deserialization error: {}", json_err)
         }
         ExtractionError::CompletionError(comp_err) => format_completion_error(comp_err, http_msgs),
+    }
+}
+
+fn text_result(
+    response: TranslationOnlyResponse,
+    usage: rig::completion::Usage,
+) -> ProviderTextResult {
+    ProviderTextResult {
+        chapter: StructuredChapter {
+            chapter_number: response.chapter_number,
+            chapter_title: response.chapter_title,
+            content: response.content,
+        }
+        .normalized(),
+        usage: usage.into(),
+    }
+}
+
+/// Run a translation via a provider-specific structured extractor and shape
+/// the response into a [`ProviderTextResult`].
+pub(crate) async fn translate_via<F, Fut>(
+    req: TranslationRequest,
+    extract: F,
+) -> Result<ProviderTextResult>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(TranslationOnlyResponse, rig::completion::Usage)>>,
+{
+    let (response, usage) = extract(build_translation_prompt(&req)).await?;
+    Ok(text_result(response, usage))
+}
+
+/// Run a repair via a provider-specific structured extractor and shape the
+/// response into a [`ProviderTextResult`].
+pub(crate) async fn repair_via<F, Fut>(req: RepairRequest, extract: F) -> Result<ProviderTextResult>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(TranslationOnlyResponse, rig::completion::Usage)>>,
+{
+    let glossary_section = build_glossary_section(&req.glossary_terms);
+    let style_section = build_style_section(&req.style_guide);
+    let prompt = build_repair_prompt(&req, &glossary_section, &style_section);
+    let (response, usage) = extract(prompt).await?;
+    Ok(text_result(response, usage))
+}
+
+/// Run a glossary extraction via a provider-specific structured extractor and
+/// shape the response into a [`ProviderGlossaryResult`].
+pub(crate) async fn extract_glossary_via<F, Fut>(
+    req: GlossaryExtractionRequest,
+    extract: F,
+) -> Result<ProviderGlossaryResult>
+where
+    F: FnOnce(String) -> Fut,
+    Fut: Future<Output = Result<(GlossaryExtractionResponse, rig::completion::Usage)>>,
+{
+    let (response, usage) = extract(build_glossary_extraction_prompt(&req)).await?;
+    Ok(ProviderGlossaryResult {
+        new_glossary_terms: response.new_glossary_terms,
+        usage: usage.into(),
+    })
+}
+
+/// The provider-specific structured-extraction capability that the shared
+/// [`Provider`] operations are built on. Implementing this trait gives a
+/// provider the shared `translate`/`repair`/`extract_glossary` operations for
+/// free.
+#[async_trait::async_trait]
+pub(crate) trait StructuredExtractor: Send + Sync {
+    async fn extract_structured<T>(
+        &self,
+        operation: &str,
+        prompt: String,
+        preamble: &str,
+    ) -> Result<(T, rig::completion::Usage)>
+    where
+        T: DeserializeOwned + Serialize + schemars::JsonSchema + Send + Sync + 'static;
+}
+
+/// Blanket implementation: any [`StructuredExtractor`] is a full [`Provider`].
+#[async_trait::async_trait]
+impl<P> Provider for P
+where
+    P: StructuredExtractor + Send + Sync + 'static,
+{
+    async fn translate(&self, req: TranslationRequest) -> Result<ProviderTextResult> {
+        let extract = |prompt: String| {
+            self.extract_structured::<TranslationOnlyResponse>(
+                "translate",
+                prompt,
+                TRANSLATION_PREAMBLE,
+            )
+        };
+        translate_via(req, extract).await
+    }
+
+    async fn repair(&self, req: RepairRequest) -> Result<ProviderTextResult> {
+        let extract = |prompt: String| {
+            self.extract_structured::<TranslationOnlyResponse>(
+                "repair",
+                prompt,
+                TRANSLATION_PREAMBLE,
+            )
+        };
+        repair_via(req, extract).await
+    }
+
+    async fn extract_glossary(
+        &self,
+        req: GlossaryExtractionRequest,
+    ) -> Result<ProviderGlossaryResult> {
+        let extract = |prompt: String| {
+            self.extract_structured::<GlossaryExtractionResponse>(
+                "glossary",
+                prompt,
+                GLOSSARY_PREAMBLE,
+            )
+        };
+        extract_glossary_via(req, extract).await
     }
 }
 
@@ -135,7 +265,7 @@ mod tests {
         set_verbose(false);
         let result = tracked_call("repair", "openai", "m", "https://example.com", async {
             Err::<u32, _>(Error::Provider {
-                kind: "openai".to_string(),
+                kind: crate::config::ProviderKind::Openai,
                 detail: "boom".to_string(),
             })
         })
@@ -152,7 +282,7 @@ mod tests {
         .await;
         let _ = tracked_call("glossary", "openai", "m", "https://example.com", async {
             Err::<u32, _>(Error::Provider {
-                kind: "openai".to_string(),
+                kind: crate::config::ProviderKind::Openai,
                 detail: "boom".to_string(),
             })
         })

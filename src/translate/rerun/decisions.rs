@@ -8,8 +8,10 @@ use crate::translate::rerun::glossary::{
     build_glossary_state, changed_prompt_relevant_keys, changed_selected_term_keys,
     glossary_terms_from_state, selection_fingerprints, usage_fingerprint_map,
 };
-use crate::translate::rerun::types::{GlossaryRerunPlan, RerunDecision, SourceRerunPlan};
-use std::collections::{BTreeMap, BTreeSet};
+use crate::translate::rerun::types::{
+    GlossaryRerunPlan, RerunDecision, RerunPlanContext, SourceRerunPlan,
+};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 fn tracked_usage_state_label(usage: &ChapterGlossaryUsage) -> &'static str {
@@ -160,15 +162,11 @@ pub(crate) fn approximate_smart_rerun_decision(
     }
 }
 
-fn chapters_with_output<'a>(
-    chapters: &'a [PathBuf],
-    raw_dir: &Path,
-    out_dir: &Path,
-) -> Result<Vec<(String, &'a PathBuf)>> {
+fn chapters_with_output<'a>(ctx: &'a RerunPlanContext) -> Result<Vec<(String, &'a PathBuf)>> {
     let mut result = Vec::new();
-    for chapter_file in chapters {
-        let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
-        if !chapter_output_path(out_dir, chapter_file)?.exists() {
+    for chapter_file in ctx.chapters {
+        let chapter_path = chapter_state_key(ctx.raw_dir, chapter_file)?;
+        if !chapter_output_path(ctx.out_dir, chapter_file)?.exists() {
             continue;
         }
         result.push((chapter_path, chapter_file));
@@ -177,16 +175,11 @@ fn chapters_with_output<'a>(
 }
 
 pub(crate) fn build_glossary_rerun_plan(
-    chapters: &[PathBuf],
-    raw_dir: &Path,
-    out_dir: &Path,
+    ctx: &RerunPlanContext,
     previous_glossary_state: Option<&GlossaryState>,
-    previous_chapter_states: &BTreeMap<String, ChapterState>,
-    current_glossary: &[GlossaryTerm],
-    injection_mode: InjectionMode,
 ) -> Result<GlossaryRerunPlan> {
     let mut plan = GlossaryRerunPlan::default();
-    let current_glossary_state = build_glossary_state(current_glossary, injection_mode)?;
+    let current_glossary_state = build_glossary_state(ctx.glossary, ctx.injection_mode)?;
 
     let changed_term_keys = previous_glossary_state
         .map(|glossary| {
@@ -203,17 +196,17 @@ pub(crate) fn build_glossary_rerun_plan(
     }
 
     let mut approximate_smart_checks = 0;
-    let output_chapters = chapters_with_output(chapters, raw_dir, out_dir)?;
+    let output_chapters = chapters_with_output(ctx)?;
 
     for (chapter_path, chapter_file) in &output_chapters {
-        if let Some(previous_chapter_state) = previous_chapter_states.get(chapter_path)
+        if let Some(previous_chapter_state) = ctx.chapter_states.get(chapter_path)
             && previous_chapter_state.glossary_usage.is_some()
         {
             if let Some(decision) = exact_rerun_decision(
                 chapter_file,
                 previous_chapter_state,
-                current_glossary,
-                injection_mode,
+                ctx.glossary,
+                ctx.injection_mode,
             )? {
                 plan.forced_chapters.insert(chapter_path.clone(), decision);
             }
@@ -248,12 +241,13 @@ pub(crate) fn build_glossary_rerun_plan(
                 if let Some(decision) = approximate_smart_rerun_decision(
                     chapter_file,
                     prev_glossary_state,
-                    current_glossary,
+                    ctx.glossary,
                     &changed_term_keys,
                 )? {
                     approximate_smart_checks += 1;
                     plan.forced_chapters.insert(chapter_path.clone(), decision);
-                } else if previous_chapter_states
+                } else if ctx
+                    .chapter_states
                     .get(chapter_path)
                     .and_then(|state| state.glossary_usage.as_ref())
                     .is_none()
@@ -269,17 +263,12 @@ pub(crate) fn build_glossary_rerun_plan(
     Ok(plan)
 }
 
-pub(crate) fn build_source_rerun_plan(
-    chapters: &[PathBuf],
-    raw_dir: &Path,
-    out_dir: &Path,
-    previous_chapter_states: &BTreeMap<String, ChapterState>,
-) -> Result<SourceRerunPlan> {
+pub(crate) fn build_source_rerun_plan(ctx: &RerunPlanContext) -> Result<SourceRerunPlan> {
     let mut plan = SourceRerunPlan::default();
-    let output_chapters = chapters_with_output(chapters, raw_dir, out_dir)?;
+    let output_chapters = chapters_with_output(ctx)?;
 
     for (chapter_path, chapter_file) in &output_chapters {
-        let Some(previous_chapter_state) = previous_chapter_states.get(chapter_path) else {
+        let Some(previous_chapter_state) = ctx.chapter_states.get(chapter_path) else {
             continue;
         };
 
@@ -392,9 +381,15 @@ mod tests {
             ),
         )]);
 
-        let plan =
-            build_source_rerun_plan(&[chapter], &raw_dir, &out_dir, &previous_chapter_states)
-                .unwrap();
+        let plan = build_source_rerun_plan(&RerunPlanContext {
+            chapters: &[chapter],
+            raw_dir: &raw_dir,
+            out_dir: &out_dir,
+            chapter_states: &previous_chapter_states,
+            glossary: &[],
+            injection_mode: InjectionMode::Smart,
+        })
+        .unwrap();
 
         assert_eq!(plan.forced_chapters.len(), 1);
         assert_eq!(
@@ -433,9 +428,15 @@ mod tests {
             ),
         )]);
 
-        let plan =
-            build_source_rerun_plan(&[chapter], &raw_dir, &out_dir, &previous_chapter_states)
-                .unwrap();
+        let plan = build_source_rerun_plan(&RerunPlanContext {
+            chapters: &[chapter],
+            raw_dir: &raw_dir,
+            out_dir: &out_dir,
+            chapter_states: &previous_chapter_states,
+            glossary: &[],
+            injection_mode: InjectionMode::Smart,
+        })
+        .unwrap();
 
         assert!(plan.forced_chapters.is_empty());
         assert_eq!(plan.untracked_chapters, 0);
@@ -467,9 +468,15 @@ mod tests {
             ),
         )]);
 
-        let plan =
-            build_source_rerun_plan(&[chapter], &raw_dir, &out_dir, &previous_chapter_states)
-                .unwrap();
+        let plan = build_source_rerun_plan(&RerunPlanContext {
+            chapters: &[chapter],
+            raw_dir: &raw_dir,
+            out_dir: &out_dir,
+            chapter_states: &previous_chapter_states,
+            glossary: &[],
+            injection_mode: InjectionMode::Smart,
+        })
+        .unwrap();
 
         assert!(plan.forced_chapters.is_empty());
         assert_eq!(plan.untracked_chapters, 1);
@@ -522,13 +529,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Full,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Full,
         )
         .unwrap();
 
@@ -571,13 +580,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -603,13 +614,15 @@ mod tests {
             build_glossary_state(&old_glossary, InjectionMode::Smart).unwrap();
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &BTreeMap::new(),
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -645,13 +658,15 @@ mod tests {
             build_glossary_state(&old_glossary, InjectionMode::Full).unwrap();
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Full,
+            },
             Some(&previous_glossary_state),
-            &BTreeMap::new(),
-            &new_glossary,
-            InjectionMode::Full,
         )
         .unwrap();
 
@@ -676,13 +691,15 @@ mod tests {
             build_glossary_state(&glossary, InjectionMode::Smart).unwrap();
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &BTreeMap::new(),
+                glossary: &glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &BTreeMap::new(),
-            &glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -723,13 +740,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&stale_empty_baseline),
-            &previous_chapter_states,
-            &current_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -771,13 +790,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -847,13 +868,15 @@ mod tests {
         ]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter1, chapter2],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter1, chapter2],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &current_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &current_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -905,13 +928,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -970,13 +995,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -1035,13 +1062,15 @@ mod tests {
         )]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 
@@ -1125,13 +1154,15 @@ mod tests {
         ]);
 
         let plan = build_glossary_rerun_plan(
-            &[chapter2, chapter3],
-            &raw_dir,
-            &out_dir,
+            &RerunPlanContext {
+                chapters: &[chapter2, chapter3],
+                raw_dir: &raw_dir,
+                out_dir: &out_dir,
+                chapter_states: &previous_chapter_states,
+                glossary: &new_glossary,
+                injection_mode: InjectionMode::Smart,
+            },
             Some(&previous_glossary_state),
-            &previous_chapter_states,
-            &new_glossary,
-            InjectionMode::Smart,
         )
         .unwrap();
 

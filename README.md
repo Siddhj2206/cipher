@@ -158,7 +158,7 @@ Current translate flags:
 - `--rerun[=MODE]`: retranslate chapters affected by tracked changes. Modes: `all` (glossary + source, default), `glossary`, or `source`
 - `-q, --quiet`: suppress non-essential output (progress bar and detail lines)
 - `-v, --verbose`: show detailed per-chapter progress and diagnostics: provider call details (model, endpoint), per-call timing, retry attempts with reasons, validation failures, repair decisions, glossary and usage info
-- `--json`: emit a machine-readable JSON report on stdout (per-chapter status, tokens, timing, errors, run summary) instead of human output; fatal failures emit a typed error envelope with the error code and exit code. With `--dry-run`, the report contains the planned per-chapter actions (translate/rerun/skip) and a summary instead of an empty report
+- `--json`: emit a machine-readable JSON report on stdout (per-chapter status, tokens, timing, errors — each with its E00N code — run summary) instead of human output; fatal failures emit a typed error envelope with the error code and exit code. With `--dry-run`, the report contains the planned per-chapter actions (translate/rerun/skip) and a summary instead of an empty report
 
 Default behavior:
 
@@ -263,7 +263,7 @@ Errors carry a stable code and exit status so scripts can react to failure class
 | E006 | Invalid input or usage | 1 |
 | E007 | Corrupt `.cipher` state | 70 |
 
-Every error code maps to a distinct exit code. Errors print as `[E00N] message` (validation errors print as the bare message) with an optional `suggestion:` line. Commands invoked with `--json` emit the typed error envelope `{"error": {"code", "message", "exit_code"}}` on stdout instead of the human-readable text. See `docs/adr/0003-structured-error-system.md` for details.
+Every error code maps to a distinct exit code. `cipher translate` also exits with code **8** when the run completes but one or more chapters failed — distinct from every E00N error exit code, so scripts can distinguish a partial-failure run from a fatal error. Errors print as `[E00N] message` (validation errors print as the bare message) with an optional `suggestion:` line. Commands invoked with `--json` emit the typed error envelope `{"error": {"code", "message", "exit_code"}}` on stdout instead of the human-readable text. See `docs/adr/0003-structured-error-system.md` for details.
 
 ## Configuration
 

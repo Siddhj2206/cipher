@@ -1,4 +1,18 @@
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use crate::glossary::{GlossaryTerm, InjectionMode};
+use crate::state::ChapterState;
+
+#[derive(Debug, Clone)]
+pub(crate) struct RerunPlanContext<'a> {
+    pub chapters: &'a [PathBuf],
+    pub raw_dir: &'a Path,
+    pub out_dir: &'a Path,
+    pub chapter_states: &'a BTreeMap<String, ChapterState>,
+    pub glossary: &'a [GlossaryTerm],
+    pub injection_mode: InjectionMode,
+}
 
 #[derive(Debug, Clone)]
 pub(crate) struct RerunDecision {

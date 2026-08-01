@@ -31,7 +31,7 @@ async fn translator_with_mock_provider_returns_configured_translation() {
 async fn translator_propagates_translation_error() {
     let provider =
         helpers::MockProvider::new().with_translation_error(cipher::error::Error::Provider {
-            kind: "mock".to_string(),
+            kind: cipher::config::ProviderKind::Gemini,
             detail: "API error".to_string(),
         });
     let translator = Translator::new(Box::new(provider));
