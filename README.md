@@ -53,7 +53,7 @@ This interactive flow lets you:
 - choose a model
 - optionally set the profile as default
 
-Built-in providers currently include `gemini` and `openai`, and you can also add custom OpenAI-compatible providers.
+Built-in providers currently include `gemini`, `openai`, and `cohere`, and you can also add custom OpenAI-compatible providers.
 
 You can inspect profiles with:
 

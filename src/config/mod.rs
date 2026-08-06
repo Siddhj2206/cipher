@@ -83,6 +83,7 @@ impl GlobalConfig {
 pub enum ProviderKind {
     Gemini,
     Openai,
+    Cohere,
     OpenaiCompatible,
 }
 
@@ -91,6 +92,7 @@ impl std::fmt::Display for ProviderKind {
         match self {
             ProviderKind::Gemini => write!(f, "Gemini"),
             ProviderKind::Openai => write!(f, "OpenAI"),
+            ProviderKind::Cohere => write!(f, "Cohere"),
             ProviderKind::OpenaiCompatible => write!(f, "OpenAI-compatible"),
         }
     }
@@ -104,6 +106,18 @@ impl ProviderKind {
         match self {
             ProviderKind::Gemini => "gemini",
             ProviderKind::Openai | ProviderKind::OpenaiCompatible => "openai",
+            ProviderKind::Cohere => "cohere",
+        }
+    }
+
+    /// Built-in provider kind for a provider name (the inverse of [`slug`]
+    /// for built-ins). Unknown names return `None`.
+    pub fn from_slug(name: &str) -> Option<ProviderKind> {
+        match name {
+            "gemini" => Some(ProviderKind::Gemini),
+            "openai" => Some(ProviderKind::Openai),
+            "cohere" => Some(ProviderKind::Cohere),
+            _ => None,
         }
     }
 }

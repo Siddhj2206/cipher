@@ -10,6 +10,7 @@ pub(crate) fn provider_display_name(name: &str, cfg: &ProviderConfig) -> String 
     match cfg.kind {
         ProviderKind::Gemini => format!("{} (Gemini)", name),
         ProviderKind::Openai => format!("{} (OpenAI)", name),
+        ProviderKind::Cohere => format!("{} (Cohere)", name),
         ProviderKind::OpenaiCompatible => {
             if let Some(url) = cfg.base_url.as_deref() {
                 format!("{} (OpenAI-compatible, {})", name, url)
@@ -100,17 +101,11 @@ fn create_profile_noninteractive(
     };
 
     if !config.providers.contains_key(&provider) {
-        let kind = if provider == "gemini" {
-            ProviderKind::Gemini
-        } else if provider == "openai" {
-            ProviderKind::Openai
-        } else {
-            ProviderKind::OpenaiCompatible
-        };
+        let kind = ProviderKind::from_slug(&provider).unwrap_or(ProviderKind::OpenaiCompatible);
 
         let base_url = if kind == ProviderKind::OpenaiCompatible {
             return Err(Error::Config(format!(
-                "Provider '{provider}' not found. Create it first or use 'gemini'/'openai'."
+                "Provider '{provider}' not found. Create it first or use 'gemini'/'openai'/'cohere'."
             )));
         } else {
             None

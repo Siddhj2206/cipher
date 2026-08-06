@@ -27,9 +27,29 @@ pub const GLOSSARY_PREAMBLE: &str =
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
 pub struct TranslationOnlyResponse {
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub chapter_number: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_string")]
     pub chapter_title: Option<String>,
     pub content: String,
+}
+
+/// Parse an optional string field leniently: some models emit numbers or
+/// bools (e.g. Cohere's `"chapter_number": 2`); the JSON schema still asks
+/// for strings, this only relaxes parsing of the reply.
+fn deserialize_optional_string<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|v| match v {
+        serde_json::Value::String(s) => Some(s),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }))
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, schemars::JsonSchema)]
@@ -288,5 +308,33 @@ mod tests {
         })
         .await;
         set_verbose(false);
+    }
+
+    #[test]
+    fn translation_response_tolerates_numeric_metadata() {
+        let json = r#"{
+            "chapter_number": 2,
+            "chapter_title": "Chapter 2",
+            "content": "hello"
+        }"#;
+        let parsed: TranslationOnlyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.chapter_number.as_deref(), Some("2"));
+        assert_eq!(parsed.chapter_title.as_deref(), Some("Chapter 2"));
+        assert_eq!(parsed.content, "hello");
+    }
+
+    #[test]
+    fn translation_response_tolerates_bool_and_missing_metadata() {
+        let json = r#"{"chapter_title": true, "content": "hi"}"#;
+        let parsed: TranslationOnlyResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.chapter_number, None);
+        assert_eq!(parsed.chapter_title.as_deref(), Some("true"));
+        assert_eq!(parsed.content, "hi");
+    }
+
+    #[test]
+    fn translation_response_rejects_structured_content() {
+        let json = r#"{"content": {"nested": true}}"#;
+        assert!(serde_json::from_str::<TranslationOnlyResponse>(json).is_err());
     }
 }

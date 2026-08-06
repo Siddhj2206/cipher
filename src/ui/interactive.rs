@@ -117,55 +117,66 @@ fn select_existing_provider(config: &GlobalConfig) -> Result<Option<String>> {
     }
 }
 
+type ProviderCreator = fn(&mut GlobalConfig) -> Result<String>;
+
 fn create_provider_interactive(config: &mut GlobalConfig) -> Result<String> {
-    let creation_options = [
-        "Gemini (built-in)",
-        "OpenAI (built-in)",
-        "OpenAI-compatible (custom)",
+    let creators: [(&str, ProviderCreator); 4] = [
+        ("Gemini (built-in)", |c| {
+            create_builtin_provider(c, "gemini", ProviderKind::Gemini)
+        }),
+        ("OpenAI (built-in)", |c| {
+            create_builtin_provider(c, "openai", ProviderKind::Openai)
+        }),
+        ("Cohere (built-in)", |c| {
+            create_builtin_provider(c, "cohere", ProviderKind::Cohere)
+        }),
+        (
+            "OpenAI-compatible (custom)",
+            create_openai_compatible_provider,
+        ),
     ];
-    let creation_selection = prompt_select("Provider type", &creation_options)?;
+    let labels: Vec<&str> = creators.iter().map(|(label, _)| *label).collect();
+    let selection = prompt_select("Provider type", &labels)?;
+    creators[selection].1(config)
+}
 
-    match creation_selection {
-        0 => create_builtin_provider(config, "gemini", ProviderKind::Gemini),
-        1 => create_builtin_provider(config, "openai", ProviderKind::Openai),
-        2 => loop {
-            let name = prompt_text("Provider name (e.g., 'gemini', 'local-llm')", None, None)?;
-            let name = name.trim().to_string();
-            if name.is_empty() {
-                stderr_detail("Provider name cannot be empty. Please try again.");
-                continue;
+fn create_openai_compatible_provider(config: &mut GlobalConfig) -> Result<String> {
+    loop {
+        let name = prompt_text("Provider name (e.g., 'gemini', 'local-llm')", None, None)?;
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            stderr_detail("Provider name cannot be empty. Please try again.");
+            continue;
+        }
+        if name.contains(' ') {
+            stderr_detail("Provider name cannot contain spaces. Please try again.");
+            continue;
+        }
+
+        if config.providers.contains_key(&name) {
+            let overwrite = prompt_confirm(
+                &format!("Provider '{name}' already exists. Overwrite its config?"),
+                false,
+            )?;
+            if !overwrite {
+                return Err(Error::Validation {
+                    message: "Cancelled.".to_string(),
+                });
             }
-            if name.contains(' ') {
-                stderr_detail("Provider name cannot contain spaces. Please try again.");
-                continue;
-            }
+        }
 
-            if config.providers.contains_key(&name) {
-                let overwrite = prompt_confirm(
-                    &format!("Provider '{name}' already exists. Overwrite its config?"),
-                    false,
-                )?;
-                if !overwrite {
-                    return Err(Error::Validation {
-                        message: "Cancelled.".to_string(),
-                    });
-                }
-            }
+        let url = prompt_text("Base URL", Some("https://api.openai.com/v1"), None)?;
 
-            let url = prompt_text("Base URL", Some("https://api.openai.com/v1"), None)?;
+        config.providers.insert(
+            name.clone(),
+            ProviderConfig {
+                kind: ProviderKind::OpenaiCompatible,
+                keys: Vec::new(),
+                base_url: Some(url),
+            },
+        );
 
-            config.providers.insert(
-                name.clone(),
-                ProviderConfig {
-                    kind: ProviderKind::OpenaiCompatible,
-                    keys: Vec::new(),
-                    base_url: Some(url),
-                },
-            );
-
-            return Ok(name);
-        },
-        _ => Err(Error::State("Unexpected provider selection".to_string())),
+        return Ok(name);
     }
 }
 

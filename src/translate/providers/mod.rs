@@ -2,6 +2,7 @@
 //!
 //! Each provider is in its own file for easy extension.
 
+pub mod cohere;
 pub mod gemini;
 pub mod openai;
 pub mod shared;
@@ -68,6 +69,10 @@ pub fn build_provider(config: &GlobalConfig, profile_name: &str) -> Result<Box<d
     match provider_config.kind {
         ProviderKind::Gemini => Ok(Box::new(gemini::GeminiProvider::new(params)?)),
         ProviderKind::Openai => Ok(Box::new(openai::OpenAiProvider::new(params, None)?)),
+        ProviderKind::Cohere => Ok(Box::new(cohere::CohereProvider::new(
+            params,
+            provider_config.base_url.as_deref(),
+        )?)),
         ProviderKind::OpenaiCompatible => {
             let base_url = provider_config.base_url.as_deref().ok_or_else(|| {
                 Error::Config(format!(
