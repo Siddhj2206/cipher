@@ -147,12 +147,22 @@ Primary sources: serde attributes reference; cargo's config handling.
   - **just** — `tests/lib.rs`; **zellij** — e2e tests *inside* `src/tests/e2e/` with `insta` snapshots.
 - **Network mocking**: the standard seam is to inject the HTTP client behind a trait (the API-guidelines `C-GENERIC`/`C-OBJECT` family) and hand tests a fake or `wiremock` (a purpose-built HTTP mock server for Rust). Audit notes cipher's provider paths are "only exercised against real endpoints" and there is "no HTTP-level mock test" — the `Provider` trait is already the seam; wrapping the client (`rig`) or adding a test provider makes the chat/completions paths testable offline.
 
+### Current state in cipher (as of this research, 2026-08-21)
+
+The `tests/` layer already exists — the architecture audit's "No CLI integration tests (lib.rs has 1)" predates it:
+
+- `tests/cli_integration_tests.rs` — 24 end-to-end tests driving the real CLI (init, doctor, glossary, profile, translate with typed-error envelopes, JSON output, quiet/verbose parsing, provider-failure exit codes).
+- `tests/translator_integration_tests.rs` — 4 tests using a `MockProvider` in `tests/helpers/mod.rs` implementing the existing `Provider` trait with scripted translate/repair/extract results (exactly the fd-style fixture-helper convention from Rust book ch. 11).
+- `tests/helpers/mod.rs` — the shared fixture module (mock provider + default results).
+
+Remaining gaps: no HTTP-level mock of the real provider network paths (the chat vs completions dual path in the OpenAI provider is still only exercised against live endpoints), no end-to-end *rerun* flow test through the CLI, and no scripted failure-recovery scenario for backup/repair.
+
 ### Options for cipher
 
-1. **`tests/` directory with a fixture helper module** (fd-style `tests/testenv`): end-to-end command tests (translate a fixture book end-to-end with a fake provider) — this is the single highest-value missing seam.
-2. **Fake provider / mocked HTTP client**: implement the existing `Provider` trait (or the underlying client call) with scripted responses; enables rerun/baseline tests without network.
+1. **Extend the existing integration layer** (highest value per effort): an end-to-end rerun test — translate with the `MockProvider`, mutate a raw chapter, rerun, assert the decision + report. The seams (`lib` target, `Provider` trait, `tests/helpers`) are all in place.
+2. **HTTP-level mock for provider network paths**: wrap the underlying client call (rig) behind a trait or use `wiremock` to exercise the chat vs completions request-building paths offline — this is the only network seam still untested.
 3. **Reporter injection pays for testing too**: a `&dyn Reporter` fake captures output, making the JSON envelope and quiet/verbose paths assertable (ties into §4).
-4. Keep unit tests in-module (current state, 219 tests) and add the integration layer without disturbing them.
+4. Keep unit tests in-module (219 tests) and the integration layer separate, without disturbing either.
 
 ---
 
@@ -164,7 +174,7 @@ Primary sources: serde attributes reference; cargo's config handling.
 4. **Replace global output statics with an injected reporter** (trait object or context object; ripgrep's sink-swap and cargo's context-object are the precedents). Keep stdout-data/stderr-progress discipline; JSON becomes one more reporter implementation, not global state.
 5. **Keep typed errors at the CLI boundary and move the envelope type out of `translate/report.rs` into the error module** — consistent with ADR-0003 and the existing `error-handling.md` research; nothing else to change.
 6. **State versioning: version field + load-time check + one-way migrate** (audit #4); `#[serde(default)]` for additive fields, `serde_ignored`-style warnings or `deny_unknown_fields` for forward compat. Light touch; the dedicated ticket owns details.
-7. **Testing: add a `tests/` integration layer with an fd-style fixture harness and a fake provider/mocked HTTP client** — this is the biggest coverage gap and both seams (lib target, `Provider` trait) already exist.
+7. **Extend the existing `tests/` integration layer** — the `MockProvider` fixture harness and 28 integration tests already exist (the audit's "no CLI integration tests" is stale); add an end-to-end rerun flow test and an HTTP-level mock for the untested provider network paths (chat vs completions). Both seams (lib target, `Provider` trait) are in place.
 
 ---
 
