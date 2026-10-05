@@ -1,0 +1,30 @@
+# Toolchain and dev tasks for cipher.
+#
+# On a workstation, mise installs these tools locally. Inside a pluto box,
+# .pluto/provision.sh installs mise and runs `mise install`, so this file is
+# the single source of truth for what the project needs.
+
+[tools]
+# The default rustup profile ships rust-docs (~900 MiB) and does not fit a
+# box disk; install the pieces the pre-commit hook actually uses instead.
+rust = { version = "1.98.1", profile = "minimal", components = ["clippy", "rustfmt"] }
+
+[tasks.check]
+description = "type-check the crate and all targets"
+run = "cargo check --all-targets"
+
+[tasks.test]
+description = "run the test suite"
+run = "cargo test"
+
+[tasks.build]
+description = "build the binary"
+run = "cargo build"
+
+[tasks.fmt]
+description = "check formatting"
+run = "cargo fmt --check"
+
+[tasks.clippy]
+description = "lint with clippy, warnings denied"
+run = "cargo clippy --all-targets -- -D warnings"

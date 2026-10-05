@@ -1,0 +1,35 @@
+#:schema https://raw.githubusercontent.com/Siddhj2206/pluto/main/pluto.schema.json
+
+[box]
+auto_pause = "30m"
+# Declared sizing for cipher's cargo builds. The M1 runner still boots every
+# box at 2 vCPU / 1 GiB RAM / 2 GiB disk and ignores this block.
+resources = { cpus = 4, memory = "8GiB", disk = "40GiB" }
+
+[provision]
+command = ".pluto/provision.sh"
+timeout = "30m"
+
+[jobs.check]
+description = "type-check the crate (cargo check)"
+command = "mise run check"
+timeout = "20m"
+
+[jobs.test]
+description = "run the test suite"
+command = "mise run test"
+timeout = "45m"
+
+[jobs.build]
+description = "build the binary"
+command = "mise run build"
+timeout = "45m"
+
+[jobs.fmt]
+description = "check formatting"
+command = "mise run fmt"
+
+[jobs.clippy]
+description = "lint with clippy (warnings denied)"
+command = "mise run clippy"
+timeout = "30m"
