@@ -43,6 +43,14 @@ _Avoid_: History, log, cache
 Re-translating chapters whose tracked inputs changed since their last translation. Three modes: `source` (chapter raw markdown changed), `glossary` (terms appearing in the chapter changed), and `all` (both conditions).
 _Avoid_: Retranslate, redo, refresh
 
+**Quarantine**:
+The handling for corrupt derived State where regeneration is cheap: the corrupt file is renamed aside (`.corrupt`) rather than deleted, preserving evidence, and the affected work is treated as never done. The Glossary Baseline is exempt — its corruption fails fast because losing it silently hides needed Reruns.
+_Avoid_: Delete, backup, discard
+
+**Skip Reason**:
+The explanation recorded when a Chapter is skipped in a run (empty source, Translation already exists, user cancellation). A skip is not a failure and is kept distinct from error information.
+_Avoid_: Error (when referring to skips)
+
 **Rerun Decision**:
 A per-chapter determination made during planning: skip, re-translate, or re-extract glossary terms. Based on comparing current inputs against the tracked baseline in State.
 
