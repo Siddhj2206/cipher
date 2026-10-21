@@ -15,8 +15,9 @@ CARGO_TERM_COLOR = "never"
 RUST_BACKTRACE = "1"
 
 [tools]
-# rustc needs a C linker; the base image has none.
-packages = ["build-essential"]
+# rustc needs a C compiler/linker; cipher's .cargo/config.toml selects
+# clang with mold, so install all three.
+packages = ["build-essential", "clang", "mold"]
 
 [provision]
 command = '''
