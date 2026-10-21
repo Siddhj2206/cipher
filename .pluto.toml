@@ -1,0 +1,55 @@
+#:schema https://raw.githubusercontent.com/Siddhj2206/pluto/main/pluto.schema.json
+
+# Pluto demo contract for cipher, a Rust CLI.
+#
+# A box gets a Rust toolchain, a warm build cache, and four repeatable jobs.
+# Provision runs once; the target directory it builds lives on the box disk, so
+# later job runs reuse the compilation.
+
+[box]
+resources = { cpus = 4, memory = "4GiB", disk = "20GiB" }
+auto_pause = "30m"
+
+[env]
+CARGO_TERM_COLOR = "never"
+RUST_BACKTRACE = "1"
+
+[tools]
+# rustc needs a C linker; the base image has none.
+packages = ["build-essential"]
+
+[provision]
+command = '''
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+. "$HOME/.cargo/env"
+rustup component add rustfmt clippy
+mkdir -p "$HOME/.local/bin"
+ln -sf "$HOME/.cargo/bin/"* "$HOME/.local/bin/"
+cargo build --locked
+'''
+timeout = "30m"
+
+[jobs.build]
+description = "build the cipher binary"
+command = "cargo build --locked"
+timeout = "20m"
+
+[jobs.test]
+description = "run the test suite"
+command = "cargo test --locked"
+timeout = "30m"
+
+[jobs.fmt]
+description = "check formatting"
+command = "cargo fmt --check"
+timeout = "5m"
+
+[jobs.clippy]
+description = "lint with clippy"
+command = "cargo clippy --locked --all-targets"
+timeout = "30m"
+
+[[schedule]]
+name = "nightly-tests"
+cron = "0 3 * * *"
+job = "test"
