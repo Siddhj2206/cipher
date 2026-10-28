@@ -2,19 +2,17 @@
 
 # Pluto demo contract for cipher, a Rust CLI.
 #
-# A box gets a Rust toolchain, a warm build cache, and four repeatable jobs.
+# A box gets a Rust toolchain, a warm build cache, and repeatable jobs.
 # Provision runs once; the target directory it builds lives on the box disk, so
 # later job runs reuse the compilation.
 #
-# Review 3 additions: the heartbeat schedule, the GitHub issue/PR hooks, and
-# the deterministic demo jobs. The GitHub hook uses the stand-in agent and a
-# deterministic PR test so the demo does not depend on an LLM or flaky model
-# access. Swap the inline agent/test commands for the real ones when the box
-# has reliable internet.
+# Review 3 demo: a pull request triggers `test-pr`, which runs the crate's
+# tests on the PR head. There is no agent in this path. The heartbeat schedule
+# stays for the observability demo.
 #
-# This file is committed unchanged on `demo/pluto` and `master`: the laptop
-# box runs the checkout, and the daemon reads the trusted default branch to
-# admit GitHub events. The two copies must parse to the same values.
+# This file is committed unchanged on `demo/pluto` and `master`: the laptop box
+# runs the checkout, and the daemon reads the trusted default branch to admit
+# GitHub events. The two copies must parse to the same values.
 
 [box]
 resources = { cpus = 4, memory = "4GiB", disk = "20GiB" }
@@ -27,8 +25,8 @@ RUST_BACKTRACE = "1"
 
 [tools]
 # rustc needs a C compiler/linker; cipher's .cargo/config.toml selects
-# clang with mold, so install all three. gh serves the issue/PR jobs.
-packages = ["build-essential", "clang", "mold", "gh"]
+# clang with mold, so install all three.
+packages = ["build-essential", "clang", "mold"]
 
 [provision]
 command = '''
@@ -61,25 +59,14 @@ description = "lint with clippy"
 command = "cargo clippy --locked --all-targets"
 timeout = "30m"
 
-# --- Review 3: hooks, schedules, and observability -------------------------
-
 [jobs.heartbeat]
 description = "record date, host, pwd, and trigger; the two-minute schedule runs it"
 command = "scripts/pluto-demo-heartbeat"
 
-[jobs.issue-fix]
-description = "deterministic issue work; opens or reuses one draft PR"
-# No model and no network beyond GitHub: the stand-in agent appends the issue
-# prompt to demo-issue-note.md, so the job always has a change to commit.
-# Real-agent alternative:
-#   command = "PLUTO_ISSUE_MODEL=opencode/deepseek-v4.1-flash-free scripts/pluto-issue-fix"
-command = "PLUTO_ISSUE_AGENT=scripts/pluto-demo-agent scripts/pluto-issue-fix"
-
-[jobs.pr-test]
-description = "run the deterministic test and update one marked PR comment"
-# Real-test alternative once the box has Rust and time:
-#   command = "PLUTO_PR_TEST_COMMAND='cargo test --locked' scripts/pluto-pr-test"
-command = "PLUTO_PR_TEST_COMMAND=scripts/pluto-demo-test scripts/pluto-pr-test"
+[jobs.test-pr]
+description = "run the test suite on a pull request"
+command = ".pluto/test-pr.sh"
+timeout = "30m"
 
 [[schedule]]
 name = "nightly-tests"
@@ -91,14 +78,6 @@ name = "heartbeat"
 cron = "*/2 * * * *"
 job = "heartbeat"
 
-[events.issue]
-job = "issue-fix"
-actions = ["labeled"]
-labels = ["pluto:fix"]
-credentials = ["PLUTO_ISSUE_TOKEN"]
-
 [events.pull_request]
-job = "pr-test"
-actions = ["opened", "labeled", "synchronize", "reopened", "ready_for_review"]
-trusted_label = "pluto:trusted"
-credentials = ["PLUTO_PR_TOKEN"]
+job = "test-pr"
+actions = ["opened", "synchronize"]
