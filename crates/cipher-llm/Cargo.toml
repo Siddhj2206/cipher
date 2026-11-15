@@ -1,0 +1,27 @@
+[package]
+name = "cipher-llm"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+# Blocking HTTP, no async runtime (architecture.md › I/O style). Default features
+# give rustls TLS, which needs no system OpenSSL.
+ureq = { workspace = true, features = ["json"] }
+# keyring 4's default `v1` feature is the classic `Entry` API. On Linux it uses the
+# pure-Rust zbus Secret Service store, so no libdbus-dev is needed to build.
+keyring.workspace = true
+# PKCE, randomness and RS256 ID-token verification for Sign in with ChatGPT. Both are
+# already in the tree through rustls.
+ring = "0.17"
+base64 = "0.22"
+
+# Where config lives off Linux (%APPDATA%, ~/Library/Application Support); Linux keeps XDG.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+dirs = "6"
