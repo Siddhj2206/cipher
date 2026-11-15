@@ -1,0 +1,20 @@
+Here is the translation:
+
+[1] Chapter 1
+
+[2] Tesselid opened the door. Nobody was inside.
+
+[3] "Who's there?"
+
+[4] ***
+
+[5-6] Han did not answer. Korea's winter was long.
+
+[7] - First door
+Second door
+
+NEW_TERMS:
+테셀리드 | Tesselid | name | male
+한 | Han | name |
+NOTES:
+Tesselid enters the empty hall.

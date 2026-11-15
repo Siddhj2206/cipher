@@ -1,38 +1,44 @@
-[package]
-name = "cipher"
-version = "0.2.1"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+exclude = ["prototypes/editor-spike"]
+
+[workspace.package]
+version = "0.1.0"
 edition = "2024"
-description = "LLM-powered book translation CLI with glossary management and incremental rerun support"
-categories = ["command-line-utilities", "text-processing"]
-keywords = ["translation", "glossary", "llm", "cli", "book"]
+publish = false
 
-[lib]
-name = "cipher"
-path = "src/lib.rs"
+[workspace.dependencies]
+cipher-text = { path = "crates/cipher-text" }
+cipher-book = { path = "crates/cipher-book" }
+cipher-llm = { path = "crates/cipher-llm" }
+cipher-engine = { path = "crates/cipher-engine" }
+rune = { git = "https://github.com/anomalyco/rune", rev = "8fc71fbf21db41920409bf6fa20ffb41ddb2f99d", features = ["tooling", "native-file-dialog"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ureq = "2.12"
+keyring = "4.2"
+tempfile = "3"
+aho-corasick = "1.1"
 
-[dependencies]
-async-trait = "0.1.91"
-chrono = "0.4.45"
-clap = { version = "4.6.3", features = ["derive"] }
-console = "0.16.4"
-directories = "6.0.0"
-inquire = "0.9.4"
-rig = "0.40.0"
-schemars = "1.2.1"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.150"
-sha2 = "0.11.0"
-thiserror = "2.0.19"
-tokio = { version = "1.53.0", features = ["full"] }
-toml = "1.1.3"
-
-[dev-dependencies]
-tempfile = "3.27.0"
-tokio = { version = "1.53.0", features = ["test-util"] }
-
+# What ships: smaller and a little faster, at some build time. Symbols are stripped; panics
+# still print their message and location.
 [profile.release]
-opt-level = "z"  # Optimize for size ("s" is an alternative, test both)
-lto = true       # Enable Link-Time Optimization
-codegen-units = 1 # Reduce parallel code generation units to increase optimization potential
-panic = "abort"  # Abort on panic to remove unwinding code
-strip = true     # Strip symbols from the binary (requires Rust 1.59+)
+lto = "thin"
+strip = true
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+# Rune vendors patched copies of these and asks apps that build it to patch them too, since a
+# dependency's `[patch]` doesn't reach the workspace that depends on it (see Rune's Cargo.toml).
+# Keep the rev equal to `rune` above.
+[patch.crates-io]
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "8fc71fbf21db41920409bf6fa20ffb41ddb2f99d" }
+winit = { git = "https://github.com/anomalyco/rune", rev = "8fc71fbf21db41920409bf6fa20ffb41ddb2f99d" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "8fc71fbf21db41920409bf6fa20ffb41ddb2f99d" }
