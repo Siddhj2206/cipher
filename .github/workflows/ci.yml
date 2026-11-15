@@ -1,0 +1,81 @@
+# Checks every push and pull request. Linux runs everything; Windows and macOS build and test
+# on pull requests and on the long-lived branches, where breaking them would matter.
+name: CI
+
+on:
+  push:
+    branches: [master, preview, next]
+    paths-ignore: ["docs/**", "**/*.md", "prototypes/**"]
+  pull_request:
+    paths-ignore: ["docs/**", "**/*.md", "prototypes/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_NET_GIT_FETCH_WITH_CLI: "true"
+
+jobs:
+  lint:
+    name: Format and Clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux
+          save-if: ${{ github.ref == 'refs/heads/preview' || github.ref == 'refs/heads/next' }}
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux
+          save-if: false
+      - run: cargo test --workspace --locked
+
+  gui:
+    name: GUI checks (headless)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Software Vulkan for headless rendering
+        run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends mesa-vulkan-drivers libvulkan1
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: linux
+          save-if: false
+      - run: cargo build --locked -p cipher-app -p cipher-dev
+      - run: sh crates/cipher-app/scripts/check-all.sh
+
+  platforms:
+    name: Build and test (${{ matrix.os }})
+    if: github.event_name != 'push' || github.ref == 'refs/heads/preview' || github.ref == 'refs/heads/master'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install --profile minimal
+      - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/preview' }}
+      - run: cargo build --locked -p cipher-app
+      - run: cargo test --workspace --locked

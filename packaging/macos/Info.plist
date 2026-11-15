@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>Cipher</string>
+  <key>CFBundleDisplayName</key><string>Cipher</string>
+  <key>CFBundleIdentifier</key><string>app.cipher.Cipher</string>
+  <key>CFBundleExecutable</key><string>cipher</string>
+  <key>CFBundleIconFile</key><string>cipher</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>@VERSION@</string>
+  <key>CFBundleVersion</key><string>@VERSION@</string>
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>LSMinimumSystemVersion</key><string>12.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+  <key>NSHumanReadableCopyright</key><string>Cipher contributors</string>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Cipher Book</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>CFBundleTypeIconFile</key><string>cipher</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>app.cipher.book</string></array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>app.cipher.book</string>
+      <key>UTTypeDescription</key><string>Cipher Book</string>
+      <key>UTTypeIconFile</key><string>cipher</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>cipher</string></array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

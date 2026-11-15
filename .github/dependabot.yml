@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Actions only: crate updates go through a person, since Rune's patches pin some crates.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns: ["*"]

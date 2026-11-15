@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>app.cipher.Cipher</id>
+  <name>Cipher</name>
+  <summary>Read and translate books with LLMs</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <description>
+    <p>Cipher is a desktop app for reading and translating books with large language models. Keep a whole book, its glossary and its translations together in one file, and read the result side by side with the original.</p>
+  </description>
+  <launchable type="desktop-id">app.cipher.Cipher.desktop</launchable>
+  <provides>
+    <binary>cipher</binary>
+    <mediatype>application/x-cipher-book</mediatype>
+  </provides>
+  <categories>
+    <category>Office</category>
+    <category>Viewer</category>
+    <category>Education</category>
+    <category>Literature</category>
+  </categories>
+  <keywords>
+    <keyword>novel</keyword>
+    <keyword>translate</keyword>
+    <keyword>reader</keyword>
+    <keyword>webnovel</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+</component>

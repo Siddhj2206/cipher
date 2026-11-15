@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3A332C"/>
+      <stop offset="1" stop-color="#1B1815"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.16" r="0.8">
+      <stop offset="0" stop-color="#FFF1D6" stop-opacity="0.17"/>
+      <stop offset="1" stop-color="#FFF1D6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pageL" x1="1" y1="0" x2="0" y2="0">
+      <stop offset="0" stop-color="#D6C9AE"/>
+      <stop offset="0.14" stop-color="#EFE6D2"/>
+      <stop offset="1" stop-color="#FBF6EA"/>
+    </linearGradient>
+    <linearGradient id="pageR" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#D6C9AE"/>
+      <stop offset="0.14" stop-color="#EFE6D2"/>
+      <stop offset="1" stop-color="#FBF6EA"/>
+    </linearGradient>
+    <linearGradient id="ribbon" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#A12E18"/>
+      <stop offset="0.5" stop-color="#CF4A2E"/>
+      <stop offset="1" stop-color="#A6321C"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-60%" width="140%" height="220%"><feGaussianBlur stdDeviation="18"/></filter>
+    
+    <clipPath id="sq"><rect x="40" y="40" width="944" height="944" rx="210"/></clipPath>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="210" fill="url(#bg)"/>
+  <g clip-path="url(#sq)">
+    <rect x="40" y="40" width="944" height="944" fill="url(#glow)"/>
+    <ellipse cx="512" cy="764" rx="330" ry="40" fill="#000" opacity="0.5" filter="url(#soft)"/>
+  </g>
+  <rect x="41.5" y="41.5" width="941" height="941" rx="208.5" fill="none" stroke="#FFF" stroke-opacity="0.07" stroke-width="3"/>
+
+  <!-- the ribbon hangs from the gutter, below the leaves -->
+  <path d="M566 700 L606 700 L606 838 L586 818 L566 838 Z" fill="url(#ribbon)"/>
+  <!-- boards, the page block, the open leaves -->
+  <path d="M512 412 C430 368 300 360 190 382 L190 734 C300 714 430 720 512 760 C594 720 724 714 834 734 L834 382 C724 360 594 368 512 412 Z" fill="#7E2416"/>
+  <path d="M512 398 C434 356 312 348 206 368 L206 716 C312 696 434 702 512 744 C590 702 712 696 818 716 L818 368 C712 348 590 356 512 398 Z" fill="#CDBF9F"/>
+  <path d="M512 386 C436 344 320 336 220 356 L220 702 C320 682 436 688 512 730 Z" fill="url(#pageL)"/>
+  <path d="M512 386 C588 344 704 336 804 356 L804 702 C704 682 588 688 512 730 Z" fill="url(#pageR)"/>
+  <path d="M512 388 L512 730" stroke="#B5A584" stroke-width="2"/>
+  <path d="M566 728 L606 728 L606 716 L566 722 Z" fill="#000" opacity="0.15"/>
+
+  <!-- the source on the left, its translation on the right -->
+  <path d="M250 432V463.2H282.0M301.2 430V465.2M301.2 447.6H314M259.6 473.52H304.40000000000003V494.0H259.6ZM332 432H364.0V492M383.2 430V494M383.2 462.0H396M414.0 462.0a16.0 16.0 0 1 0 32.0 0a16.0 16.0 0 1 0 -32.0 0M465.2 430V494M465.2 462.0H478M266.0 542L250 602M266.0 542L282.0 602M301.2 540V604M301.2 572.0H314M344.8 540H383.2V569.0M332 575.0H396M364.0 575.0V568.0M364.0 575.0V604M414 542H446.0V602H414ZM465.2 540V604M465.2 572.0H478" fill="none" stroke="#5E5243" stroke-opacity="0.7" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+  <g fill="#5E5243" fill-opacity="0.55"><rect x="548" y="430" width="220" height="26" rx="13"/><rect x="548" y="482" width="236" height="26" rx="13"/><rect x="548" y="534" width="200" height="26" rx="13"/><rect x="548" y="586" width="236" height="26" rx="13"/><rect x="548" y="638" width="140" height="26" rx="13"/></g>
+</svg>

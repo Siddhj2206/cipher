@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Cipher
+GenericName=Book Translator
+Comment=Read and translate books with LLMs
+Exec=cipher %U
+Icon=app.cipher.Cipher
+Terminal=false
+Categories=Office;Viewer;
+Keywords=novel;translate;reader;korean;japanese;chinese;webnovel;
+MimeType=application/x-cipher-book;
+StartupNotify=true
+StartupWMClass=app.cipher.Cipher
+SingleMainWindow=true
