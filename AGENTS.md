@@ -1,28 +1,22 @@
 # AGENTS.md
 
-Project-specific guidance for contributors. Domain definitions live in `CONTEXT.md`.
+Cipher is being rebuilt from scratch as a desktop app for reading and translating books with LLMs. The old CLI is in git history only; reuse nothing from it unless a new decision brings it back.
 
-## Project
-- Keep module boundaries clear. Do not mix provider, glossary, state, validation, and CLI concerns in one place.
-- One provider per file in `src/translate/providers/`.
+## Where things are
 
-## Dependencies
-- Add dependencies with `cargo add <crate>`.
-- Prefer standard library unless a crate clearly improves the result.
+- **Resuming or starting work**: `docs/plan.md`. It holds the current milestone, the next task, open questions and notes. Update it before you stop.
+- **Domain words**: `CONTEXT.md`. Use its terms in code, tests and docs.
+- **Decisions**: `docs/adr/`. Flag any change that contradicts one.
+- **Crates, module interfaces and building**: `docs/design/architecture.md`.
+- **SQLite schema**: `docs/design/storage.md`.
+- **Prompts, LLM calls, checks, Suggestions or Endpoints**: `docs/design/translation-pipeline.md`.
+- **Anything visual or interactive**: `docs/design/desktop-ux.md`, with screenshots in `docs/design/img/`. The prototype in `prototypes/editor-spike/` is the visual reference (`cargo run --release`, or `--snap out.png --scene NAME`). Its code structure is throwaway.
+- **Packaging, CI and releases**: `docs/releasing.md` for the process; the files are in `packaging/` and `.github/workflows/`, described in `docs/design/architecture.md` › Packaging and platforms.
+- **Test data**: `Test-Books/S-Class-Transmigrator` (gitignored) holds 94 real Chapters (`raw/`, `tl/`) and `glossary.json`. Use it for manual runs and measurements; tests use checked-in synthetic fixtures.
 
-## Rerun logic
-- preserve determinism
-- preserve explainability
-- prefer exact tracked comparisons over approximation
-- keep rerun reason text concise and understandable
+## Keeping the docs true
 
-## State and Config
-- Book config must stay portable and must not contain secrets.
-- State changes should be additive where possible and formats should stay deterministic.
-
-## Testing and Docs
-- If you change rerun or state behavior, add targeted tests.
-- Update `README.md` or `TODO.md` when behavior changes materially.
+Each fact has one home: the list above. When work changes a design, a schema, a term or a decision, edit its home in the same change, so the next session starts from the truth.
 
 ## Agent skills
 
@@ -31,5 +25,5 @@ Project-specific guidance for contributors. Domain definitions live in `CONTEXT.
 - **Domain docs**: Single context — `CONTEXT.md` + `docs/adr/`. See `docs/agents/domain.md`.
 
 ## Git
-- Do not commit or push unless explicitly asked.
+- Commit or push only when explicitly asked.
 - Never commit secrets or API keys.
