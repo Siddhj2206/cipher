@@ -1,0 +1,66 @@
+[package]
+name = "cipher-app"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+description = "Read web novels and translate them with the language model you choose"
+
+[lints]
+workspace = true
+
+[dependencies]
+aho-corasick.workspace = true
+cipher-book.workspace = true
+cipher-engine.workspace = true
+cipher-llm.workspace = true
+cipher-text.workspace = true
+rune.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+
+[build-dependencies]
+winresource = "0.1"
+
+[[bin]]
+name = "cipher"
+path = "src/main.rs"
+
+# Off Linux: the Documents folder, and the Recycle Bin or Trash (Linux uses XDG and the
+# freedesktop trash directly).
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+dirs = "6"
+trash = "5"
+
+# `cargo deb -p cipher-app` and `cargo generate-rpm -p crates/cipher-app` (release CI).
+[package.metadata.deb]
+name = "cipher"
+maintainer = "Cipher contributors"
+copyright = "Cipher contributors"
+extended-description = "A desktop app for reading web novels and translating them with the language model you choose."
+section = "text"
+priority = "optional"
+depends = "$auto"
+assets = [
+    ["target/release/cipher", "usr/bin/", "755"],
+    ["../../packaging/linux/app.cipher.Cipher.desktop", "usr/share/applications/", "644"],
+    ["../../packaging/linux/app.cipher.Cipher.mime.xml", "usr/share/mime/packages/app.cipher.Cipher.xml", "644"],
+    ["../../packaging/linux/app.cipher.Cipher.metainfo.xml", "usr/share/metainfo/", "644"],
+    ["../../packaging/linux/icons/app.cipher.Cipher.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["../../packaging/linux/icons/app.cipher.Cipher-symbolic.svg", "usr/share/icons/hicolor/symbolic/apps/", "644"],
+    ["../../packaging/icons/out/png/256.png", "usr/share/icons/hicolor/256x256/apps/app.cipher.Cipher.png", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "cipher"
+summary = "Read and translate web novels with LLMs"
+license = "LicenseRef-proprietary"
+assets = [
+    { source = "target/release/cipher", dest = "/usr/bin/cipher", mode = "755" },
+    { source = "../../packaging/linux/app.cipher.Cipher.desktop", dest = "/usr/share/applications/app.cipher.Cipher.desktop", mode = "644" },
+    { source = "../../packaging/linux/app.cipher.Cipher.mime.xml", dest = "/usr/share/mime/packages/app.cipher.Cipher.xml", mode = "644" },
+    { source = "../../packaging/linux/app.cipher.Cipher.metainfo.xml", dest = "/usr/share/metainfo/app.cipher.Cipher.metainfo.xml", mode = "644" },
+    { source = "../../packaging/linux/icons/app.cipher.Cipher.svg", dest = "/usr/share/icons/hicolor/scalable/apps/app.cipher.Cipher.svg", mode = "644" },
+    { source = "../../packaging/linux/icons/app.cipher.Cipher-symbolic.svg", dest = "/usr/share/icons/hicolor/symbolic/apps/app.cipher.Cipher-symbolic.svg", mode = "644" },
+    { source = "../../packaging/icons/out/png/256.png", dest = "/usr/share/icons/hicolor/256x256/apps/app.cipher.Cipher.png", mode = "644" },
+]

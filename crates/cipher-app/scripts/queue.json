@@ -1,0 +1,8 @@
+{"events": [
+ {"t": 0.1, "type": "paste", "text": "321화\n\n그날 밤, 탑 위에서 바람이 불었다.\n\n테실리드는 조용히 고개를 들었다."},
+ {"t": 0.6, "type": "mark", "name": "pasted"},
+ {"t": 0.8, "type": "key", "name": "Enter", "cmd": true},
+ {"t": 1.4, "type": "mark", "name": "added"},
+ {"t": 1.6, "type": "click", "key": "card-endpoint-321"},
+ {"t": 2.2, "type": "mark", "name": "settings"}
+]}

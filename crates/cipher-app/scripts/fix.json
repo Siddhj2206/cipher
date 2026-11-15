@@ -1,0 +1,12 @@
+{"events": [
+ {"t": 0.1, "type": "double-click", "key": "b10"},
+ {"t": 0.8, "type": "mark", "name": "selected"},
+ {"t": 1.0, "type": "type", "text": "chagrin"},
+ {"t": 1.8, "type": "mark", "name": "typed"},
+ {"t": 2.0, "type": "key", "name": "Enter"},
+ {"t": 2.6, "type": "mark", "name": "sent"},
+ {"t": 2.8, "type": "click", "key": "all1"},
+ {"t": 3.6, "type": "mark", "name": "applied"},
+ {"t": 3.8, "type": "click", "key": "toast-undo"},
+ {"t": 4.6, "type": "mark", "name": "undone"}
+]}

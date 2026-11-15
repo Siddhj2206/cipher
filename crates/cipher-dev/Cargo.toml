@@ -1,0 +1,15 @@
+[package]
+name = "cipher-dev"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cipher-text.workspace = true
+cipher-book.workspace = true
+cipher-llm.workspace = true
+cipher-engine.workspace = true
+serde_json.workspace = true

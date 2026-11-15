@@ -1,0 +1,15 @@
+{"events": [
+ {"t": 0.1, "type": "mark", "name": "empty"},
+ {"t": 0.2, "type": "click", "key": "new-slot"},
+ {"t": 0.5, "type": "type", "text": "Omniscient Reader"},
+ {"t": 2.0, "type": "key", "name": "Enter"},
+ {"t": 2.5, "type": "mark", "name": "created"},
+ {"t": 2.6, "type": "paste", "text": "1화\n\n그날 밤, 탑 위에서 바람이 불었다.\n\n테실리드는 조용히 고개를 들었다."},
+ {"t": 3.0, "type": "click", "key": "draft-add"},
+ {"t": 3.5, "type": "mark", "name": "added"},
+ {"t": 3.6, "type": "click", "key": "to-shelf"},
+ {"t": 4.1, "type": "mark", "name": "back"},
+ {"t": 4.2, "type": "click", "key": "import"},
+ {"t": 4.5, "type": "file-dialog", "path": "IMPORT_FOLDER"},
+ {"t": 10.0, "type": "mark", "name": "imported"}
+]}
