@@ -1,0 +1,8 @@
+{"events": [
+ {"t": 0.1, "type": "key", "name": "Left"}, {"t": 0.12, "type": "key", "name": "Left"}, {"t": 0.14, "type": "key", "name": "Left"},
+ {"t": 0.16, "type": "key", "name": "Left"}, {"t": 0.18, "type": "key", "name": "Left"}, {"t": 0.2, "type": "key", "name": "Left"},
+ {"t": 0.22, "type": "key", "name": "Left"}, {"t": 0.24, "type": "key", "name": "Left"}, {"t": 0.26, "type": "key", "name": "Left"},
+ {"t": 0.28, "type": "key", "name": "Left"}, {"t": 0.3, "type": "key", "name": "Left"}, {"t": 0.32, "type": "key", "name": "Left"},
+ {"t": 0.34, "type": "key", "name": "Left"}, {"t": 0.36, "type": "key", "name": "Left"},
+ {"t": 0.5, "type": "key", "name": "Enter"}
+]}

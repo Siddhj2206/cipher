@@ -1,0 +1,4 @@
+{"events": [
+ {"t": 0.1, "type": "wheel", "dx": 0, "dy": -2600, "x": 700, "y": 400},
+ {"t": 0.6, "type": "key", "cmd": true, "name": "t"}
+]}

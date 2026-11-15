@@ -1,0 +1,12 @@
+# PROTOTYPE: throwaway spike for the desktop editor. Not production code.
+[package]
+name = "editor-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+serde_json = "1"
+rune = { git = "https://github.com/anomalyco/rune", rev = "a7f276c3630f85a06a0230295da4d2bd172d8d3b" }
+
+[workspace]

@@ -1,0 +1,7 @@
+{"events": [
+ {"t": 0.1, "type": "triple-click", "key": "b144"},
+ {"t": 0.8, "type": "type", "text": "The Lord of the Tower"},
+ {"t": 2.0, "type": "key", "name": "Enter"},
+ {"t": 2.4, "type": "click", "key": "rev0"},
+ {"t": 3.0, "type": "key", "name": "a"}
+]}
