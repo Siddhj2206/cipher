@@ -284,6 +284,12 @@ fn settings_error(s: &mut State) {
         "Could not test this Endpoint: the server refused the request. Check the base URL, model and credentials, then try again.".into());
 }
 
+fn settings_models_failed(s: &mut State) {
+    settings(s);
+    s.settings.as_mut().expect("open").fetch =
+        Status::Failed("The server refused the key. Check it, then retry.".into());
+}
+
 /// The Shelf with the scene's Book and two more: one new and empty, one renamed.
 fn shelf(s: &mut State) {
     s.show_shelf();
@@ -523,10 +529,10 @@ pub const SCENES: &[Scene] = &[
         .to_vec();
         form.available_from = form.source();
     }),
-    ("settings-models-failed", |s| {
-        settings(s);
-        let form = s.settings.as_mut().expect("open");
-        form.fetch = Status::Failed("The server refused the key. Check it, then retry.".into());
+    ("settings-models-failed", settings_models_failed),
+    ("settings-models-failed-zoom", |s| {
+        settings_models_failed(s);
+        s.prefs.zoom = 1.6;
     }),
     ("settings-chatgpt", settings_chatgpt),
     ("settings-no-key", settings_no_key),

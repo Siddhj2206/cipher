@@ -5,9 +5,23 @@ book=$1
 bin=${2:-target/debug/cipher}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-printf '%s\n' '{"events":[{"t":0.1,"type":"scroll","x":320,"y":240,"dy":-1500},{"t":0.5,"type":"mark","name":"bottom"}]}' > "$tmp/scroll.json"
-for scene in settings-general settings settings-chatgpt settings-about settings-shortcuts shortcuts settings-no-key settings-error settings-busy settings-chatgpt-busy settings-chatgpt-signed-in settings-general-zoom settings-zoom settings-chatgpt-zoom settings-error-zoom settings-about-zoom settings-shortcuts-zoom shortcuts-zoom; do
+for scene in settings-general settings settings-chatgpt settings-about settings-shortcuts shortcuts settings-no-key settings-error settings-busy settings-chatgpt-busy settings-chatgpt-signed-in settings-models-failed settings-models-failed-zoom settings-general-zoom settings-zoom settings-chatgpt-zoom settings-error-zoom settings-about-zoom settings-shortcuts-zoom shortcuts-zoom; do
+  case "$scene" in shortcuts*) pane=shortcuts-list;; *) pane=settings-pane;; esac
+  printf '%s\n' "{\"events\":[{\"t\":0.1,\"type\":\"scroll\",\"key\":\"$pane\",\"dy\":-1500},{\"t\":0.5,\"type\":\"mark\",\"name\":\"bottom\"}]}" > "$tmp/scroll.json"
   "$bin" "$book" --scene "$scene" --script "$tmp/scroll.json" --at mark:bottom --fps 10 --size 640x480 --scale 1 --tree "$tmp/$scene.json" 2>"$tmp/stderr" || { cat "$tmp/stderr"; exit 1; }
+  case "$scene" in settings-models-failed*)
+    python3 -I - "$tmp/$scene.json" "$tmp/scroll.json" <<'PY'
+import json, sys
+tree = json.load(open(sys.argv[1]))
+els = {e['key']: e for e in tree['elements'] if 'key' in e}
+delta = (els['settings-pane']['rect'][1] + 8 - els['ep-fetch-status']['rect'][1]) * 640 / tree['viewport'][0]
+script = json.load(open(sys.argv[2]))
+script['events'] += [{'t': 0.6, 'type': 'scroll', 'key': 'settings-pane', 'dy': delta},
+                     {'t': 1.0, 'type': 'mark', 'name': 'fetch'}]
+json.dump(script, open(sys.argv[2], 'w'))
+PY
+    "$bin" "$book" --scene "$scene" --script "$tmp/scroll.json" --at mark:fetch --fps 10 --size 640x480 --scale 1 --tree "$tmp/$scene.json" 2>"$tmp/stderr" || { cat "$tmp/stderr"; exit 1; }
+  ;; esac
   python3 -I - "$tmp/$scene.json" "$scene" <<'PY'
 import json, sys
 tree = json.load(open(sys.argv[1]))
@@ -46,8 +60,23 @@ else:
             assert 'server refused' in els['ep-status'].get('text', '')
         if scene in ['settings', 'settings-zoom']:
             assert 'replied' in els['ep-status'].get('text', ''), f'{scene}: scrolling cleared feedback'
+        if 'models-failed' in scene:
+            pane = els['settings-pane']['rect']
+            for key in ['ep-model', 'ep-small']:
+                x, _, ew, _ = els[key]['rect']
+                assert ew > 0 and x >= pane[0] and x + ew <= pane[0] + pane[2], f'{scene}: overflowing {key}'
+            model, small = els['ep-model']['rect'], els['ep-small']['rect']
+            assert model[1] + model[3] <= small[1], f'{scene}: model fields did not stack'
+            for key in ['ep-fetch-status', 'ep-fetch']:
+                inside(key)
+                x, y, ew, eh = els[key]['rect']
+                assert y >= pane[1] and y + eh <= pane[1] + pane[3] + 1, f'{scene}: unreachable {key}'
+            assert 'refused the key' in els['ep-fetch-status'].get('text', '')
+            assert any(e.get('text') == 'Retry' for e in tree['elements'])
+            assert not els['ep-fetch']['inert'] and els['ep-fetch']['opacity'] == 1, f'{scene}: Retry is disabled'
+            assert els['ep-fetch-status']['rect'][1] + els['ep-fetch-status']['rect'][3] <= els['ep-fetch']['rect'][1], f'{scene}: Retry overlaps error'
     if scene == 'settings-no-key':
         assert els['ep-key-hint']['text'] == 'No key: requests go out without one.'
 PY
 done
-echo 'ok: Settings navigation, heading, close and Endpoint footer at 640x480 and 160% zoom; no-key, error, busy and signed-in states'
+echo 'ok: Settings navigation, heading, close and Endpoint footer at 640x480 and 160% zoom; no-key, error, busy, signed-in and Fetch models Retry states'

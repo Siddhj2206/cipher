@@ -134,14 +134,16 @@ fn available_models(f: &Settings, p: &Pal) -> El {
             Some("Fetch models"),
         ),
     };
-    let mut head = row().w_full().gap(8.0).center_y().child(
-        text(line)
-            .key("ep-fetch-status")
-            .font(SMALL)
-            .color(color)
-            .grow(1.0)
-            .wrap(),
-    );
+    let line = text(line)
+        .key("ep-fetch-status")
+        .font(SMALL)
+        .color(color)
+        .wrap();
+    let mut head = if super::preferences::narrow_pane() {
+        col().w_full().gap(8.0).child(line.w_full())
+    } else {
+        row().w_full().gap(8.0).center_y().child(line.grow(1.0))
+    };
     if let Some(label) = action {
         head = head.child(
             btn(label, false, p)
@@ -245,36 +247,33 @@ pub fn endpoint_form(f: &Settings, p: &Pal) -> El {
         }
     }
 
+    let model = field(
+        "Default model",
+        &f.translate,
+        "ep-model",
+        "model id",
+        |f| &mut f.translate,
+        p,
+    );
+    let small = field(
+        "Small model (optional)",
+        &f.small,
+        "ep-small",
+        "for repairs and notes",
+        |f| &mut f.small,
+        p,
+    );
+    let models = if super::preferences::narrow_pane() {
+        col().w_full().gap(12.0).child(model).child(small)
+    } else {
+        row()
+            .w_full()
+            .gap(12.0)
+            .child(model.w(0.0).grow(1.0))
+            .child(small.w(0.0).grow(1.0))
+    };
     body = body
-        .child(
-            row()
-                .w_full()
-                .gap(12.0)
-                .child(
-                    field(
-                        "Default model",
-                        &f.translate,
-                        "ep-model",
-                        "model id",
-                        |f| &mut f.translate,
-                        p,
-                    )
-                    .w(0.0)
-                    .grow(1.0),
-                )
-                .child(
-                    field(
-                        "Small model (optional)",
-                        &f.small,
-                        "ep-small",
-                        "for repairs and notes",
-                        |f| &mut f.small,
-                        p,
-                    )
-                    .w(0.0)
-                    .grow(1.0),
-                ),
-        )
+        .child(models)
         .child(available_models(f, p))
         .child(field(
             "More models Books can choose (comma-separated)",
