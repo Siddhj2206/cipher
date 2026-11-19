@@ -8,6 +8,13 @@ use crate::settings::{EFFORTS, Kind, Settings, Status};
 use crate::state::State;
 use crate::theme::{Pal, SMALL, UI};
 
+fn action(label: &str, primary: bool, busy: bool, run: fn(&mut State), p: &Pal) -> El {
+    let button = btn(label, primary, p)
+        .disabled(busy)
+        .opacity(if busy { 0.45 } else { 1.0 });
+    if busy { button } else { button.on_press(run) }
+}
+
 /// A labelled one-line field bound to one of the form's [`TextEdit`]s.
 fn field(
     label: &str,
@@ -36,11 +43,15 @@ fn field(
                 .placeholder(placeholder.to_string(), p.ink4)
                 .on_edit(move |s: &mut State| {
                     let form = s.settings.as_mut().expect("settings are open while edited");
-                    form.status = Status::Idle;
-                    if matches!(form.fetch, Status::Failed(_)) {
-                        form.fetch = Status::Idle;
-                    }
                     bind(form)
+                })
+                .on_input_change(|s: &mut State, _| {
+                    if let Some(form) = &mut s.settings {
+                        form.status = Status::Idle;
+                        if matches!(form.fetch, Status::Failed(_)) {
+                            form.fetch = Status::Idle;
+                        }
+                    }
                 }),
         )
 }
@@ -52,7 +63,7 @@ fn chips<T: Copy + PartialEq + 'static>(
     set: fn(&mut Settings, T),
     p: &Pal,
 ) -> El {
-    let mut r = row().gap(6.0);
+    let mut r = row().w_full().gap(6.0).flex_wrap();
     for (i, &(value, label)) in options.iter().enumerate() {
         r = r.child(
             chip(label, value == on, p)
@@ -183,6 +194,15 @@ pub fn endpoint_form(f: &Settings, p: &Pal) -> El {
                     |f| &mut f.key,
                     p,
                 ))
+                .child(if !f.has_key && f.key.text.trim().is_empty() {
+                    text("No key: requests go out without one.")
+                        .key("ep-key-hint")
+                        .font(SMALL)
+                        .color(p.ink3)
+                        .wrap()
+                } else {
+                    col()
+                })
                 .child(
                     col()
                         .gap(4.0)
@@ -208,16 +228,19 @@ pub fn endpoint_form(f: &Settings, p: &Pal) -> El {
                 ),
             };
             body = body.child(
-                row()
-                    .w_full()
-                    .gap(12.0)
-                    .center_y()
-                    .child(text(line).font(UI).color(p.ink2).grow(1.0).wrap())
-                    .child(
-                        btn(label, f.signed_in.is_none(), p)
-                            .key("ep-signin")
-                            .on_press(|s: &mut State| s.sign_in()),
-                    ),
+                (if super::preferences::narrow_pane() {
+                    col()
+                } else {
+                    row()
+                })
+                .w_full()
+                .gap(12.0)
+                .center_y()
+                .child(text(line).font(UI).color(p.ink2).grow(1.0).wrap())
+                .child(
+                    action(label, f.signed_in.is_none(), f.busy(), State::sign_in, p)
+                        .key("ep-signin"),
+                ),
             );
         }
     }
@@ -276,41 +299,42 @@ pub fn endpoint_form(f: &Settings, p: &Pal) -> El {
             p,
         ));
 
+    body
+}
+
+pub fn endpoint_footer(f: &Settings, p: &Pal) -> El {
     let (status, color) = match &f.status {
         Status::Idle => (String::new(), p.ink3),
         Status::Busy(m) => (m.clone(), p.ink3),
         Status::Ok(m) => (m.clone(), p.green),
         Status::Failed(m) => (m.clone(), p.red),
     };
-    body = body.child(
-        row()
-            .w_full()
-            .gap(8.0)
-            .center_y()
-            .child(
-                text(status)
-                    .key("ep-status")
-                    .font(SMALL)
-                    .color(color)
-                    .grow(1.0)
-                    .wrap(),
-            )
-            .child(
-                btn("Revert", false, p)
-                    .key("ep-cancel")
-                    .help("Throw away what was typed here")
-                    .on_press(|s: &mut State| s.reload_endpoint()),
-            )
-            .child(
-                btn("Test", false, p)
-                    .key("ep-test")
-                    .on_press(|s: &mut State| s.test_settings()),
-            )
-            .child(
-                btn("Save", true, p)
-                    .key("ep-save")
-                    .on_press(|s: &mut State| s.save_settings()),
-            ),
-    );
-    body
+    col()
+        .key("ep-footer")
+        .w_full()
+        .gap(6.0)
+        .border_sides([1.0, 0.0, 0.0, 0.0], p.rule)
+        .child(
+            text(status)
+                .key("ep-status")
+                .font(SMALL)
+                .color(color)
+                .w_full()
+                .wrap(),
+        )
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(col().grow(1.0))
+                .child(
+                    btn("Revert", false, p)
+                        .key("ep-cancel")
+                        .help("Throw away what was typed here")
+                        .on_press(|s: &mut State| s.reload_endpoint()),
+                )
+                .child(action("Test", false, f.busy(), State::test_settings, p).key("ep-test"))
+                .child(action("Save", true, f.busy(), State::save_settings, p).key("ep-save")),
+        )
 }
