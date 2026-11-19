@@ -33,6 +33,10 @@ path = "src/main.rs"
 dirs = "6"
 trash = "5"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+url = "2"
+zbus = "5"
+
 # `cargo deb -p cipher-app` and `cargo generate-rpm -p crates/cipher-app` (release CI).
 [package.metadata.deb]
 name = "cipher"

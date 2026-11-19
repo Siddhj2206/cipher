@@ -13,7 +13,7 @@ use super::widgets::{btn, dot, plural};
 use crate::fix::edit_in_review;
 use crate::fix::work::Status;
 use crate::library::{Library, Page, PageBlock, PairFlag};
-use crate::state::{State, Tab, TermCard};
+use crate::state::{ReadingPart, ReadingRow, State, Tab, TermCard};
 use crate::theme::{
     GUTTER_W, I_LANG, INTERLINEAR, LABEL, Pal, SERIF, SMALL, UI_MED, body, heading, src_body,
 };
@@ -56,6 +56,17 @@ fn warning(page: &Page, b: &PageBlock) -> Option<String> {
     }
 }
 
+fn reading_part(s: &State, id: BlockId, part: ReadingPart, el: El) -> El {
+    let el = el.key(part.key(id));
+    if s.sidebar_reflow_target() == Some((id, part)) {
+        el.on_layout_tx(move |s: &mut State, [_, _, _, height], tx| {
+            s.finish_sidebar_reflow(id, part, height, tx);
+        })
+    } else {
+        el
+    }
+}
+
 fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
     let style = match (side, b.kind) {
         (_, BlockKind::Heading(_)) => heading(&s.prefs.reading),
@@ -71,12 +82,16 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
     {
         if !current {
             let shown = diff::shown(&e.before, after, p);
-            return rich(shown.text, shown.spans)
-                .font(style)
-                .color(p.ink)
-                .wrap()
-                .key(format!("b{}", id.0))
-                .w_full();
+            return reading_part(
+                s,
+                id,
+                ReadingPart::Body,
+                rich(shown.text, shown.spans)
+                    .font(style)
+                    .color(p.ink)
+                    .wrap()
+                    .w_full(),
+            );
         }
         // The one under review, in full twice, like source above translation: as it is, then as proposed.
         let ((old, old_spans), (new, new_spans)) = diff::sides(&e.before, after, p);
@@ -85,23 +100,27 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
             .w_full()
             .gap(4.0)
             .child(label("NOW"))
-            .child(
+            .child(reading_part(
+                s,
+                id,
+                ReadingPart::Original,
                 rich(old, old_spans)
                     .font(style)
                     .color(p.ink3)
                     .wrap()
-                    .key(format!("b{}-now", id.0))
                     .w_full(),
-            )
+            ))
             .child(label("PROPOSED").pt(8.0))
-            .child(
+            .child(reading_part(
+                s,
+                id,
+                ReadingPart::Body,
                 rich(new, new_spans)
                     .font(style)
                     .color(p.ink)
                     .wrap()
-                    .key(format!("b{}", id.0))
                     .w_full(),
-            );
+            ));
     }
 
     let mut spans: Vec<Span> = b
@@ -141,7 +160,6 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
         .wrap()
         .selectable(true)
         .selection_color(p.highlight)
-        .key(format!("b{}", id.0))
         .w_full();
     for h in &b.terms {
         let term = &s.lib.terms[h.term];
@@ -171,7 +189,7 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
                 )),
         );
     }
-    t.on_link(move |s: &mut State, tid, _| {
+    reading_part(s, id, ReadingPart::Body, t).on_link(move |s: &mut State, tid, _| {
         if let Ok(term) = tid.parse() {
             s.term_card = Some(TermCard { block: id, term });
             s.tab = Tab::Terms;
@@ -239,13 +257,16 @@ fn paragraph(s: &State, page: &Page, side: Side, index: usize, p: &Pal) -> El {
 
     let mut text_col = col().w(s.text_width()).gap(6.0);
     if focus && let Some(pv) = b.pair.and_then(|pair| page.pair(pair)) {
-        text_col = text_col.child(
+        text_col = text_col.child(reading_part(
+            s,
+            id,
+            ReadingPart::Source,
             text(pv.source_text.clone())
                 .font(INTERLINEAR)
                 .color(p.ink3)
                 .wrap()
                 .pb(4.0),
-        );
+        ));
     }
     // A Chapter translating now: each source paragraph with its translation as it arrives.
     let streamed = (side == Side::Source)
@@ -253,23 +274,34 @@ fn paragraph(s: &State, page: &Page, side: Side, index: usize, p: &Pal) -> El {
         .flatten();
     if let Some(done) = streamed {
         if let Some(t) = done {
-            text_col = text_col.child(
+            text_col = text_col.child(reading_part(
+                s,
+                id,
+                ReadingPart::Body,
                 text(t.to_string())
                     .font(body(&s.prefs.reading))
                     .color(p.ink)
                     .wrap(),
-            );
+            ));
         }
-        text_col = text_col.child(text(b.text.clone()).font(INTERLINEAR).color(p.ink3).wrap());
+        text_col = text_col.child(reading_part(
+            s,
+            id,
+            ReadingPart::Source,
+            text(b.text.clone()).font(INTERLINEAR).color(p.ink3).wrap(),
+        ));
     } else {
         match b.kind {
             BlockKind::SceneBreak => {
-                text_col = text_col.child(
+                text_col = text_col.child(reading_part(
+                    s,
+                    id,
+                    ReadingPart::Body,
                     text("·  ·  ·")
                         .font(body(&s.prefs.reading))
                         .color(p.ink3)
                         .pl(s.text_width() / 2.0 - 24.0),
-                );
+                ));
             }
             _ => text_col = text_col.child(body_text(s, b, side, p)),
         }
@@ -280,14 +312,16 @@ fn paragraph(s: &State, page: &Page, side: Side, index: usize, p: &Pal) -> El {
         && !focus
         && let Some(pv) = b.pair.and_then(|pair| page.pair(pair))
     {
-        text_col = text_col.child(
+        text_col = text_col.child(reading_part(
+            s,
+            id,
+            ReadingPart::Source,
             text(pv.source_text.clone())
                 .font(INTERLINEAR)
                 .color(p.ink3)
                 .wrap()
-                .selectable(true)
-                .key(format!("s{}", id.0)),
-        );
+                .selectable(true),
+        ));
     }
 
     if side == Side::Translation
@@ -298,28 +332,31 @@ fn paragraph(s: &State, page: &Page, side: Side, index: usize, p: &Pal) -> El {
             .map(|pv| &pv.flag)
             .and_then(Option::as_ref)
     {
-        text_col = text_col.child(
-            row()
-                .key(format!("flag{}", id.0))
-                .gap(6.0)
-                .center_y()
-                .child(dot(p.amber, 5.0))
-                .child(
-                    text(format!("Flagged: {reason}"))
-                        .font(SMALL)
-                        .color(p.ink3)
-                        .wrap(),
-                ),
-        );
+        text_col = text_col.child(reading_part(
+            s,
+            id,
+            ReadingPart::Flag,
+            row().gap(6.0).center_y().child(dot(p.amber, 5.0)).child(
+                text(format!("Flagged: {reason}"))
+                    .font(SMALL)
+                    .color(p.ink3)
+                    .wrap(),
+            ),
+        ));
     }
 
-    let mut r = row()
-        .key(format!("row{}", id.0))
-        .w_full()
-        .pb(if side == Side::Source { 20.0 } else { 18.0 })
-        .hover_group()
-        .child(gutter)
-        .child(text_col);
+    let padding = if side == Side::Source { 20.0 } else { 18.0 };
+    let mut r = reading_part(
+        s,
+        id,
+        ReadingPart::Row,
+        row()
+            .w_full()
+            .pb(padding)
+            .hover_group()
+            .child(gutter)
+            .child(text_col),
+    );
     // With the context sidebar closed, notes and a Term's card live in the page margin beside
     // their paragraph.
     if !s.context_shown() && s.margin_room() {
@@ -629,10 +666,7 @@ pub fn reading(s: &State, cx: &mut Cx<State>, p: &Pal) -> El {
     *s.tops.borrow_mut() = current
         .blocks(section_side(s, current))
         .iter()
-        .filter_map(|b| {
-            cx.layout(&format!("row{}", b.id.0))
-                .map(|r| (b.id, r[1] - origin))
-        })
+        .filter_map(|b| ReadingRow::measure(b.id, origin, |key| cx.layout(key)))
         .collect();
 
     let mut column = col().key("page").w(page_width(s)).pb(220.0);

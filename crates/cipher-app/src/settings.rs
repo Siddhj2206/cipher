@@ -299,6 +299,7 @@ impl State {
 
     pub fn close_settings(&mut self) {
         self.settings_page = None;
+        self.settings_books_notice = None;
         self.settings = None;
     }
 
