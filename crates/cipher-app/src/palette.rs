@@ -8,6 +8,7 @@ use crate::state::{Screen, State};
 pub enum Action {
     Cast,
     Style,
+    Notes,
     History,
     Source,
     Interlinear,
@@ -32,6 +33,7 @@ pub fn action_name(a: Action, s: &State) -> String {
     match a {
         Action::Cast => "Cast & terms".into(),
         Action::Style => "Style".into(),
+        Action::Notes => "Book notes".into(),
         Action::History => "History".into(),
         Action::Source if s.source => "Show translation".into(),
         Action::Source => "Show source".into(),
@@ -54,6 +56,7 @@ pub fn action_detail(a: Action, s: &State) -> String {
             s.lib.drifting_terms()
         ),
         Action::Style => "How this book should read".into(),
+        Action::Notes => "Forms of Address and Story Notes".into(),
         Action::History => "Undo translations, reviews and edits".into(),
         Action::Source => "Read the chapter in its own language (Ctrl+T)".into(),
         Action::Interlinear => "Source under every paragraph (Ctrl+I)".into(),
@@ -75,6 +78,7 @@ pub fn hits(s: &State, query: &str) -> Vec<Hit> {
     for a in [
         Action::Cast,
         Action::Style,
+        Action::Notes,
         Action::History,
         Action::Source,
         Action::Interlinear,
@@ -108,6 +112,7 @@ pub fn run(s: &mut State, tx: &mut Tx, hit: &Hit) {
         Hit::Action(a) => match a {
             Action::Cast => s.screen = Screen::Cast,
             Action::Style => s.open_style(),
+            Action::Notes => s.open_notes(),
             Action::History => s.open_history(),
             Action::Source => s.toggle_source(tx),
             Action::Interlinear => s.interlinear = !s.interlinear,

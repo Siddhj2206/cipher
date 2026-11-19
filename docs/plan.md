@@ -20,6 +20,7 @@ How to use it:
 - Milestone 7b: done; three Shelf actions unchecked on a real desktop.
 - Milestone 7c: packaging and CI are written but have never run on GitHub; the first push runs them (Windows and macOS have only been type-checked as far as C dependencies allow). Next is the rest of its list below, then a pass on a real desktop (theme following, window restore, drag and drop, `packaging/linux/install.sh`).
 - Open decision: inertial scrolling needs a Rune change (see Open questions); updating Rune to `8fc71fb` did not add it.
+- Book notes: editable Forms of Address and Story Notes now have a separate page beside Style, grouped saves and queued compaction. See `desktop-ux.md` › Book notes.
 
 ## Milestones
 

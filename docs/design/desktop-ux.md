@@ -60,7 +60,7 @@ Three columns, each with a 52px header row so the headers line up.
 **Contents (left, 272px, Ctrl+\\)**
 - **Header:** the Book title (serif italic) and a hide button.
 - **Progress:** one hairline bar (translated in ink3, waiting in amber) and the line "92 translated · 2 waiting · 94 chapters".
-- **Pages:** Reading, Cast & terms (with its drifting count), Style, History (Ctrl H) and New chapter (Ctrl N).
+- **Pages:** Reading, Cast & terms (with its drifting count), Style, Book notes, History (Ctrl H) and New chapter (Ctrl N).
 - **Chapter list:**
   - each row shows the number in tabular figures, the saved Chapter title (or its opening line when untitled; two lines, serif) and badges;
   - badges: a red count of pending Proposed Edits, an amber dot for waiting to translate;
@@ -175,6 +175,12 @@ The Glossary as a page the Book fills in itself.
 
 The Book's Style Rules as one page (nav row "Style", the palette, `view/style.rs`): "How this book should read", a line on what it is for, and one serif text field holding every rule, a paragraph or list item each (`cipher_engine::style_rules`). The rules go with every Chapter's translation, before the glossary; From now on fixes add theirs here. Save (Ctrl+S) writes them as one Revision and says chapters translated from now on follow it; Revert puts back what is saved; Esc returns to reading, keeping unsaved text for the next visit. Importing a folder brings `style.md` in whole, a paragraph or list item per rule, headings dropped.
 
+## Book notes
+
+The separate Book notes page follows Style in navigation and is also in the palette (`notes.rs`, `view/book_notes.rs`). Forms of Address is user-owned guidance sent with every Chapter: editable Speaker, Listener, Source form and Rendering columns, with Add form and per-row Remove. Entirely empty rows are dropped on save; other rows need a speaker, listener and rendering. Story Notes are translation-written continuity, read as the story so far: each editable note has a muted Chapter number/title or Summary label and Remove. Compact queues the existing Story Notes compaction Job; it is unavailable without notes or while compaction is pending. Save or revert edits before compacting. A link opens the separate Style page.
+
+Save (Ctrl+S), shown when dirty, writes all address and note differences as one Revision and reloads the Book. Blank Story Notes are deleted, and new blank notes are skipped. Revert restores the saved snapshot. Esc returns to Reading, keeping unsaved edits for the next visit; opening with no edits reloads current Book data. Draft and Review block opening this page, as they do Style. The `book-notes` and `book-notes-dark` scenes seed synthetic address guidance and continuity notes for snapshots with the Quiet Tower fixture; the desktop script checks navigation to the page.
+
 ## Adding chapters
 
 A new chapter is a page in the Book, not a dialog. It opens from "New chapter" in the contents sidebar (Ctrl+N), from "Add chapter N →" after the last chapter, from the palette, or by pasting (Ctrl+V outside a text field); an empty Book opens on it. The header says "New chapter", the reading toggles and the context sidebar step aside, and the contents list keeps a "Chapter N · draft" row at its end.
@@ -193,7 +199,7 @@ Adding inserts the chapter in number order, queues it and opens it where it land
 ## Palette (Ctrl+K)
 
 A 600px sheet over a scrim, 110px from the top. It finds:
-- actions: Cast & terms, Style, Suggestions, Show source, Interlinear, Dark/Light mode, Publish to Reader, Add chapters;
+- actions: Cast & terms, Style, Book notes, Suggestions, Show source, Interlinear, Dark/Light mode, Publish to Reader, Add chapters;
 - Chapters by number, shown with their opening line;
 - Terms by rendering or source form.
 

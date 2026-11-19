@@ -170,6 +170,70 @@ fn clean_run_writes_pairs_terms_and_notes() {
 }
 
 #[test]
+fn edited_address_and_story_note_reach_the_next_translation_prompt() {
+    let Setup {
+        _dir,
+        worker,
+        fake,
+        chapter,
+    } = setup(vec![FakeReply::Text(CLEAN.into())]);
+    let mut book = Book::open(worker.book().path()).unwrap();
+    drop(worker);
+    let address = AddressId(
+        book.apply(Change::AddFormOfAddress(AddressFields {
+            speaker: "Old speaker".into(),
+            listener: "Old listener".into(),
+            source_form: "Old form".into(),
+            rendering: "Old rendering".into(),
+        }))
+        .unwrap()
+        .created[0],
+    );
+    let note = StoryNoteId(
+        book.apply(Change::AddStoryNote {
+            chapter: None,
+            text: "Old continuity note".into(),
+        })
+        .unwrap()
+        .created[0],
+    );
+    book.apply(Change::EditFormOfAddress {
+        id: address,
+        fields: Some(AddressFields {
+            speaker: "Argent".into(),
+            listener: "Tower Master".into(),
+            source_form: "스승님".into(),
+            rendering: "Master".into(),
+        }),
+    })
+    .unwrap();
+    book.apply(Change::EditStoryNote {
+        id: note,
+        text: Some("Argent has joined the tower.".into()),
+    })
+    .unwrap();
+    let mut worker = Worker::new(book, Models::new(Box::new(fake.clone()))).unwrap();
+    step(&mut worker);
+    assert!(!translation(&worker, chapter).is_empty());
+    let requests = fake.requests();
+    let input = &requests[0].input;
+    assert!(
+        input.contains("- Argent to Tower Master: 스승님 = Master"),
+        "{input}"
+    );
+    assert!(input.contains("Argent has joined the tower."), "{input}");
+    for old in [
+        "Old speaker",
+        "Old listener",
+        "Old form",
+        "Old rendering",
+        "Old continuity note",
+    ] {
+        assert!(!input.contains(old), "{input}");
+    }
+}
+
+#[test]
 fn a_cut_off_stream_resumes_with_only_the_missing_numbers() {
     let Setup { mut worker, fake, chapter, _dir } = setup(vec![
         // Cut off inside [3]: [3] can't be trusted, so it is asked for again.

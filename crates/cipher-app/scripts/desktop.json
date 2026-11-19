@@ -15,5 +15,8 @@
  {"t": 4.3, "type": "click", "key": "h-type"},
  {"t": 4.6, "type": "mark", "name": "type"},
  {"t": 4.7, "type": "key", "name": "-", "cmd": true},
- {"t": 5.0, "type": "mark", "name": "smaller"}
+ {"t": 5.0, "type": "mark", "name": "smaller"},
+ {"t": 5.1, "type": "key", "name": "Escape"},
+ {"t": 5.3, "type": "click", "key": "nav-notes"},
+ {"t": 5.6, "type": "mark", "name": "book-notes"}
 ]}

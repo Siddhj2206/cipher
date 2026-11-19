@@ -10,7 +10,7 @@ bin=${2:-target/debug/cipher}
 here=$(dirname "$0")
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
-for m in start settings bigger next shortcuts type smaller; do
+for m in start settings bigger next shortcuts type smaller book-notes; do
   "$bin" "$book" --script "$here/desktop.json" --at "mark:$m" --tree "$tmp/$m.json" 2>/dev/null
 done
 has() { python3 -I - "$tmp/$1.json" "$2" <<'PY'
@@ -41,4 +41,7 @@ import json, sys
 els = json.load(open(sys.argv[1]))["elements"]
 sys.exit(0 if any(e.get("text") == "19" for e in els) else 1)
 PY
-echo "ok: Ctrl+, -> text size 20 -> Esc -> Alt+Right $first->$next -> Ctrl+/ -> Aa -> Ctrl+- 19"
+has book-notes "notes-page" || { echo "FAIL: Book notes did not open"; exit 1; }
+has book-notes "Forms of Address" || { echo "FAIL: Forms of Address missing"; exit 1; }
+has book-notes "Story Notes" || { echo "FAIL: Story Notes missing"; exit 1; }
+echo "ok: Ctrl+, -> text size 20 -> Esc -> Alt+Right $first->$next -> Ctrl+/ -> Aa -> Ctrl+- 19 -> Book notes"
