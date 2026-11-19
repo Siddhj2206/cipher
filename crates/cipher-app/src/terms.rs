@@ -25,7 +25,9 @@ impl State {
     }
 
     fn restore_cast_term(&mut self, id: Option<TermId>, card: Option<TermId>) {
-        self.load_strip(self.lib.current());
+        if let Err(e) = self.lib.keep_pages(&self.strip) {
+            self.fail(e);
+        }
         self.term_card = self.term_card.and_then(|mut selected| {
             selected.term = self.lib.terms.iter().position(|t| Some(t.id) == card)?;
             Some(selected)
@@ -169,11 +171,17 @@ mod tests {
         }
         s.lib.reload().unwrap();
         s.open_chapter(1);
+        s.pending_scroll = None;
         s.decide_term(0, true);
         assert_eq!(s.strip, vec![0, 1, 2]);
         assert!(s.strip.iter().all(|&i| s.lib.page_at(i).is_some()));
+        assert!(s.pending_scroll.is_none());
         s.undo_cast_term(s.term_toast_undo.unwrap());
         assert!(s.strip.iter().all(|&i| s.lib.page_at(i).is_some()));
+        assert!(s.pending_scroll.is_none());
+        s.pending_scroll = Some(("row42".into(), 160.0));
+        s.decide_term(0, true);
+        assert_eq!(s.pending_scroll, Some(("row42".into(), 160.0)));
     }
 
     #[test]
