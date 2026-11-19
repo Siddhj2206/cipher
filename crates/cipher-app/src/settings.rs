@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cipher_llm::{
-    ChatGptSession, Effort, Endpoint, Endpoints, InMemory, Issuer, Keychain, Protocol, Request,
-    Secrets, SignIn,
+    ChatGptSession, Effort, Endpoint, Endpoints, InMemory, Issuer, Keychain, LlmError, Protocol,
+    Request, Secrets, SignIn,
 };
 use rune::{TextEdit, Tx};
 
@@ -31,6 +31,13 @@ pub enum Status {
     Ok(String),
     Failed(String),
 }
+
+/// Where an API-key Endpoint's model list was fetched from: its protocol and base URL.
+pub type Source = (Protocol, String);
+
+/// How many fetched models show as chips before the rest wait for the Default model field to
+/// narrow them.
+pub const SHOWN_MODELS: usize = 24;
 
 pub const EFFORTS: [(Effort, &str); 5] = [
     (Effort::ProviderDefault, "Default"),
@@ -64,8 +71,13 @@ pub struct Settings {
     pub default: Option<String>,
     /// The form is for an Endpoint not saved yet.
     pub is_new: bool,
-    /// Models the signed-in plan offers, fetched when the form opens; empty until then.
+    /// Models the signed-in plan offers, fetched when the form opens, or the models an API-key
+    /// Endpoint listed when asked; empty until then.
     pub available: Vec<String>,
+    /// Where `available` came from for an API key; `None` for the ChatGPT plan's models.
+    pub available_from: Option<Source>,
+    /// Asking an API-key Endpoint for its models.
+    pub fetch: Status,
 }
 
 fn field(text: &str) -> TextEdit {
@@ -121,6 +133,8 @@ impl Settings {
             default: None,
             is_new: true,
             available: Vec::new(),
+            available_from: None,
+            fetch: Status::Idle,
         }
     }
 
@@ -193,6 +207,63 @@ impl Settings {
 
     pub fn busy(&self) -> bool {
         matches!(self.status, Status::Busy(_))
+    }
+
+    /// The protocol and base URL as typed, for an API key with a base URL.
+    pub fn source(&self) -> Option<Source> {
+        (self.kind == Kind::ApiKey)
+            .then(|| non_empty(&self.base_url))
+            .flatten()
+            .map(|url| (self.protocol, url))
+    }
+
+    /// The models to offer for what the form now says: the plan's for ChatGPT, the fetched ones
+    /// while the protocol and base URL are those they came from.
+    pub fn offered(&self) -> &[String] {
+        let current = match self.kind {
+            Kind::ChatGpt => self.available_from.is_none(),
+            Kind::ApiKey => self.available_from.is_some() && self.available_from == self.source(),
+        };
+        if current { &self.available } else { &[] }
+    }
+
+    /// The offered models shown as chips, and how many more match. A long list is narrowed by
+    /// what the Default model field holds, unless it names one of them exactly.
+    pub fn shown_models(&self) -> (Vec<&str>, usize) {
+        let all = self.offered();
+        let typed = self.translate.text.trim().to_lowercase();
+        let narrow = all.len() > SHOWN_MODELS
+            && !typed.is_empty()
+            && !all.iter().any(|m| m.to_lowercase() == typed);
+        let matching: Vec<&str> = all
+            .iter()
+            .filter(|m| !narrow || m.to_lowercase().contains(&typed))
+            .map(String::as_str)
+            .collect();
+        let more = matching.len().saturating_sub(SHOWN_MODELS);
+        (matching.into_iter().take(SHOWN_MODELS).collect(), more)
+    }
+}
+
+/// What the form says when the model list could not be fetched. The key never appears:
+/// `list_models` keeps it out of its errors.
+pub fn fetch_failed(e: &LlmError, base_url: &str) -> String {
+    match e {
+        LlmError::Auth => "The server refused the key. Check it, then retry.".into(),
+        LlmError::Network(_) => format!(
+            "Could not reach {}. Check the base URL, then retry.",
+            host(base_url)
+        ),
+        LlmError::RateLimited { .. } | LlmError::UsageLimit { .. } => {
+            "The server is busy. Retry in a moment.".into()
+        }
+        LlmError::Rejected(m) if m.starts_with("HTTP 404") || m.starts_with("HTTP 405") => {
+            "This server lists no models. Type the model id instead.".into()
+        }
+        LlmError::Rejected(m) | LlmError::Server(m) => {
+            let m: String = m.chars().take(120).collect();
+            format!("Could not list the models: {m}")
+        }
     }
 }
 
@@ -488,11 +559,74 @@ impl State {
         });
     }
 
+    /// Asks the API-key Endpoint the form describes, saved or not, which models it serves: the
+    /// key as typed, else the one in the keychain. Only when the user asks.
+    pub fn fetch_models(&mut self) {
+        let Some(form) = self
+            .settings
+            .as_mut()
+            .filter(|f| f.kind == Kind::ApiKey && !matches!(f.fetch, Status::Busy(_)))
+        else {
+            return;
+        };
+        let Some(source) = form.source() else {
+            form.fetch = Status::Failed("Give the base URL first.".into());
+            return;
+        };
+        form.fetch = Status::Busy("Asking for the models…".into());
+        if rune::is_headless() {
+            return;
+        }
+        let id = form.id.clone();
+        let typed = non_empty(&form.key);
+        let stored = form.has_key.then(|| format!("endpoint/{id}/api-key"));
+        self.bg.spawn(move || {
+            let key = typed.or_else(|| stored.and_then(|k| Keychain.get(&k).ok().flatten()));
+            let result = cipher_llm::list_models(
+                source.0,
+                &source.1,
+                key.as_deref(),
+                Duration::from_secs(20),
+            )
+            .map_err(|e| fetch_failed(&e, &source.1));
+            Msg::ModelsFetched(id, source, result)
+        });
+    }
+
+    /// A model list came back. It fills the chips only if the form still asks the same server;
+    /// what was typed in the model fields stays.
+    pub fn on_models_fetched(
+        &mut self,
+        id: String,
+        source: Source,
+        result: Result<Vec<String>, String>,
+    ) {
+        let Some(form) = self.settings.as_mut().filter(|f| f.id == id) else {
+            return;
+        };
+        if form.source().as_ref() != Some(&source) {
+            form.fetch = Status::Idle;
+            return;
+        }
+        form.fetch = match result {
+            Ok(models) if models.is_empty() => {
+                Status::Failed("The server listed no models. Type the model id instead.".into())
+            }
+            Ok(models) => {
+                form.available = models;
+                form.available_from = Some(source);
+                Status::Idle
+            }
+            Err(why) => Status::Failed(why),
+        };
+    }
+
     pub fn on_models_listed(&mut self, id: String, result: Result<Vec<String>, String>) {
         if let Some(form) = self.settings.as_mut().filter(|f| f.id == id)
             && let Ok(models) = result
         {
             form.available = models;
+            form.available_from = None;
         }
     }
 
@@ -501,6 +635,7 @@ impl State {
             match result {
                 Ok((account, models)) => {
                     form.available = models.clone();
+                    form.available_from = None;
                     form.status = Status::Ok(format!("Signed in as {account}"));
                     form.signed_in = Some(account);
                     if let Some((first, rest)) = models.split_first() {
@@ -592,5 +727,141 @@ mod tests {
         assert!(!s.ready());
         s.signed_in = Some("a@example.com".into());
         assert!(s.ready());
+    }
+
+    fn api(url: &str, protocol: Protocol) -> Settings {
+        let mut s = blank();
+        s.base_url = field(url);
+        s.protocol = protocol;
+        s
+    }
+
+    #[test]
+    fn fetched_models_show_only_while_the_form_asks_the_same_server() {
+        let mut s = api("https://a.example/v1", Protocol::Responses);
+        s.available = vec!["m-1".into(), "m-2".into()];
+        s.available_from = Some((Protocol::Responses, "https://a.example/v1".into()));
+        assert_eq!(s.offered().len(), 2);
+        s.protocol = Protocol::ChatCompletions;
+        assert!(s.offered().is_empty());
+        s.protocol = Protocol::Responses;
+        s.base_url = field("https://b.example/v1");
+        assert!(s.offered().is_empty());
+        s.kind = Kind::ChatGpt;
+        assert!(s.offered().is_empty(), "a server's list is not the plan's");
+    }
+
+    #[test]
+    fn a_long_list_is_narrowed_by_the_default_model_typed() {
+        let mut s = api("http://x/v1", Protocol::ChatCompletions);
+        s.available = (0..40).map(|i| format!("model-{i:02}")).collect();
+        s.available_from = s.source();
+        let (shown, more) = s.shown_models();
+        assert_eq!((shown.len(), more), (SHOWN_MODELS, 40 - SHOWN_MODELS));
+        s.translate = field("MODEL-3");
+        let (shown, more) = s.shown_models();
+        assert_eq!(
+            shown,
+            [
+                "model-30", "model-31", "model-32", "model-33", "model-34", "model-35", "model-36",
+                "model-37", "model-38", "model-39"
+            ]
+        );
+        assert_eq!(more, 0);
+        s.translate = field("model-05");
+        assert_eq!(
+            s.shown_models().0.len(),
+            SHOWN_MODELS,
+            "an exact name keeps the whole list"
+        );
+    }
+
+    #[test]
+    fn fetch_failures_say_what_to_do() {
+        let url = "https://api.example.com/v1";
+        assert!(fetch_failed(&LlmError::Auth, url).contains("refused the key"));
+        assert_eq!(
+            fetch_failed(&LlmError::Network("connection refused".into()), url),
+            "Could not reach api.example.com. Check the base URL, then retry."
+        );
+        assert!(
+            fetch_failed(&LlmError::Rejected("HTTP 404: not found".into()), url)
+                .contains("Type the model id")
+        );
+        let long = fetch_failed(&LlmError::Server("x".repeat(500)), url);
+        assert!(long.len() < 200);
+    }
+
+    fn state_with(form: Settings) -> State {
+        let mut st = State::new(crate::library::Library::blank());
+        st.settings = Some(form);
+        st
+    }
+
+    #[test]
+    fn a_fetched_list_fills_the_chips_and_keeps_what_was_typed() {
+        let mut form = api("http://127.0.0.1:9/v1", Protocol::ChatCompletions);
+        form.translate = field("my-model");
+        form.others = field("a, b");
+        form.fetch = Status::Busy("…".into());
+        let source = form.source().unwrap();
+        let mut st = state_with(form);
+        st.on_models_fetched("e1".into(), source.clone(), Ok(vec!["m-1".into()]));
+        let f = st.settings.as_ref().unwrap();
+        assert_eq!(f.fetch, Status::Idle);
+        assert_eq!(f.offered(), ["m-1"]);
+        assert_eq!(
+            (f.translate.text.as_str(), f.others.text.as_str()),
+            ("my-model", "a, b")
+        );
+
+        st.on_models_fetched(
+            "e1".into(),
+            source.clone(),
+            Err("Could not reach x.".into()),
+        );
+        let f = st.settings.as_ref().unwrap();
+        assert_eq!(f.fetch, Status::Failed("Could not reach x.".into()));
+        assert_eq!(f.translate.text, "my-model");
+
+        st.on_models_fetched("e1".into(), source, Ok(vec![]));
+        assert!(
+            matches!(st.settings.as_ref().unwrap().fetch, Status::Failed(ref m) if m.contains("no models"))
+        );
+    }
+
+    #[test]
+    fn a_list_for_another_form_or_server_is_dropped() {
+        let form = api("http://new/v1", Protocol::Responses);
+        let mut st = state_with(form);
+        st.settings.as_mut().unwrap().fetch = Status::Busy("…".into());
+        st.on_models_fetched(
+            "e1".into(),
+            (Protocol::Responses, "http://old/v1".into()),
+            Ok(vec!["stale".into()]),
+        );
+        let f = st.settings.as_ref().unwrap();
+        assert!(f.available.is_empty());
+        assert_eq!(f.fetch, Status::Idle, "Fetch models can be pressed again");
+        st.on_models_fetched(
+            "e2".into(),
+            (Protocol::Responses, "http://new/v1".into()),
+            Ok(vec!["other".into()]),
+        );
+        assert!(st.settings.as_ref().unwrap().available.is_empty());
+    }
+
+    #[test]
+    fn fetching_needs_a_base_url_and_an_api_key_form() {
+        let mut st = state_with(blank());
+        st.fetch_models();
+        assert_eq!(
+            st.settings.as_ref().unwrap().fetch,
+            Status::Failed("Give the base URL first.".into())
+        );
+        st.settings.as_mut().unwrap().kind = Kind::ChatGpt;
+        st.settings.as_mut().unwrap().fetch = Status::Idle;
+        st.fetch_models();
+        assert_eq!(st.settings.as_ref().unwrap().fetch, Status::Idle);
     }
 }
