@@ -474,6 +474,30 @@ pub const SCENES: &[Scene] = &[
     }),
     ("flagged", flag_a_pair),
     ("settings", settings),
+    ("settings-models", |s| {
+        settings(s);
+        let form = s.settings.as_mut().expect("open");
+        form.available = [
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "model-fast",
+            "model-large",
+            "model-medium",
+            "model-small",
+            "o3",
+            "o4-mini",
+        ]
+        .map(String::from)
+        .to_vec();
+        form.available_from = form.source();
+    }),
+    ("settings-models-failed", |s| {
+        settings(s);
+        let form = s.settings.as_mut().expect("open");
+        form.fetch = Status::Failed("The server refused the key. Check it, then retry.".into());
+    }),
     ("settings-chatgpt", |s| {
         settings(s);
         let form = s.settings.as_mut().expect("open");
