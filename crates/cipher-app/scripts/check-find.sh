@@ -18,8 +18,8 @@ assert any(e.get('key') == 'find-bar' for e in elements('open')), 'Ctrl+F did no
 assert count('found').startswith('1 of '), count('found')
 assert count('next').startswith('2 of '), count('next')
 assert count('source') == 'No matches', count('source')
-assert count('refocused').startswith('1 of '), count('refocused')
+assert count('refocused').startswith('1 of 6'), count('refocused')
 assert any(e.get('key') == 'find-input' and e.get('text') == '탑' for e in elements('refocused')), 'Ctrl+F did not select the old query'
 assert not any(e.get('key') == 'find-bar' for e in elements('closed')), 'Escape did not close find'
-print('ok: Ctrl+F -> query -> count -> Enter next -> Source -> Ctrl+F replaces query -> Escape')
+print('ok: Ctrl+F -> query -> count -> Enter next -> Source -> Hangul IME commit searches without another key -> Escape')
 PY

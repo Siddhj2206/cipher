@@ -45,11 +45,12 @@ pub fn bar(s: &State, p: &Pal) -> Option<El> {
                 .py(5.0)
                 .radius(4.0)
                 .fill(if side == f.scope { p.hover } else { p.card })
-                .on_press(move |s: &mut State| {
+                .on_press_tx(move |s: &mut State, tx| {
                     if let Some(f) = &mut s.find {
                         f.scope = side;
                     }
                     s.search_find();
+                    s.poll_find(tx);
                 }),
         );
     }
@@ -84,6 +85,9 @@ pub fn bar(s: &State, p: &Pal) -> Option<El> {
                             .placeholder("Find in book", p.ink3)
                             .on_edit(|s: &mut State| {
                                 &mut s.find.as_mut().expect("find is open").query
+                            })
+                            .on_input_change(|s: &mut State, tx| {
+                                s.poll_find(tx);
                             })
                             .on_input_key(crate::find::key),
                     )

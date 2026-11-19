@@ -57,6 +57,29 @@ pub struct Find {
     pub due: Option<f64>,
 }
 
+impl Find {
+    fn restart(&mut self) {
+        self.generation = GENERATION.fetch_add(1, Ordering::Relaxed);
+        self.search = self.search.next();
+        self.searching = !self.query.text.trim().is_empty();
+        self.results = Results::default();
+        self.current = 0;
+        self.searched = self.query.text.clone();
+        self.due = self.searching.then_some(f64::INFINITY);
+    }
+
+    fn schedule(&mut self, now: f64) -> bool {
+        let changed = self.searched != self.query.text;
+        if changed {
+            self.restart();
+        }
+        if self.due.is_some_and(f64::is_infinite) {
+            self.due = Some(now + 0.15);
+        }
+        changed
+    }
+}
+
 impl Drop for Find {
     fn drop(&mut self) {
         self.search.latest.fetch_add(1, Ordering::Relaxed);
@@ -163,37 +186,20 @@ impl State {
         let Some(f) = &mut self.find else {
             return;
         };
-        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        f.generation = generation;
-        f.search = f.search.next();
-        f.searching = !f.query.text.trim().is_empty();
-        f.results = Results::default();
-        f.current = 0;
-        f.searched = f.query.text.clone();
-        f.due = f.searching.then_some(f64::INFINITY);
+        f.restart();
     }
 
     pub fn poll_find(&mut self, tx: &mut Tx) -> bool {
-        if self
-            .find
-            .as_ref()
-            .is_some_and(|f| f.searched != f.query.text)
-        {
-            self.search_find();
-        }
         let Some(f) = &mut self.find else {
             return false;
         };
-        let Some(mut due) = f.due else {
-            return false;
+        let changed = f.schedule(tx.clock());
+        let Some(due) = f.due else {
+            return changed;
         };
-        if due.is_infinite() {
-            due = tx.clock() + 0.15;
-            f.due = Some(due);
-        }
         if tx.clock() < due {
             tx.wake_at(due);
-            return true;
+            return changed;
         }
         f.due = None;
         let generation = f.generation;
@@ -274,6 +280,44 @@ pub fn key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn find_debounce_observes_direct_text_changes() {
+        let mut f = Find {
+            query: TextEdit::new(""),
+            scope: Side::Source,
+            results: Results::default(),
+            current: 0,
+            generation: 0,
+            searching: false,
+            searched: String::new(),
+            search: Search::default(),
+            due: None,
+        };
+        assert!(!f.schedule(1.0));
+        assert_eq!(f.due, None);
+        f.query.text = "타".into();
+        assert!(f.schedule(2.0));
+        assert_eq!(f.due, Some(2.15));
+        assert!(f.searching);
+        let superseded = f.search.clone();
+        f.query.text = "탑".into();
+        assert!(f.schedule(2.1));
+        assert_eq!(f.due, Some(2.1 + 0.15));
+        assert!(superseded.cancelled());
+        assert!(!f.schedule(2.2));
+        assert_eq!(f.due, Some(2.1 + 0.15));
+        f.due = None;
+        assert!(!f.schedule(3.0));
+        assert_eq!(f.due, None);
+        for query in ["", "  "] {
+            f.query.text = query.into();
+            assert!(f.schedule(4.0));
+            assert!(!f.searching);
+            assert!(f.results.hits.is_empty());
+            assert_eq!(f.due, None);
+        }
+    }
+
     #[test]
     fn find_mixed_scripts_and_offsets() {
         let text = "포혈공(怖血公) met Ärzte ÄRZTE カナ ПрИвЕт";
