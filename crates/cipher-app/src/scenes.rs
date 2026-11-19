@@ -273,7 +273,125 @@ fn shelf(s: &mut State) {
 
 type Scene = (&'static str, fn(&mut State));
 
+fn history(s: &mut State, conflict: bool, undone: bool) {
+    let chapter = s.lib.chapters[0].id;
+    let old = s.lib.book().chapter(chapter).expect("chapter");
+    let pairs = old
+        .source
+        .iter()
+        .enumerate()
+        .map(|(i, b)| cipher_book::NewPair {
+            source: vec![b.id],
+            translation: vec![
+                old.translation
+                    .get(i)
+                    .map(|b| b.text.clone())
+                    .unwrap_or_else(|| "The tower was quiet.".into())
+                    + " Revised.",
+            ],
+            flagged: None,
+        })
+        .collect();
+    let revision = s
+        .lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter, pairs })
+        .expect("translation")
+        .revision;
+    let block = s.lib.book().chapter(chapter).expect("chapter").translation[0].clone();
+    let suggestion = s
+        .lib
+        .book_mut()
+        .apply(Change::AddSuggestion(NewSuggestion {
+            chapter,
+            block: block.id,
+            quote: block.text.clone(),
+            said: "Make the opening clearer".into(),
+            scope: Scope::Here,
+            is_rename: false,
+            source_expr: None,
+            state: SuggestionState::Ready,
+            kind: SuggestionKind::Reader,
+            edits: vec![NewProposedEdit {
+                block: block.id,
+                before: block.text.clone(),
+                after: Some(block.text.clone() + " Reviewed."),
+                origin: EditOrigin::Model,
+                skip_reason: None,
+            }],
+        }))
+        .expect("suggestion");
+    let edit = s
+        .lib
+        .book()
+        .suggestions(Default::default())
+        .expect("suggestions")
+        .into_iter()
+        .find(|r| r.id.0 == suggestion.created[0])
+        .expect("suggestion")
+        .edits[0]
+        .id;
+    let review = s
+        .lib
+        .book_mut()
+        .apply(Change::DecideEdits {
+            decisions: vec![(edit, true)],
+        })
+        .expect("review")
+        .revision;
+    s.open_history();
+    let selected = if conflict { revision } else { review };
+    if let Some(index) = s.history.revisions.iter().position(|r| r.id == selected) {
+        s.select_history(index);
+    }
+    if undone {
+        s.undo_history();
+    }
+}
+
 pub const SCENES: &[Scene] = &[
+    ("history-metadata", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        let term = s.lib.book().glossary().expect("glossary").terms[0].clone();
+        s.lib
+            .book_mut()
+            .apply(Change::AddStoryNote {
+                chapter: None,
+                text: format!("{} watches the tower.", term.fields.rendering),
+            })
+            .expect("story note");
+        let at = s
+            .lib
+            .terms
+            .iter()
+            .position(|t| t.id == term.id)
+            .expect("term");
+        let sid = s
+            .lib
+            .use_wording(at, "Tower Keeper", &[])
+            .expect("keep")
+            .expect("suggestion");
+        let decisions = s
+            .lib
+            .suggestion(sid)
+            .expect("suggestion")
+            .metadata
+            .iter()
+            .map(|e| (e.id, true))
+            .collect();
+        s.review_metadata(sid, decisions);
+        s.open_history();
+    }),
+    ("history", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        history(s, false, false);
+    }),
+    ("dark-history", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+        history(s, false, false);
+    }),
+    ("history-conflict", |s| history(s, true, false)),
+    ("history-undone", |s| history(s, false, true)),
     ("reading", |_| {}),
     ("focus", |s| {
         s.prefs.contents_open = false;
@@ -356,6 +474,30 @@ pub const SCENES: &[Scene] = &[
     }),
     ("flagged", flag_a_pair),
     ("settings", settings),
+    ("settings-models", |s| {
+        settings(s);
+        let form = s.settings.as_mut().expect("open");
+        form.available = [
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "model-fast",
+            "model-large",
+            "model-medium",
+            "model-small",
+            "o3",
+            "o4-mini",
+        ]
+        .map(String::from)
+        .to_vec();
+        form.available_from = form.source();
+    }),
+    ("settings-models-failed", |s| {
+        settings(s);
+        let form = s.settings.as_mut().expect("open");
+        form.fetch = Status::Failed("The server refused the key. Check it, then retry.".into());
+    }),
     ("settings-chatgpt", |s| {
         settings(s);
         let form = s.settings.as_mut().expect("open");

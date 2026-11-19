@@ -34,6 +34,12 @@ The home screen: `cipher` opens here, and the library icon at the top of the con
 
 An empty Book opens on the page for its first chapter (Adding chapters).
 
+## History
+
+Open History beside Style in Contents, with Ctrl+H, or the palette's “History — Undo translations, reviews and edits”. It reads the latest 200 Revisions from the Book, newest first, including work from earlier sessions. Each row shows its label, kind, age and a greyed “Undone” marker. Up/Down selects; Tab and Enter reach and activate actions; Esc returns to reading.
+
+The selected Revision previews affected Chapters (links back to reading), change counts in plain words and rows changed since, grouped by Chapter. Translation, added Chapter, Import (including re-pair), and Undo Revisions are all-or-nothing: conflicts disable Undo and explain why. Reviews, Hand Edits, Glossary, Suggestions and Notes offer “Undo what's unchanged” when needed. Undo rechecks conflicts transactionally, reports its result in a toast and refreshes both history and the Book's reading data. An Undo Revision can itself be undone to redo.
+
 ## Welcome
 
 The first run, while the Shelf is empty, opens a title page instead of the Shelf: "Cipher" large in italic serif, "Read web novels in your own language.", a short paragraph on what the app does, then two numbered steps, each done in place:
@@ -53,9 +59,9 @@ Three columns, each with a 52px header row so the headers line up.
 **Contents (left, 272px, Ctrl+\\)**
 - **Header:** the Book title (serif italic) and a hide button.
 - **Progress:** one hairline bar (translated in ink3, waiting in amber) and the line "92 translated · 2 waiting · 94 chapters".
-- **Pages:** Reading, Cast & terms (with its drifting count), Style and New chapter (Ctrl N).
+- **Pages:** Reading, Cast & terms (with its drifting count), Style, History (Ctrl H) and New chapter (Ctrl N).
 - **Chapter list:**
-  - each row shows the number in tabular figures, the Chapter's opening line (two lines, serif) and badges;
+  - each row shows the number in tabular figures, the saved Chapter title (or its opening line when untitled; two lines, serif) and badges;
   - badges: a red count of pending Proposed Edits, an amber dot for waiting to translate;
   - the current Chapter has a selected fill and a red number;
   - the list scrolls to follow the current Chapter.
@@ -83,7 +89,7 @@ Three columns, each with a 52px header row so the headers line up.
 
 ## The page
 
-- **Opener:** a red tracked label "CHAPTER", the number set at 60px light serif, and a 36px rule. There is no title and no counts.
+- **Opener:** a red tracked label "CHAPTER", the number set at 60px light serif, the saved title when present, and a 36px rule. Untitled Chapters show only the number; there are no counts.
 - **Paragraphs:** serif 18/31 with 18px between paragraphs. A Translation's leading `# Chapter N:` heading Block is not shown, since the opener replaces it.
 - **Glossary Terms:**
   - a faint underline; hover shows the source form and definition as a tooltip, with a tinted background;
@@ -265,7 +271,7 @@ The quick switches (Ctrl+D, the theme item in "Aa") choose the other look; choos
 
 All connection and model setup lives in Settings › Translation; a Book only picks a model.
 - **The list:** every Endpoint, with its URL (or "ChatGPT plan"), its default model and how many more. The default Endpoint says so; the others have Make default. Edit loads one into the form; Remove forgets it and its keychain key (Books that chose it fall back to the default). "+ Add Endpoint" starts a blank form.
-- **The form:** API key (base URL, key, Chat Completions or Responses) or Sign in with ChatGPT; Default model (for a signed-in plan, "Models on your plan" lists the models the backend offers, fetched when the form opens, and one click makes one the default), optional Small model, "More models Books can choose" (comma-separated), reasoning effort chips (Default, Minimal, Low, Medium, High), optional name (else the URL's host, or "ChatGPT").
+- **The form:** API key (base URL, key, Chat Completions or Responses) or Sign in with ChatGPT; Default model (for a signed-in plan, "Models on your plan" lists the models the backend offers, fetched when the form opens, and one click makes one the default; for an API key, Fetch models asks `GET {base URL}/models` with the base URL, key and protocol as typed, saved or not, only when pressed, shows the list as the same chips, narrowed by the Default model field once it runs past 24, and on failure says why with Retry while every model field stays typeable), optional Small model, "More models Books can choose" (comma-separated), reasoning effort chips (Default, Minimal, Low, Medium, High), optional name (else the URL's host, or "ChatGPT").
 - **Test** makes one tiny call with the key as typed and shows the reply, time and tokens. **Save** stores the key in the OS keychain and the rest in `endpoints.json` and restarts the worker. Save is explicit here, unlike the rest of Settings, so a half-typed key is never used. Revert drops what was typed. The first Endpoint saved becomes the default.
 
 **The Book's model:** the reading header shows what the open Book translates with ("api.example.com · model-medium"; amber "Choose a model" when there is no Endpoint; red "Model unavailable" with the reason as tooltip). Clicking it opens a menu: "Default · Endpoint · model", then each Endpoint's models under its name, a check on the chosen one, and "Endpoints and models…" to Settings. The choice is stored in the Book; picking one restarts the worker on it.

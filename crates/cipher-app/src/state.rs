@@ -31,6 +31,7 @@ pub enum Screen {
     Draft,
     /// The Book's style, as one text (`style.rs`).
     Style,
+    History,
 }
 
 /// The sections of the Settings window.
@@ -126,6 +127,7 @@ pub struct State {
     pub draft: Option<Draft>,
     /// The Style page's text, and what is saved, while it is open.
     pub style: Option<crate::style::StyleEdit>,
+    pub history: crate::history::History,
     /// The Settings window, open at this section.
     pub settings_page: Option<Section>,
     /// The Endpoint form in Settings › Translation, once it has shown.
@@ -202,6 +204,7 @@ impl State {
             home: None,
             draft: None,
             style: None,
+            history: Default::default(),
             welcome: None,
             settings_page: None,
             settings: None,
@@ -525,7 +528,7 @@ impl State {
 
     /// The new-Chapter page has no Terms or Suggestions yet: it gets the room.
     fn screen_has_context(&self) -> bool {
-        !matches!(self.screen, Screen::Draft | Screen::Style)
+        !matches!(self.screen, Screen::Draft | Screen::Style | Screen::History)
     }
 
     /// The reading column: the chosen width, narrowed to what the window leaves.
@@ -722,6 +725,13 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
         }
         return false;
     }
+    if s.screen == Screen::History
+        && s.palette.is_none()
+        && s.settings_page.is_none()
+        && crate::history::on_key(s, k, tx)
+    {
+        return true;
+    }
     if s.screen == Screen::Style {
         match &k.key {
             Key::Command('s') => s.save_style(),
@@ -763,6 +773,7 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
         Key::Command('\\') => s.toggle_contents(),
         Key::Command('j') => s.toggle_context(),
         Key::Command('g') => s.toggle_cast(),
+        Key::Command('h') => s.open_history(),
         Key::Command('i') => s.interlinear = !s.interlinear,
         Key::Command('t') => s.toggle_source(tx),
         Key::Command('=') | Key::Command('+') => s.prefs.reading.step_size(true),

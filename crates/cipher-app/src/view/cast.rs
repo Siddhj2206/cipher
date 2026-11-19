@@ -221,7 +221,7 @@ pub fn cast(s: &State, p: &Pal) -> El {
         if open {
             let detail = super::drift::drift_panel(s, i, p).unwrap_or_else(|| {
                 text(format!(
-                    "No drift: \u{201c}{}\u{201d} reads the same wherever the source names it.",
+                    "No drift flagged for \u{201c}{}\u{201d}.",
                     t.rendering
                 ))
                 .font(SMALL)

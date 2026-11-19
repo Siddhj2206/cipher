@@ -1,6 +1,6 @@
 use cipher_book::{
-    Book, BookMeta, Change, ChapterId, ChapterState, JobKind, JobSpec, NewPair, Side, TermFields,
-    TermStatus,
+    Book, BookMeta, Change, ChapterId, ChapterState, EditState, JobKind, JobSpec, MetadataEditId,
+    NewPair, Side, SuggestionFilter, TermFields, TermStatus,
 };
 use cipher_text::drift::DriftKind;
 
@@ -136,6 +136,577 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 }
 
 const LORD: &str = "마탑주";
+
+fn history_fixture() -> (tempfile::TempDir, Library) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("quiet.cipher");
+    cipher_engine::import(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/the-quiet-tower"),
+        &path,
+    )
+    .unwrap();
+    let lib = Library::open(&path).unwrap();
+    (dir, lib)
+}
+
+#[test]
+fn history_undo_preserves_retried_jobs_with_saved_progress() {
+    for (input, partial) in [(Some("Saved request"), ""), (None, "Partial translation")] {
+        let mut lib = Library::blank();
+        let intake = lib.intake("# Chapter 1\n\nSource paragraph").unwrap();
+        lib.add_chapter(&intake).unwrap();
+        let revision = lib.revisions().unwrap()[0].id;
+        let mut job = lib.book_mut().claim_next_job().unwrap().unwrap();
+        job.state = cipher_book::JobState::Failed;
+        job.input = input.map(str::to_owned);
+        job.partial = partial.into();
+        lib.book_mut().save_job(&job).unwrap();
+        lib.book_mut().retry_job(job.id).unwrap();
+        let saved = lib.book().job(job.id).unwrap();
+        assert_eq!(saved.attempts, 0);
+        assert_eq!(saved.state, cipher_book::JobState::Queued);
+        let preview = lib.preview_undo(revision).unwrap();
+        assert!(preview.conflicts.iter().any(|c| c.entity == "job"));
+        assert!(matches!(
+            lib.undo_revision(revision).unwrap(),
+            cipher_book::UndoOutcome::Conflict { .. }
+        ));
+        let after = lib.book().job(job.id).unwrap();
+        assert_eq!(after.input, saved.input);
+        assert_eq!(after.partial, saved.partial);
+        assert_eq!(lib.chapters.len(), 1);
+    }
+}
+
+#[test]
+fn history_undo_of_added_chapter_removes_unstarted_jobs_but_refuses_running_jobs() {
+    for running in [false, true] {
+        let mut lib = Library::blank();
+        let intake = lib.intake("# Chapter 1\n\nSource paragraph").unwrap();
+        lib.add_chapter(&intake).unwrap();
+        let revision = lib.revisions().unwrap()[0].id;
+        let chapter = lib.chapters[0].id;
+        assert_eq!(lib.book().jobs(false).unwrap().len(), 1);
+        if running {
+            lib.book_mut().claim_next_job().unwrap().unwrap();
+        }
+        let preview = lib.preview_undo(revision).unwrap();
+        assert_eq!(lib.book().jobs(false).unwrap().len(), 1);
+        if running {
+            assert!(preview.conflicts.iter().any(|c| c.entity == "job"));
+            assert!(
+                preview
+                    .conflict_chapters
+                    .iter()
+                    .any(|(c, ch)| c.entity == "job" && *ch == chapter)
+            );
+            assert!(matches!(
+                lib.undo_revision(revision).unwrap(),
+                cipher_book::UndoOutcome::Conflict { .. }
+            ));
+            assert_eq!(lib.chapters.len(), 1);
+            assert_eq!(lib.book().jobs(false).unwrap().len(), 1);
+        } else {
+            assert!(preview.conflicts.is_empty(), "{:?}", preview.conflicts);
+            assert!(matches!(
+                lib.undo_revision(revision).unwrap(),
+                cipher_book::UndoOutcome::Undone { .. }
+            ));
+            assert!(lib.chapters.is_empty());
+            assert!(lib.book().jobs(false).unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
+fn history_translation_reloads_page_and_whole_conflicts_are_located() {
+    use cipher_book::UndoOutcome;
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let before = lib.book().chapter(ch).unwrap();
+    let pairs = before
+        .source
+        .iter()
+        .map(|b| NewPair {
+            source: vec![b.id],
+            translation: vec!["New translation".into()],
+            flagged: None,
+        })
+        .collect();
+    let id = lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter: ch, pairs })
+        .unwrap()
+        .revision;
+    assert!(matches!(
+        lib.undo_revision(id).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(
+        lib.page()
+            .translation
+            .iter()
+            .map(|b| b.text.clone())
+            .collect::<Vec<_>>(),
+        before
+            .translation
+            .iter()
+            .map(|b| b.text.clone())
+            .collect::<Vec<_>>()
+    );
+    let pairs = before
+        .source
+        .iter()
+        .map(|b| NewPair {
+            source: vec![b.id],
+            translation: vec!["Another translation".into()],
+            flagged: None,
+        })
+        .collect();
+    let id = lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter: ch, pairs })
+        .unwrap()
+        .revision;
+    let block = lib.book().chapter(ch).unwrap().translation[0].id;
+    lib.book_mut()
+        .apply(Change::EditBlock {
+            block,
+            text: "Later hand edit".into(),
+            hand: true,
+        })
+        .unwrap();
+    let before = lib.book().chapter(ch).unwrap();
+    let revisions = lib.revisions().unwrap();
+    let preview = lib.preview_undo(id).unwrap();
+    assert!(
+        preview
+            .conflict_chapters
+            .iter()
+            .any(|(c, chapter)| c.id == block.0 && *chapter == ch)
+    );
+    assert!(matches!(
+        lib.undo_revision(id).unwrap(),
+        UndoOutcome::Conflict { .. }
+    ));
+    assert_eq!(lib.book().chapter(ch).unwrap(), before);
+    assert_eq!(lib.revisions().unwrap(), revisions);
+}
+
+#[test]
+fn history_review_survives_reopening() {
+    use cipher_book::{
+        EditOrigin, NewProposedEdit, NewSuggestion, Scope, SuggestionId, SuggestionKind,
+        SuggestionState, UndoOutcome,
+    };
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let block = lib.book().chapter(ch).unwrap().translation[0].clone();
+    let suggestion = lib
+        .book_mut()
+        .apply(Change::AddSuggestion(NewSuggestion {
+            chapter: ch,
+            block: block.id,
+            quote: block.text.clone(),
+            said: "A clearer opening".into(),
+            scope: Scope::Here,
+            is_rename: false,
+            source_expr: None,
+            state: SuggestionState::Ready,
+            kind: SuggestionKind::Reader,
+            edits: vec![NewProposedEdit {
+                block: block.id,
+                before: block.text.clone(),
+                after: Some("Reviewed opening".into()),
+                origin: EditOrigin::Model,
+                skip_reason: None,
+            }],
+        }))
+        .unwrap();
+    let edit = lib
+        .book()
+        .suggestions(Default::default())
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == SuggestionId(suggestion.created[0]))
+        .unwrap()
+        .edits[0]
+        .id;
+    let revision = lib
+        .book_mut()
+        .apply(Change::DecideEdits {
+            decisions: vec![(edit, true)],
+        })
+        .unwrap()
+        .revision;
+    let path = lib.path().to_owned();
+    drop(lib);
+    let mut lib = Library::open(&path).unwrap();
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.page().translation[0].text, block.text);
+    assert_eq!(lib.open_suggestions, 1);
+}
+
+#[test]
+fn history_skip_conflicts_empty_and_missing_revision() {
+    use cipher_book::{RevisionId, RevisionKind, UndoOutcome};
+    let (_dir, mut lib) = history_fixture();
+    lib.stats[1].counts = vec![987654];
+    let untouched = format!("{:?}", lib.stats[1]);
+    let ch = lib.chapters[0].id;
+    let blocks = lib.book().chapter(ch).unwrap().translation;
+    let revision = lib
+        .book_mut()
+        .apply(Change::Group {
+            kind: RevisionKind::HandEdit,
+            label: "Two edits".into(),
+            changes: blocks[..2]
+                .iter()
+                .map(|b| Change::EditBlock {
+                    block: b.id,
+                    text: "Edited".into(),
+                    hand: true,
+                })
+                .collect(),
+        })
+        .unwrap()
+        .revision;
+    lib.book_mut()
+        .apply(Change::EditBlock {
+            block: blocks[0].id,
+            text: "Keep later work".into(),
+            hand: true,
+        })
+        .unwrap();
+    let outcome = lib.undo_revision(revision).unwrap();
+    assert_eq!(format!("{:?}", lib.stats[1]), untouched);
+    let UndoOutcome::Undone { skipped, .. } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(lib.page().translation[0].text, "Keep later work");
+    assert_eq!(lib.page().translation[1].text, shown(&blocks[1].text));
+    let before = lib.book().chapter(ch).unwrap();
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::AlreadyUndone { .. }
+    ));
+    assert!(lib.undo_revision(RevisionId(i64::MAX)).is_err());
+    assert_eq!(lib.book().chapter(ch).unwrap(), before);
+    let mut empty = Library::blank();
+    assert!(empty.revisions().unwrap().is_empty());
+    assert!(empty.preview_undo(RevisionId(1)).is_err());
+}
+
+#[test]
+fn history_repair_import_and_added_chapter_undo() {
+    use cipher_book::UndoOutcome;
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let pairs = lib.book().chapter(ch).unwrap().pairs;
+    for pair in pairs {
+        lib.book_mut()
+            .apply(Change::FlagPair {
+                pair: pair.id,
+                reason: Some("imported".into()),
+            })
+            .unwrap();
+    }
+    let before = lib.book().chapter(ch).unwrap();
+    assert_eq!(cipher_engine::realign_imported(lib.book_mut()).unwrap(), 1);
+    let revision = lib.revisions().unwrap()[0].id;
+    assert!(lib.revisions().unwrap()[0].label.starts_with("Re-paired"));
+    assert_eq!(
+        undo_mode(&lib.preview_undo(revision).unwrap().revision),
+        cipher_book::UndoMode::Whole
+    );
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.book().chapter(ch).unwrap(), before);
+    let revision = lib
+        .book_mut()
+        .apply(Change::AddChapter {
+            number: Some(99),
+            title: None,
+            source: vec!["Extra".into()],
+        })
+        .unwrap()
+        .revision;
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert!(!lib.chapters.iter().any(|c| c.number == 99));
+    assert!(!lib.scanned());
+    let scan = lib.scan()().unwrap();
+    lib.apply_scan(scan);
+    assert!(lib.scanned());
+}
+
+#[test]
+fn history_metadata_review_survives_reopening_and_skips_later_term_edits() {
+    for conflict in [false, true] {
+        let (_dir, mut lib) = history_fixture();
+        let original = lib.book().glossary().unwrap().terms[0].clone();
+        lib.book_mut()
+            .apply(Change::AddStoryNote {
+                chapter: None,
+                text: format!("{} watches the tower.", original.fields.rendering),
+            })
+            .unwrap();
+        let glossary = lib.book().glossary().unwrap();
+        let notes = lib.book().story_notes().unwrap();
+        let at = lib.terms.iter().position(|t| t.id == original.id).unwrap();
+        let sid = lib.use_wording(at, "Tower Keeper", &[]).unwrap().unwrap();
+        let decisions = lib
+            .suggestion(sid)
+            .unwrap()
+            .metadata
+            .iter()
+            .map(|e| (e.id, true))
+            .collect::<Vec<_>>();
+        assert_eq!(decisions.len(), 2);
+        let revision = lib.decide_metadata(decisions).unwrap().revision;
+        let path = lib.path().to_owned();
+        drop(lib);
+        let mut lib = Library::open(&path).unwrap();
+        assert_ne!(lib.book().glossary().unwrap(), glossary);
+        assert_ne!(lib.book().story_notes().unwrap(), notes);
+        if conflict {
+            let mut fields = original.fields.clone();
+            fields.rendering = "Later choice".into();
+            lib.book_mut()
+                .apply(Change::UpsertTerm {
+                    id: Some(original.id),
+                    fields,
+                    status: original.status,
+                    first_chapter: original.first_chapter,
+                })
+                .unwrap();
+        }
+        assert!(lib.revisions().unwrap().iter().any(|r| r.id == revision));
+        let preview = lib.preview_undo(revision).unwrap();
+        assert!(
+            preview
+                .revision
+                .label
+                .contains("Accepted glossary change for")
+        );
+        assert!(preview.changes.contains(&("proposed_metadata", 2)));
+        assert!(!preview.chapters.is_empty());
+        assert_eq!(
+            super::undo_mode(&preview.revision),
+            cipher_book::UndoMode::SkipConflicts
+        );
+        assert_eq!(
+            preview.conflicts.iter().any(|c| c.entity == "term"),
+            conflict
+        );
+        if conflict {
+            assert!(
+                preview
+                    .conflict_chapters
+                    .iter()
+                    .any(|(c, _)| c.entity == "term")
+            );
+        }
+        let cipher_book::UndoOutcome::Undone { skipped, .. } = lib.undo_revision(revision).unwrap()
+        else {
+            panic!("metadata undo refused");
+        };
+        assert_eq!(skipped.iter().any(|c| c.entity == "term"), conflict);
+        assert_eq!(lib.book().story_notes().unwrap(), notes);
+        if conflict {
+            assert_eq!(
+                lib.terms
+                    .iter()
+                    .find(|t| t.id == original.id)
+                    .unwrap()
+                    .rendering,
+                "Later choice"
+            );
+        } else {
+            assert_eq!(lib.book().glossary().unwrap(), glossary);
+            assert_eq!(
+                lib.terms
+                    .iter()
+                    .find(|t| t.id == original.id)
+                    .unwrap()
+                    .rendering,
+                original.fields.rendering
+            );
+        }
+        for edit in &lib.suggestion(sid).unwrap().metadata {
+            let expected =
+                if conflict && matches!(edit.change, cipher_book::MetadataChange::Term { .. }) {
+                    EditState::Stale
+                } else {
+                    EditState::Pending
+                };
+            assert_eq!(edit.state, expected);
+        }
+        assert!(!lib.scanned());
+        let scan = lib.scan()().unwrap();
+        lib.apply_scan(scan);
+        assert!(lib.scanned());
+    }
+}
+
+#[test]
+fn chapter_labels_use_saved_titles_and_preserve_untitled_fallbacks() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 1, &["바람이 불었다."]);
+    let mut lib = Library::from_book(b).unwrap();
+    for title in [None, Some(""), Some("  \n"), Some("A lantern in the mist")] {
+        let expected = title.filter(|t| !t.trim().is_empty());
+        lib.chapters[0].title = title.map(str::to_owned);
+        lib.page.title = title.map(str::to_owned);
+        assert_eq!(lib.page().title(), expected);
+        for opening in ["The wind blew.", ""] {
+            lib.chapters[0].opening = opening.into();
+            assert_eq!(
+                lib.chapters[0].label(),
+                expected.unwrap_or(if opening.is_empty() {
+                    "Chapter 1"
+                } else {
+                    opening
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn draft_title_reaches_reader_and_contents_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    let intake = lib
+        .intake("# Chapter 1: A lantern in the mist\n\n그녀는 안개 속에서 등불을 들었다.")
+        .unwrap();
+    let at = lib.add_chapter(&intake).unwrap();
+    lib.open_chapter(at).unwrap();
+    assert_eq!(lib.page().title(), Some("A lantern in the mist"));
+    assert_eq!(lib.chapters[at].label(), "A lantern in the mist");
+    drop(lib);
+
+    let lib = Library::from_book(Book::open(dir.path().join("t.cipher")).unwrap()).unwrap();
+    assert_eq!(lib.page().title(), Some("A lantern in the mist"));
+    assert_eq!(lib.chapters[0].label(), "A lantern in the mist");
+    assert_eq!(lib.chapters[0].state, ChapterState::Queued);
+    assert_eq!(
+        lib.page().source[0].text,
+        "그녀는 안개 속에서 등불을 들었다."
+    );
+}
+
+#[test]
+fn successive_review_accepts_keep_every_revision_for_undo() {
+    for accept_prose in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        let tid = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+        let ch = chapter(&mut b, 1, &["마탑주가 웃었다."]);
+        translate(&mut b, ch, &["The Magic Tower Lord smiled."], None);
+        b.apply(Change::AddStoryNote {
+            chapter: None,
+            text: "The Magic Tower Lord smiled.".into(),
+        })
+        .unwrap();
+        let glossary = b.glossary().unwrap();
+        let notes = b.story_notes().unwrap();
+        let original_chapter = b.chapter(ch).unwrap();
+        let path = b.path().to_owned();
+        drop(b);
+        let mut lib = Library::open(&path).unwrap();
+        let at = lib.terms.iter().position(|t| t.id == tid).unwrap();
+        let sid = lib.use_wording(at, "Tower Master", &[]).unwrap().unwrap();
+        let metadata: Vec<_> = lib
+            .suggestion(sid)
+            .unwrap()
+            .metadata
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(metadata.len(), 2);
+        let mut state = crate::state::State::new(lib);
+        for eid in metadata {
+            state.review_metadata(sid, vec![(eid, true)]);
+        }
+        assert_ne!(state.lib.book().glossary().unwrap(), glossary);
+        assert_ne!(state.lib.book().story_notes().unwrap(), notes);
+        if accept_prose {
+            state.accept_all(sid);
+            assert_ne!(state.lib.book().chapter(ch).unwrap(), original_chapter);
+        }
+        assert_eq!(state.fix.finished.len(), 1);
+        let finished = &state.fix.finished[0];
+        let count = if accept_prose { 3 } else { 2 };
+        assert_eq!(finished.revisions.len(), count);
+        assert!(finished.revisions.windows(2).all(|r| r[0].0 < r[1].0));
+        assert_eq!(finished.applied, count);
+        assert_eq!((finished.stale, finished.skipped), (0, 0));
+        assert_eq!(
+            finished.chapters,
+            if accept_prose { vec![ch] } else { vec![] }
+        );
+        state.undo(sid);
+        assert_eq!(state.lib.book().glossary().unwrap(), glossary);
+        assert_eq!(state.lib.book().story_notes().unwrap(), notes);
+        assert_eq!(state.lib.book().chapter(ch).unwrap(), original_chapter);
+        assert!(state.fix.finished.is_empty());
+        let pending = state.lib.suggestion(sid).unwrap();
+        assert!(
+            pending
+                .metadata
+                .iter()
+                .all(|e| e.state == EditState::Pending)
+        );
+        assert!(pending.edits.iter().all(|e| e.state == EditState::Pending));
+    }
+}
+
+#[test]
+fn drift_metadata_review_reloads_the_glossary_and_undo_restores_pending_items() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let tid = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+    let ch = chapter(&mut b, 1, &["마탑주가 웃었다."]);
+    translate(&mut b, ch, &["The Tower Master smiled."], None);
+    let path = b.path().to_owned();
+    drop(b);
+    let mut lib = Library::open(&path).unwrap();
+    let at = lib.terms.iter().position(|t| t.id == tid).unwrap();
+    let sid = lib.use_wording(at, "Tower Master", &[]).unwrap().unwrap();
+    assert_eq!(lib.terms[at].rendering, "Magic Tower Lord");
+    assert!(lib.suggestion(sid).unwrap().edits.is_empty());
+    let eid = lib.suggestion(sid).unwrap().metadata[0].id;
+    assert!(
+        lib.decide_metadata(vec![(MetadataEditId(-1), true)])
+            .is_err()
+    );
+    let empty = lib.decide_metadata(Vec::new()).unwrap();
+    assert_eq!((empty.applied, empty.stale), (0, 0));
+    let decided = lib.decide_metadata(vec![(eid, true)]).unwrap();
+    assert_eq!((decided.applied, decided.stale), (1, 0));
+    assert_eq!(lib.terms[at].rendering, "Tower Master");
+    assert!(lib.suggestion(sid).is_none());
+    lib.undo_review(decided.revision, &[]).unwrap();
+    assert_eq!(lib.terms[at].rendering, "Magic Tower Lord");
+    assert_eq!(
+        lib.suggestion(sid).unwrap().metadata[0].state,
+        EditState::Pending
+    );
+    let result = lib.decide_metadata(vec![(eid, false)]).unwrap();
+    assert_eq!(result.applied, 0);
+    let s = lib.book().suggestions(SuggestionFilter::default()).unwrap();
+    assert_eq!(s[0].metadata[0].state, EditState::Rejected);
+}
 
 #[test]
 fn counts_and_order_of_first_appearance() {

@@ -42,6 +42,8 @@ pub enum Msg {
     Scanned(Result<crate::library::Scan, String>),
     /// The models an Endpoint's plan offers: (Endpoint id, slugs).
     ModelsListed(String, Result<Vec<String>, String>),
+    /// An API-key Endpoint's model list, for the form `id` asking that protocol and base URL.
+    ModelsFetched(String, crate::settings::Source, Result<Vec<String>, String>),
     /// How many Chapters an old import's Pairs were re-paired in.
     Realigned(Result<usize, String>),
     /// How the Book names a Term (`Library::evidence`), for the Library generation it was
@@ -260,6 +262,9 @@ impl crate::state::State {
                 Msg::OpenUrl(url) => self.open_url(tx, &url),
                 Msg::Imported(result) => self.on_imported(result),
                 Msg::ModelsListed(id, result) => self.on_models_listed(id, result),
+                Msg::ModelsFetched(id, source, result) => {
+                    self.on_models_fetched(id, source, result)
+                }
                 Msg::Realigned(Ok(0)) => {}
                 Msg::Realigned(Ok(n)) => self.on_realigned(n),
                 Msg::Realigned(Err(e)) => {

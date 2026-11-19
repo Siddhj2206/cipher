@@ -1,5 +1,5 @@
 //! The Job queue. Jobs are operational state, outside Revisions: they live in the Book so
-//! work survives sleep and restarts, but undo never touches them.
+//! work survives sleep and restarts. Undoing an added Chapter removes its unstarted Jobs.
 
 use rusqlite::{OptionalExtension, Row, TransactionBehavior, params};
 

@@ -490,7 +490,7 @@ fn opener(s: &State, page: &Page, side: Side, p: &Pal) -> El {
     } else {
         "CHAPTER".to_string()
     };
-    col()
+    let mut opener = col()
         .key(format!("opener{}", page.index))
         .pl(GUTTER_W)
         .pb(36.0)
@@ -500,8 +500,17 @@ fn opener(s: &State, page: &Page, side: Side, p: &Pal) -> El {
             text(page.number.to_string())
                 .font(TextStyle::new(60.0, 300.0).lh(72.0).family(SERIF))
                 .color(p.ink),
-        )
-        .child(el().w(36.0).h(1.5).fill(p.ink).mt(14.0))
+        );
+    if let Some(title) = page.title() {
+        opener = opener.child(
+            text(title)
+                .font(TextStyle::new(26.0, 400.0).lh(34.0).family(SERIF))
+                .color(p.ink)
+                .w(s.text_width())
+                .wrap(),
+        );
+    }
+    opener.child(el().w(36.0).h(1.5).fill(p.ink).mt(14.0))
 }
 
 /// The quiet line after the last Chapter.

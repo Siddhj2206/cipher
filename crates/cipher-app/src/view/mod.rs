@@ -9,6 +9,7 @@ mod draft;
 mod drift;
 mod fix;
 mod header;
+mod history;
 mod notes;
 mod page;
 mod palette;
@@ -95,6 +96,7 @@ fn screen(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Cast => cast::cast(s, &p),
         Screen::Draft => draft::draft_page(s, &p),
         Screen::Style => style::style_page(s, &p),
+        Screen::History => history::history_page(s, &p),
         Screen::Reading => page::reading(s, cx, &p),
     };
     let mut middle = row().w_full().grow(1.0).min_h(0.0);
