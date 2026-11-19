@@ -23,7 +23,7 @@ Every write goes through a `Writer` that snapshots the whole row before and afte
 
 Covered by Revisions: chapter, pair, block, term, forbidden_rendering, style_rule, form_of_address, story_note, suggestion, proposed_edit. Outside them, as operational state: book_meta, job, publish_state.
 
-Undoing an added Chapter removes its queued, never-started Jobs in the same transaction. Started Jobs or Jobs with dependents block that Undo; previews report those Jobs as conflicts. If the Chapter cannot be removed, its Jobs remain untouched.
+Undoing an added Chapter removes its queued, never-started Jobs in the same transaction. Jobs with saved input, partial output, attempts or dependents, or Jobs no longer queued, block that Undo; previews report those Jobs as conflicts. If the Chapter cannot be removed, its Jobs remain untouched.
 
 `Book::preview_undo` runs the same Undo algorithm in an Immediate transaction using `SkipConflicts`, then always rolls it back. It returns the Revision, sorted affected Chapter ids, per-entity change counts, conflicts (including foreign-key-blocked restores) with Chapter locations, and any `already_undone_by`. It creates no Revision and changes no data.
 

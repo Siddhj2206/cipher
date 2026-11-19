@@ -76,6 +76,35 @@ fn history_fixture() -> (tempfile::TempDir, Library) {
 }
 
 #[test]
+fn history_undo_preserves_retried_jobs_with_saved_progress() {
+    for (input, partial) in [(Some("Saved request"), ""), (None, "Partial translation")] {
+        let mut lib = Library::blank();
+        let intake = lib.intake("# Chapter 1\n\nSource paragraph").unwrap();
+        lib.add_chapter(&intake).unwrap();
+        let revision = lib.revisions().unwrap()[0].id;
+        let mut job = lib.book_mut().claim_next_job().unwrap().unwrap();
+        job.state = cipher_book::JobState::Failed;
+        job.input = input.map(str::to_owned);
+        job.partial = partial.into();
+        lib.book_mut().save_job(&job).unwrap();
+        lib.book_mut().retry_job(job.id).unwrap();
+        let saved = lib.book().job(job.id).unwrap();
+        assert_eq!(saved.attempts, 0);
+        assert_eq!(saved.state, cipher_book::JobState::Queued);
+        let preview = lib.preview_undo(revision).unwrap();
+        assert!(preview.conflicts.iter().any(|c| c.entity == "job"));
+        assert!(matches!(
+            lib.undo_revision(revision).unwrap(),
+            cipher_book::UndoOutcome::Conflict { .. }
+        ));
+        let after = lib.book().job(job.id).unwrap();
+        assert_eq!(after.input, saved.input);
+        assert_eq!(after.partial, saved.partial);
+        assert_eq!(lib.chapters.len(), 1);
+    }
+}
+
+#[test]
 fn history_undo_of_added_chapter_removes_unstarted_jobs_but_refuses_running_jobs() {
     for running in [false, true] {
         let mut lib = Library::blank();
