@@ -207,7 +207,6 @@ fn setup(s: &mut State, waker: Waker) {
 }
 
 fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
-    let finding = s.poll_find(tx);
     let scrolled = match s.pending_scroll.take() {
         Some((key, y)) => {
             tx.scroll_key_to(key, y);
@@ -220,7 +219,8 @@ fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
     }
     let settled = s.settle_strip(tx);
     s.start_scan();
-    let changed = s.drain(tx) || scrolled || settled || finding;
+    let changed = s.drain(tx) || scrolled || settled;
+    let changed = s.poll_find(tx) || changed;
     let now = tx.clock();
     let changed = s.settle_toast(now, tx) || changed;
     s.save_prefs();

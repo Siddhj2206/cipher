@@ -134,7 +134,9 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
             }
         })
         .collect();
-    if let Some(f) = &s.find {
+    if let Some(f) = &s.find
+        && f.book_generation == s.lib.text_generation()
+    {
         for (i, hit) in f
             .results
             .hits

@@ -55,6 +55,7 @@ pub struct Find {
     pub searched: String,
     pub search: Search,
     pub due: Option<f64>,
+    pub book_generation: (u64, u64),
 }
 
 impl Find {
@@ -68,8 +69,10 @@ impl Find {
         self.due = self.searching.then_some(f64::INFINITY);
     }
 
-    fn schedule(&mut self, now: f64) -> bool {
-        let changed = self.searched != self.query.text;
+    fn schedule(&mut self, now: f64, book_generation: (u64, u64)) -> bool {
+        let changed = self.searched != self.query.text
+            || (self.book_generation != book_generation && !self.query.text.trim().is_empty());
+        self.book_generation = book_generation;
         if changed {
             self.restart();
         }
@@ -175,6 +178,7 @@ impl State {
             searched: String::new(),
             search: Search::default(),
             due: None,
+            book_generation: (0, 0),
         });
         f.query.focused = true;
         f.query.anchor = 0;
@@ -193,7 +197,7 @@ impl State {
         let Some(f) = &mut self.find else {
             return false;
         };
-        let changed = f.schedule(tx.clock());
+        let changed = f.schedule(tx.clock(), self.lib.text_generation());
         let Some(due) = f.due else {
             return changed;
         };
@@ -212,6 +216,7 @@ impl State {
     }
 
     pub fn found(&mut self, generation: u64, result: Result<Results, String>, tx: &mut Tx) {
+        self.poll_find(tx);
         let Some(f) = &mut self.find else {
             return;
         };
@@ -229,6 +234,7 @@ impl State {
     }
 
     pub fn jump_find(&mut self, tx: &mut Tx) {
+        self.poll_find(tx);
         let Some(hit) = self
             .find
             .as_ref()
@@ -251,6 +257,7 @@ impl State {
     }
 
     pub fn step_find(&mut self, tx: &mut Tx, backwards: bool) {
+        self.poll_find(tx);
         if let Some(f) = &mut self.find {
             let n = f.results.hits.len();
             if n == 0 {
@@ -292,29 +299,92 @@ mod tests {
             searched: String::new(),
             search: Search::default(),
             due: None,
+            book_generation: (0, 0),
         };
-        assert!(!f.schedule(1.0));
+        assert!(!f.schedule(1.0, (0, 0)));
         assert_eq!(f.due, None);
         f.query.text = "타".into();
-        assert!(f.schedule(2.0));
+        assert!(f.schedule(2.0, (0, 0)));
         assert_eq!(f.due, Some(2.15));
         assert!(f.searching);
         let superseded = f.search.clone();
         f.query.text = "탑".into();
-        assert!(f.schedule(2.1));
+        assert!(f.schedule(2.1, (0, 0)));
         assert_eq!(f.due, Some(2.1 + 0.15));
         assert!(superseded.cancelled());
-        assert!(!f.schedule(2.2));
+        assert!(!f.schedule(2.2, (0, 0)));
         assert_eq!(f.due, Some(2.1 + 0.15));
         f.due = None;
-        assert!(!f.schedule(3.0));
+        assert!(!f.schedule(3.0, (0, 0)));
         assert_eq!(f.due, None);
         for query in ["", "  "] {
             f.query.text = query.into();
-            assert!(f.schedule(4.0));
+            assert!(f.schedule(4.0, (0, 0)));
             assert!(!f.searching);
             assert!(f.results.hits.is_empty());
             assert_eq!(f.due, None);
+        }
+    }
+
+    #[test]
+    fn find_restarts_after_book_text_refresh_or_reload() {
+        for reload in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("find.cipher");
+            cipher_engine::import(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/the-quiet-tower"),
+                &path,
+            )
+            .unwrap();
+            let mut s = State::new(Library::open(&path).unwrap());
+            let mut tx = Tx::default();
+            s.open_find(&mut tx);
+            s.find.as_mut().unwrap().query.text = "tower".into();
+            s.poll_find(&mut tx);
+            let f = s.find.as_mut().unwrap();
+            f.due = None;
+            let generation = f.generation;
+            let search = f.search.clone();
+            let results =
+                s.lib
+                    .find_job("tower".into(), Side::Translation, search.clone())()
+                .unwrap();
+            let block = results.hits[0].block;
+            s.found(generation, Ok(results), &mut tx);
+            assert!(!s.find.as_ref().unwrap().results.hits.is_empty());
+            let stale =
+                s.lib
+                    .find_job("tower".into(), Side::Translation, search.clone())()
+                .unwrap();
+            s.lib
+                .book_mut()
+                .apply(cipher_book::Change::EditBlock {
+                    block,
+                    text: "A quiet place.".into(),
+                    hand: true,
+                })
+                .unwrap();
+            if reload {
+                s.lib.reload().unwrap();
+            } else {
+                s.lib.refresh_chapters(&[0]).unwrap();
+            }
+            s.poll_find(&mut tx);
+            let f = s.find.as_ref().unwrap();
+            assert_ne!(f.generation, generation);
+            assert!(f.searching);
+            assert!(f.results.hits.is_empty());
+            assert!(search.cancelled());
+            s.found(generation, Ok(stale), &mut tx);
+            assert!(s.find.as_ref().unwrap().results.hits.is_empty());
+            let f = s.find.as_mut().unwrap();
+            f.due = None;
+            let generation = f.generation;
+            let results = s.lib.find_job("tower".into(), f.scope, f.search.clone())().unwrap();
+            assert!(results.hits.iter().all(|h| h.block != block));
+            s.found(generation, Ok(results), &mut tx);
+            assert!(!s.find.as_ref().unwrap().searching);
         }
     }
 

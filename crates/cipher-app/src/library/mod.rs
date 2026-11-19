@@ -135,6 +135,7 @@ pub struct Library {
     scanned: bool,
     /// Which load this is, so a scan started before a reload is never applied after it.
     generation: u64,
+    text_revision: u64,
 }
 
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -247,6 +248,10 @@ impl Library {
     /// Which load of a Book this is; a reload is a new one.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    pub fn text_generation(&self) -> (u64, u64) {
+        (self.generation, self.text_revision)
     }
 
     /// The work [`Library::open_quick`] left, as a job for another thread. Hand what it
@@ -390,6 +395,7 @@ impl Library {
             near: Default::default(),
             scanned: chapters_empty,
             generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            text_revision: 0,
         };
         lib.refresh_queue()?;
         lib.derive_usage();
@@ -523,6 +529,9 @@ impl Library {
 
     /// Re-reads several Chapters after they changed, recomputing only their numbers.
     pub fn refresh_chapters(&mut self, indices: &[usize]) -> Result<()> {
+        if !indices.is_empty() {
+            self.text_revision = self.text_revision.wrapping_add(1);
+        }
         let summaries = self.book.chapters()?;
         for &index in indices {
             let id = self.chapters[index].id;
