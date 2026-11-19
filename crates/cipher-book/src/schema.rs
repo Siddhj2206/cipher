@@ -6,7 +6,19 @@ use crate::{Error, Result};
 
 /// One entry per schema version; `PRAGMA user_version` counts how many have run.
 /// Never edit a migration once a real Book has been written with it: append a new one.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+
+const V5: &str = r#"
+CREATE TABLE proposed_metadata (
+  id INTEGER PRIMARY KEY,
+  suggestion_id INTEGER NOT NULL REFERENCES suggestion(id),
+  change TEXT NOT NULL,
+  expected TEXT NOT NULL,
+  before TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('pending', 'accepted', 'rejected', 'stale'))
+);
+CREATE INDEX proposed_metadata_suggestion ON proposed_metadata(suggestion_id);
+"#;
 
 const V1: &str = r#"
 CREATE TABLE book_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
