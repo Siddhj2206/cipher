@@ -55,7 +55,7 @@ Three columns, each with a 52px header row so the headers line up.
 - **Progress:** one hairline bar (translated in ink3, waiting in amber) and the line "92 translated · 2 waiting · 94 chapters".
 - **Pages:** Reading, Cast & terms (with its drifting count), Style and New chapter (Ctrl N).
 - **Chapter list:**
-  - each row shows the number in tabular figures, the Chapter's opening line (two lines, serif) and badges;
+  - each row shows the number in tabular figures, the saved Chapter title (or its opening line when untitled; two lines, serif) and badges;
   - badges: a red count of pending Proposed Edits, an amber dot for waiting to translate;
   - the current Chapter has a selected fill and a red number;
   - the list scrolls to follow the current Chapter.
@@ -83,7 +83,7 @@ Three columns, each with a 52px header row so the headers line up.
 
 ## The page
 
-- **Opener:** a red tracked label "CHAPTER", the number set at 60px light serif, and a 36px rule. There is no title and no counts.
+- **Opener:** a red tracked label "CHAPTER", the number set at 60px light serif, the saved title when present, and a 36px rule. Untitled Chapters show only the number; there are no counts.
 - **Paragraphs:** serif 18/31 with 18px between paragraphs. A Translation's leading `# Chapter N:` heading Block is not shown, since the opener replaces it.
 - **Glossary Terms:**
   - a faint underline; hover shows the source form and definition as a tooltip, with a tinted background;

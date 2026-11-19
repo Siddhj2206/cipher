@@ -64,6 +64,54 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 const LORD: &str = "마탑주";
 
 #[test]
+fn chapter_labels_use_saved_titles_and_preserve_untitled_fallbacks() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 1, &["바람이 불었다."]);
+    let mut lib = Library::from_book(b).unwrap();
+    for title in [None, Some(""), Some("  \n"), Some("A lantern in the mist")] {
+        let expected = title.filter(|t| !t.trim().is_empty());
+        lib.chapters[0].title = title.map(str::to_owned);
+        lib.page.title = title.map(str::to_owned);
+        assert_eq!(lib.page().title(), expected);
+        for opening in ["The wind blew.", ""] {
+            lib.chapters[0].opening = opening.into();
+            assert_eq!(
+                lib.chapters[0].label(),
+                expected.unwrap_or(if opening.is_empty() {
+                    "Chapter 1"
+                } else {
+                    opening
+                })
+            );
+        }
+    }
+}
+
+#[test]
+fn draft_title_reaches_reader_and_contents_after_reopen() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    let intake = lib
+        .intake("# Chapter 1: A lantern in the mist\n\n그녀는 안개 속에서 등불을 들었다.")
+        .unwrap();
+    let at = lib.add_chapter(&intake).unwrap();
+    lib.open_chapter(at).unwrap();
+    assert_eq!(lib.page().title(), Some("A lantern in the mist"));
+    assert_eq!(lib.chapters[at].label(), "A lantern in the mist");
+    drop(lib);
+
+    let lib = Library::from_book(Book::open(dir.path().join("t.cipher")).unwrap()).unwrap();
+    assert_eq!(lib.page().title(), Some("A lantern in the mist"));
+    assert_eq!(lib.chapters[0].label(), "A lantern in the mist");
+    assert_eq!(lib.chapters[0].state, ChapterState::Queued);
+    assert_eq!(
+        lib.page().source[0].text,
+        "그녀는 안개 속에서 등불을 들었다."
+    );
+}
+
+#[test]
 fn successive_review_accepts_keep_every_revision_for_undo() {
     for accept_prose in [false, true] {
         let dir = tempfile::tempdir().unwrap();

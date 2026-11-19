@@ -51,6 +51,7 @@ pub struct ChapterRow {
     pub id: ChapterId,
     /// The Chapter's number, or its position when it has none.
     pub number: i64,
+    pub title: Option<String>,
     pub state: ChapterState,
     /// Translated Blocks marked Outdated.
     pub outdated: usize,
@@ -78,7 +79,21 @@ pub struct MadeBy {
     pub at: i64,
 }
 
+fn chapter_title(title: Option<&str>) -> Option<&str> {
+    title.filter(|title| !title.trim().is_empty())
+}
+
 impl ChapterRow {
+    pub fn label(&self) -> String {
+        if let Some(title) = chapter_title(self.title.as_deref()) {
+            title.to_owned()
+        } else if self.opening.is_empty() {
+            format!("Chapter {}", self.number)
+        } else {
+            self.opening.clone()
+        }
+    }
+
     /// Not yet translated, whatever the reason.
     pub fn untranslated(&self) -> bool {
         !matches!(self.state, ChapterState::Translated | ChapterState::Empty)
@@ -343,6 +358,7 @@ impl Library {
             chapters.push(ChapterRow {
                 id: s.id,
                 number: s.number.unwrap_or(i as i64 + 1),
+                title: s.title.clone(),
                 state: s.state,
                 outdated: s.outdated,
                 opening: String::new(),
@@ -516,6 +532,7 @@ impl Library {
             self.stats[index] = stats::compute(&ch, &self.terms, &self.check, &self.pre);
             let row = &mut self.chapters[index];
             row.state = summary.state;
+            row.title = summary.title.clone();
             row.outdated = summary.outdated;
             row.opening = opening_line(&ch);
         }
