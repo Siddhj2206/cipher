@@ -7,7 +7,7 @@ here=$(dirname "$0")
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for m in start positioned dragged stepped canceled narrow priority restored minimum; do
-  "$bin" "$book" --size 1480x920 --scale 1 --fps 30 --script "$here/sidebars.json" \
+  "$bin" "$book" --size 1480x920 --scale 1 --fps 15 --script "$here/sidebars.json" \
     --at "mark:$m" --tree "$tmp/$m.json" 2>"$tmp/log" || { cat "$tmp/log"; exit 1; }
 done
 python3 -I - "$tmp" <<'PY'
