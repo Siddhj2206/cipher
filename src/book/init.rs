@@ -225,6 +225,17 @@ const STYLE_TEMPLATE: &str = r#"# Style Guide
 - Do not include the top chapter heading inside `content`
 "#;
 
+pub fn load_book_config(path: &Path) -> anyhow::Result<BookConfig> {
+    if !path.exists() {
+        return Ok(BookConfig::default());
+    }
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read book config from {}", path.display()))?;
+    let config: BookConfig = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse book config from {}", path.display()))?;
+    Ok(config)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -272,15 +283,4 @@ style_path = "style.md"
         assert_eq!(config.raw_dir, "source");
         assert_eq!(config.out_dir, "target");
     }
-}
-
-pub fn load_book_config(path: &Path) -> anyhow::Result<BookConfig> {
-    if !path.exists() {
-        return Ok(BookConfig::default());
-    }
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read book config from {}", path.display()))?;
-    let config: BookConfig = toml::from_str(&content)
-        .with_context(|| format!("Failed to parse book config from {}", path.display()))?;
-    Ok(config)
 }
