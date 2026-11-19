@@ -8,9 +8,7 @@ use super::notes;
 use super::widgets::{dot, icon_btn, plural, scrolling, section};
 use crate::library::TermInfo;
 use crate::state::{State, Tab, TermCard};
-use crate::theme::{
-    CJK, HEADER_H, I_RIGHT_PANEL, I_X, LABEL, Pal, RIGHT_W, SERIF, SMALL, UI, UI_MED,
-};
+use crate::theme::{CJK, HEADER_H, I_RIGHT_PANEL, I_X, LABEL, Pal, SERIF, SMALL, UI, UI_MED};
 
 /// "never Tower Master, Mage Lord"
 fn never(t: &TermInfo) -> Option<String> {
@@ -155,7 +153,19 @@ fn listed(s: &State) -> Vec<(usize, u32)> {
     v
 }
 
-pub fn context(s: &State, p: &Pal) -> El {
+pub fn context(s: &State, p: &Pal, width: f32) -> El {
+    let pane = col()
+        .key("context")
+        .w(width)
+        .h_full()
+        .fill(p.side)
+        .border_sides([0.0, 0.0, 0.0, 1.0], p.rule);
+    if s.lib.chapters.is_empty() {
+        return pane
+            .px(18.0)
+            .py(24.0)
+            .child(text("No chapters yet.").font(SMALL).color(p.ink3));
+    }
     let cur = s.lib.current();
     let here = listed(s);
     let open = s.lib.open_suggestions;
@@ -333,12 +343,36 @@ pub fn context(s: &State, p: &Pal) -> El {
             }
         }
     }
-    col()
-        .key("context")
-        .w(RIGHT_W)
-        .h_full()
-        .fill(p.side)
-        .border_sides([0.0, 0.0, 0.0, 1.0], p.rule)
-        .child(header)
-        .child(scrolling(body, "context-body"))
+    pane.child(header).child(scrolling(body, "context-body"))
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn context_renders_after_history_undo_removes_the_only_chapter() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut book = cipher_book::Book::create(
+            dir.path().join("empty.cipher"),
+            cipher_book::BookMeta {
+                title: "Test".into(),
+                source_lang: "ko".into(),
+                target_lang: "en".into(),
+            },
+        )
+        .unwrap();
+        book.apply(cipher_book::Change::AddChapter {
+            number: Some(1),
+            title: None,
+            source: vec!["Source".into()],
+        })
+        .unwrap();
+        let mut s = State::new(crate::library::Library::from_book(book).unwrap());
+        s.open_history();
+        s.undo_history();
+        assert!(s.lib.chapters.is_empty());
+        s.screen = crate::state::Screen::Reading;
+        context(&s, &crate::theme::pal(false), s.prefs.context_width);
+    }
 }

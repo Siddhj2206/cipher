@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use rusqlite::types::Value;
 use rusqlite::{OptionalExtension, params};
 
-use crate::revision::{Table, Writer};
+use crate::revision::{Table, Writer, snapshot};
 use crate::types::*;
 use crate::{Error, Result};
 
@@ -40,6 +40,13 @@ pub enum Change {
     },
     /// Creates a Suggestion id.
     AddSuggestion(NewSuggestion),
+    AddSuggestionWithMetadata {
+        suggestion: NewSuggestion,
+        changes: Vec<MetadataChange>,
+    },
+    DecideMetadata {
+        decisions: Vec<(MetadataEditId, bool)>,
+    },
     AddProposedEdits {
         suggestion: SuggestionId,
         edits: Vec<NewProposedEdit>,
@@ -124,10 +131,11 @@ impl Change {
             SetTranslation { .. } | FlagPair { .. } => RevisionKind::Translation,
             EditBlock { hand: true, .. } => RevisionKind::HandEdit,
             EditBlock { hand: false, .. } => RevisionKind::Translation,
-            AddSuggestion(_) | AddProposedEdits { .. } | SetSuggestionState { .. } => {
-                RevisionKind::Suggestion
-            }
-            DecideEdits { .. } => RevisionKind::Review,
+            AddSuggestion(_)
+            | AddSuggestionWithMetadata { .. }
+            | AddProposedEdits { .. }
+            | SetSuggestionState { .. } => RevisionKind::Suggestion,
+            DecideEdits { .. } | DecideMetadata { .. } => RevisionKind::Review,
             UpsertTerm { .. }
             | SetTermStatus { .. }
             | DeleteTerm { .. }
@@ -153,6 +161,119 @@ pub(crate) fn apply(tx: &rusqlite::Transaction<'_>, change: Change) -> Result<Ap
     Ok(Applied { revision, created })
 }
 
+pub(crate) fn metadata_snapshot(
+    conn: &rusqlite::Connection,
+    change: &MetadataChange,
+) -> Result<String> {
+    let rows = match change {
+        MetadataChange::Term { term, .. } => {
+            let mut rows = vec![snapshot(conn, Table::Term, term.0)?];
+            let mut stmt = conn.prepare(
+                "SELECT id FROM forbidden_rendering WHERE term_id = ?1 ORDER BY rendering, id",
+            )?;
+            let ids = stmt
+                .query_map([term.0], |r| r.get::<_, i64>(0))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for id in ids {
+                rows.push(snapshot(conn, Table::ForbiddenRendering, id)?);
+            }
+            rows
+        }
+        MetadataChange::StoryNote { note, .. } => vec![snapshot(conn, Table::StoryNote, note.0)?],
+    };
+    Ok(serde_json::to_string(&rows)?)
+}
+
+fn decide_metadata(
+    w: &mut Writer<'_>,
+    decisions: Vec<(MetadataEditId, bool)>,
+    created: &mut Vec<i64>,
+) -> Result<String> {
+    let mut touched = Vec::new();
+    let (mut accepted, mut rejected, mut stale) = (0, 0, 0);
+    let mut accepted_labels = Vec::new();
+    for (id, accept) in decisions {
+        let (suggestion, payload, expected, state): (i64, String, String, String) = w.tx().query_row(
+            "SELECT suggestion_id, change, expected, state FROM proposed_metadata WHERE id = ?1", [id.0],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        ).optional()?.ok_or(Error::NotFound("proposed_metadata", id.0))?;
+        if state != "pending" && state != "stale" {
+            continue;
+        }
+        let change: MetadataChange = serde_json::from_str(&payload)?;
+        let state = if !accept {
+            rejected += 1;
+            EditState::Rejected
+        } else if state == "stale" || metadata_snapshot(w.tx(), &change)? != expected {
+            stale += 1;
+            EditState::Stale
+        } else {
+            match change {
+                MetadataChange::Term {
+                    term,
+                    fields,
+                    forbidden,
+                } => {
+                    accepted_labels.push(format!("glossary change for {}", fields.source));
+                    let status: String = w.tx().query_row(
+                        "SELECT status FROM term WHERE id = ?1",
+                        [term.0],
+                        |r| r.get(0),
+                    )?;
+                    write(
+                        w,
+                        Change::UpsertTerm {
+                            id: Some(term),
+                            fields,
+                            status: TermStatus::parse(&status)?,
+                            first_chapter: None,
+                        },
+                        created,
+                    )?;
+                    for rendering in forbidden {
+                        write(w, Change::AddForbidden { term, rendering }, created)?;
+                    }
+                }
+                MetadataChange::StoryNote { note, text } => {
+                    accepted_labels.push("story note change".into());
+                    write(
+                        w,
+                        Change::EditStoryNote {
+                            id: note,
+                            text: Some(text),
+                        },
+                        created,
+                    )?;
+                }
+            }
+            accepted += 1;
+            EditState::Accepted
+        };
+        w.update(
+            Table::ProposedMetadata,
+            id.0,
+            &[("state", text(state.as_str()))],
+        )?;
+        touched.push(suggestion);
+    }
+    touched.sort_unstable();
+    touched.dedup();
+    for id in touched {
+        let open: i64 = w.tx().query_row(
+            "SELECT (SELECT COUNT(*) FROM proposed_edit WHERE suggestion_id = ?1 AND state = 'pending') + (SELECT COUNT(*) FROM proposed_metadata WHERE suggestion_id = ?1 AND state IN ('pending', 'stale'))", [id], |r| r.get(0),
+        )?;
+        if open == 0 {
+            w.update(Table::Suggestion, id, &[("state", text("done"))])?;
+        }
+    }
+    if accepted > 0 && rejected == 0 && stale == 0 {
+        return Ok(format!("Accepted {}", accepted_labels.join(", ")));
+    }
+    Ok(format!(
+        "Reviewed Book changes: {accepted} accepted, {rejected} rejected, {stale} stale"
+    ))
+}
+
 fn text(s: impl Into<String>) -> Value {
     Value::Text(s.into())
 }
@@ -176,6 +297,40 @@ fn plural(n: usize, one: &str) -> String {
 /// Writes one Change and returns its Revision label.
 fn write(w: &mut Writer<'_>, change: Change, created: &mut Vec<i64>) -> Result<String> {
     match change {
+        Change::AddSuggestionWithMetadata {
+            suggestion,
+            changes,
+        } => {
+            let label = write(w, Change::AddSuggestion(suggestion), created)?;
+            let id = *created.last().expect("created Suggestion");
+            for change in changes {
+                let expected = metadata_snapshot(w.tx(), &change)?;
+                let before: String = match &change {
+                    MetadataChange::Term { term, .. } => w.tx().query_row(
+                        "SELECT rendering FROM term WHERE id = ?1",
+                        [term.0],
+                        |r| r.get(0),
+                    )?,
+                    MetadataChange::StoryNote { note, .. } => w.tx().query_row(
+                        "SELECT text FROM story_note WHERE id = ?1",
+                        [note.0],
+                        |r| r.get(0),
+                    )?,
+                };
+                w.insert(
+                    Table::ProposedMetadata,
+                    &[
+                        ("suggestion_id", int(id)),
+                        ("change", text(serde_json::to_string(&change)?)),
+                        ("expected", text(expected)),
+                        ("before", text(before)),
+                        ("state", text("pending")),
+                    ],
+                )?;
+            }
+            Ok(label)
+        }
+        Change::DecideMetadata { decisions } => decide_metadata(w, decisions, created),
         Change::AddChapter {
             number,
             title,
@@ -687,6 +842,13 @@ fn set_translation(w: &mut Writer<'_>, chapter: ChapterId, pairs: Vec<NewPair>) 
                     )? {
                         w.delete(Table::ProposedEdit, edit)?;
                     }
+                    for edit in ids(
+                        w,
+                        "SELECT id FROM proposed_metadata WHERE suggestion_id = ?1",
+                        sid,
+                    )? {
+                        w.delete(Table::ProposedMetadata, edit)?;
+                    }
                     w.delete(Table::Suggestion, sid)?;
                 }
             }
@@ -771,7 +933,7 @@ fn decide_edits(w: &mut Writer<'_>, decisions: Vec<(ProposedEditId, bool)>) -> R
     touched.dedup();
     for s in touched {
         let open: i64 = w.tx().query_row(
-            "SELECT COUNT(*) FROM proposed_edit WHERE suggestion_id = ?1 AND state = 'pending'",
+            "SELECT (SELECT COUNT(*) FROM proposed_edit WHERE suggestion_id = ?1 AND state = 'pending') + (SELECT COUNT(*) FROM proposed_metadata WHERE suggestion_id = ?1 AND state IN ('pending', 'stale'))",
             [s],
             |r| r.get(0),
         )?;

@@ -96,7 +96,7 @@ A single change Cipher wants to make to one translated Block in response to a Su
 _Avoid_: Patch, diff, fix, change
 
 **Review**:
-The step where the user accepts, rejects, or adjusts Proposed Edits before any of them change the Translation. A Rename's exact replacements are reviewed as one group; model-written edits are reviewed one by one.
+The step where the user accepts, rejects, or adjusts Proposed Edits before any of them change the Translation. A Rename's exact replacements are reviewed as one group; model-written edits are reviewed one by one. Drift Keep also stages Glossary and Story Note items: these require their own explicit acceptance, independently of prose, including when there are no prose replacements. Staged items survive restarting the app; a changed Term or Story Note is flagged stale rather than overwritten.
 _Avoid_: Approval, confirmation
 
 **Hand Edit**:

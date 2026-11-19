@@ -380,6 +380,7 @@ impl Library {
             ChapterRow {
                 id,
                 number: summary.number.unwrap_or(at as i64 + 1),
+                title: summary.title.clone(),
                 state: summary.state,
                 outdated: summary.outdated,
                 opening: opening_line(&ch),

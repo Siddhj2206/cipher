@@ -2,8 +2,8 @@
 //! Book, so scenes that write (a Suggestion, a seeded Review) never touch the real one.
 
 use cipher_book::{
-    BlockId, Change, ChapterId, EditOrigin, NewProposedEdit, NewSuggestion, Scope, SuggestionId,
-    SuggestionKind, SuggestionState,
+    AddressFields, BlockId, Change, ChapterId, EditOrigin, NewProposedEdit, NewSuggestion, Scope,
+    SuggestionId, SuggestionKind, SuggestionState,
 };
 use rune::TextEdit;
 
@@ -165,6 +165,50 @@ fn focus_notes(s: &mut State) {
     seed_model(s, "Holy Scripture", "Divine Scripture", (4, 0, 0));
 }
 
+fn book_notes(s: &mut State) {
+    s.prefs.appearance = crate::prefs::Appearance::Light;
+    s.prefs.contents_open = true;
+    let chapters = s.lib.book().chapters().expect("scene chapters");
+    for (speaker, listener, source_form, rendering) in [
+        ("Erian", "Tower Master", "스승님", "Master"),
+        ("Erian", "Older apprentice", "형", "brother"),
+        ("Guild envoy", "Tower Master", "선배", "senior"),
+    ] {
+        s.lib
+            .book_mut()
+            .apply(Change::AddFormOfAddress(AddressFields {
+                speaker: speaker.into(),
+                listener: listener.into(),
+                source_form: source_form.into(),
+                rendering: rendering.into(),
+            }))
+            .expect("scene form");
+    }
+    for (chapter, text) in [
+        (
+            None,
+            "Erian is the Quiet Tower's new apprentice. The old master has returned, drawing the Silver Guild's attention.",
+        ),
+        (
+            chapters.first().map(|c| c.id),
+            "Erian rings the silver bell and meets the old master, who has been waiting for him.",
+        ),
+        (
+            chapters.get(1).map(|c| c.id),
+            "In Borisol, Erian buys herbs. Merchants ask about the master; guild soldiers arrive, and he slips away.",
+        ),
+    ] {
+        s.lib
+            .book_mut()
+            .apply(Change::AddStoryNote {
+                chapter,
+                text: text.into(),
+            })
+            .expect("scene note");
+    }
+    s.open_notes();
+}
+
 /// What a reader would copy from a web novel site: a heading, then paragraphs.
 const PASTED: &str = "321화\n\n그날 밤, 탑 위에서 바람이 불었다.\n\n테실리드는 조용히 고개를 들었다.\n\n\"이제 시작이군.\"\n\n마탑주의 목소리가 멀리서 들려왔다.";
 
@@ -278,7 +322,125 @@ fn shelf(s: &mut State) {
 
 type Scene = (&'static str, fn(&mut State));
 
+fn history(s: &mut State, conflict: bool, undone: bool) {
+    let chapter = s.lib.chapters[0].id;
+    let old = s.lib.book().chapter(chapter).expect("chapter");
+    let pairs = old
+        .source
+        .iter()
+        .enumerate()
+        .map(|(i, b)| cipher_book::NewPair {
+            source: vec![b.id],
+            translation: vec![
+                old.translation
+                    .get(i)
+                    .map(|b| b.text.clone())
+                    .unwrap_or_else(|| "The tower was quiet.".into())
+                    + " Revised.",
+            ],
+            flagged: None,
+        })
+        .collect();
+    let revision = s
+        .lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter, pairs })
+        .expect("translation")
+        .revision;
+    let block = s.lib.book().chapter(chapter).expect("chapter").translation[0].clone();
+    let suggestion = s
+        .lib
+        .book_mut()
+        .apply(Change::AddSuggestion(NewSuggestion {
+            chapter,
+            block: block.id,
+            quote: block.text.clone(),
+            said: "Make the opening clearer".into(),
+            scope: Scope::Here,
+            is_rename: false,
+            source_expr: None,
+            state: SuggestionState::Ready,
+            kind: SuggestionKind::Reader,
+            edits: vec![NewProposedEdit {
+                block: block.id,
+                before: block.text.clone(),
+                after: Some(block.text.clone() + " Reviewed."),
+                origin: EditOrigin::Model,
+                skip_reason: None,
+            }],
+        }))
+        .expect("suggestion");
+    let edit = s
+        .lib
+        .book()
+        .suggestions(Default::default())
+        .expect("suggestions")
+        .into_iter()
+        .find(|r| r.id.0 == suggestion.created[0])
+        .expect("suggestion")
+        .edits[0]
+        .id;
+    let review = s
+        .lib
+        .book_mut()
+        .apply(Change::DecideEdits {
+            decisions: vec![(edit, true)],
+        })
+        .expect("review")
+        .revision;
+    s.open_history();
+    let selected = if conflict { revision } else { review };
+    if let Some(index) = s.history.revisions.iter().position(|r| r.id == selected) {
+        s.select_history(index);
+    }
+    if undone {
+        s.undo_history();
+    }
+}
+
 pub const SCENES: &[Scene] = &[
+    ("history-metadata", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        let term = s.lib.book().glossary().expect("glossary").terms[0].clone();
+        s.lib
+            .book_mut()
+            .apply(Change::AddStoryNote {
+                chapter: None,
+                text: format!("{} watches the tower.", term.fields.rendering),
+            })
+            .expect("story note");
+        let at = s
+            .lib
+            .terms
+            .iter()
+            .position(|t| t.id == term.id)
+            .expect("term");
+        let sid = s
+            .lib
+            .use_wording(at, "Tower Keeper", &[])
+            .expect("keep")
+            .expect("suggestion");
+        let decisions = s
+            .lib
+            .suggestion(sid)
+            .expect("suggestion")
+            .metadata
+            .iter()
+            .map(|e| (e.id, true))
+            .collect();
+        s.review_metadata(sid, decisions);
+        s.open_history();
+    }),
+    ("history", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        history(s, false, false);
+    }),
+    ("dark-history", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+        history(s, false, false);
+    }),
+    ("history-conflict", |s| history(s, true, false)),
+    ("history-undone", |s| history(s, false, true)),
     ("reading", |_| {}),
     ("focus", |s| {
         s.prefs.contents_open = false;
@@ -288,6 +450,11 @@ pub const SCENES: &[Scene] = &[
     ("interlinear", |s| s.interlinear = true),
     ("source", |s| s.source = true),
     ("cast", |s| s.screen = Screen::Cast),
+    ("book-notes", book_notes),
+    ("book-notes-dark", |s| {
+        book_notes(s);
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+    }),
     ("cast-drift", |s| {
         s.screen = Screen::Cast;
         s.cast_open = s.lib.cast_order().first().copied();
@@ -391,6 +558,30 @@ pub const SCENES: &[Scene] = &[
     }),
     ("flagged", flag_a_pair),
     ("settings", settings),
+    ("settings-models", |s| {
+        settings(s);
+        let form = s.settings.as_mut().expect("open");
+        form.available = [
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "model-fast",
+            "model-large",
+            "model-medium",
+            "model-small",
+            "o3",
+            "o4-mini",
+        ]
+        .map(String::from)
+        .to_vec();
+        form.available_from = form.source();
+    }),
+    ("settings-models-failed", |s| {
+        settings(s);
+        let form = s.settings.as_mut().expect("open");
+        form.fetch = Status::Failed("The server refused the key. Check it, then retry.".into());
+    }),
     ("settings-chatgpt", |s| {
         settings(s);
         let form = s.settings.as_mut().expect("open");

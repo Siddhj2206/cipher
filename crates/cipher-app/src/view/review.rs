@@ -5,18 +5,11 @@ use rune::{Color, Cursor, El, Icon, el, icon, row, text};
 use super::widgets::{card, short};
 use crate::fix::queue;
 use crate::state::State;
-use crate::theme::{I_DOWN, I_UP, I_X, LEFT_W, Pal, RIGHT_W, SCRUBBER_W, SMALL, UI, UI_MED};
+use crate::theme::{I_DOWN, I_UP, I_X, Pal, SMALL, UI, UI_MED};
 
 /// Where the bar and toast sit: centred on the page, between the sidebars.
 fn pinned(s: &State, bottom: f32, child: El) -> El {
-    let (inset_l, inset_r) = (
-        if s.contents_shown() {
-            LEFT_W
-        } else {
-            SCRUBBER_W
-        },
-        if s.context_shown() { RIGHT_W } else { 0.0 },
-    );
+    let (inset_l, inset_r) = s.sidebar_layout().insets();
     row()
         .pin(Some(inset_l), None, Some(inset_r), Some(bottom))
         .justify_center()

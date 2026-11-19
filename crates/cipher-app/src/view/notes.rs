@@ -2,7 +2,7 @@
 //! what can be done with it. Shown in the context sidebar, or in the page margin when the
 //! sidebar is closed.
 
-use cipher_book::{EditOrigin, Scope, Suggestion, SuggestionState};
+use cipher_book::{EditOrigin, EditState, MetadataChange, Scope, Suggestion, SuggestionState};
 use rune::tok::TextStyle;
 use rune::{El, col, row, text};
 
@@ -92,7 +92,14 @@ pub fn note(s: &State, sug: &Suggestion, p: &Pal, show_where: bool) -> El {
             .iter()
             .filter(|e| e.state == cipher_book::EditState::Pending && e.after.is_some())
             .all(|e| e.origin == EditOrigin::Rename);
-    let live = c.pending > 0 || sug.state == SuggestionState::Working;
+    let live = c.pending > 0
+        || sug.metadata.iter().any(|e| {
+            matches!(
+                e.state,
+                cipher_book::EditState::Pending | cipher_book::EditState::Stale
+            )
+        })
+        || sug.state == SuggestionState::Working;
     let where_ =
         show_where.then(|| where_link(s, sug.chapter, sug.block, format!("where{}", id.0), p));
     let label = if sug.kind == cipher_book::SuggestionKind::Drift {
@@ -136,12 +143,71 @@ pub fn note(s: &State, sug: &Suggestion, p: &Pal, show_where: bool) -> El {
         lines.push(format!("{} left as they are{why}", c.skipped));
     }
     if lines.is_empty() {
-        lines.push("Nothing to change".to_string());
+        lines.push(
+            if sug
+                .metadata
+                .iter()
+                .any(|e| matches!(e.state, EditState::Pending | EditState::Stale))
+            {
+                "Book changes to review".to_string()
+            } else {
+                "Nothing to change".to_string()
+            },
+        );
     }
     for l in lines {
         n = n.child(text(l).font(SMALL).color(p.ink3).wrap());
     }
 
+    for edit in &sug.metadata {
+        if !matches!(edit.state, EditState::Pending | EditState::Stale) {
+            continue;
+        }
+        let eid = edit.id;
+        let (label, after) = match &edit.change {
+            MetadataChange::Term {
+                fields, forbidden, ..
+            } => (
+                "Review Glossary",
+                format!(
+                    "{}{}",
+                    fields.rendering,
+                    if forbidden.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" · forbid: {}", forbidden.join(", "))
+                    }
+                ),
+            ),
+            MetadataChange::StoryNote { text, .. } => ("Review Story Note", text.clone()),
+        };
+        let mut item = col()
+            .w_full()
+            .gap(4.0)
+            .child(text(label).font(LABEL).color(p.red))
+            .child(sample(&edit.before, &after, p));
+        let mut buttons = row().gap(6.0);
+        if edit.state == EditState::Stale {
+            item = item.child(
+                text("Changed since Keep — stale; not applied.")
+                    .font(SMALL)
+                    .color(p.red)
+                    .wrap(),
+            );
+        } else {
+            buttons = buttons.child(
+                btn("Accept", true, p)
+                    .key(format!("meta-accept{}", eid.0))
+                    .on_press(move |s: &mut State| s.review_metadata(id, vec![(eid, true)])),
+            );
+        }
+        buttons = buttons.child(
+            btn("Reject", false, p)
+                .key(format!("meta-reject{}", eid.0))
+                .on_press(move |s: &mut State| s.review_metadata(id, vec![(eid, false)])),
+        );
+        n = n.child(item.child(buttons));
+    }
     let mut actions = row().gap(6.0).pt(4.0);
     if grouped {
         for e in sug

@@ -21,6 +21,7 @@ ids!(
     StoryNoteId,
     SuggestionId,
     ProposedEditId,
+    MetadataEditId,
     RevisionId,
     JobId,
 );
@@ -211,7 +212,7 @@ impl Chapter {
 }
 
 /// The editable fields of a Term.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct TermFields {
     pub source: String,
     pub rendering: String,
@@ -298,6 +299,29 @@ pub struct Suggestion {
     pub kind: SuggestionKind,
     pub created_at: Timestamp,
     pub edits: Vec<ProposedEdit>,
+    pub metadata: Vec<ProposedMetadata>,
+}
+
+/// Book-level changes reviewed independently of prose replacements.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MetadataChange {
+    Term {
+        term: TermId,
+        fields: TermFields,
+        forbidden: Vec<String>,
+    },
+    StoryNote {
+        note: StoryNoteId,
+        text: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProposedMetadata {
+    pub id: MetadataEditId,
+    pub change: MetadataChange,
+    pub before: String,
+    pub state: EditState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -347,6 +371,17 @@ pub struct RevisionSummary {
     pub label: String,
     pub created_at: Timestamp,
     pub undone_by: Option<RevisionId>,
+}
+
+/// A dry run of Undo, read from the Book's persistent history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndoPreview {
+    pub revision: RevisionSummary,
+    pub chapters: Vec<ChapterId>,
+    pub changes: Vec<(&'static str, usize)>,
+    pub conflicts: Vec<Conflict>,
+    pub conflict_chapters: Vec<(Conflict, ChapterId)>,
+    pub already_undone_by: Option<RevisionId>,
 }
 
 /// What [`crate::Book::apply`] did.
