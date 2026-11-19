@@ -35,12 +35,12 @@ impl OpenAiProvider {
                 .base_url(url)
                 .build()
                 .map_err(|e| Error::Provider {
-                    kind: crate::config::ProviderKind::Openai,
+                    kind: crate::config::ProviderKind::Openai.slug().to_string(),
                     detail: format!("Failed to build OpenAI client: {e}"),
                 })?
         } else {
             openai::Client::new(&params.api_key).map_err(|e| Error::Provider {
-                kind: crate::config::ProviderKind::Openai,
+                kind: crate::config::ProviderKind::Openai.slug().to_string(),
                 detail: format!("Failed to build OpenAI client: {e}"),
             })?
         };
@@ -96,7 +96,7 @@ impl shared::StructuredExtractor for OpenAiProvider {
                 Err(err) => {
                     let detailed_error = shared::format_extraction_error(&err, &OPENAI_HTTP_MSGS);
                     Err(Error::Provider {
-                        kind: crate::config::ProviderKind::Openai,
+                        kind: crate::config::ProviderKind::Openai.slug().to_string(),
                         detail: detailed_error,
                     })
                 }

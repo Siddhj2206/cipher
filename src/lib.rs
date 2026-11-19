@@ -10,27 +10,11 @@ pub mod ui;
 pub mod validate;
 
 use crate::error::{Error, Result};
+use crate::state::RerunMode;
 use std::path::PathBuf;
 
 use clap::Parser;
 use clap::Subcommand;
-
-#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
-pub enum RerunMode {
-    All,
-    Glossary,
-    Source,
-}
-
-impl std::fmt::Display for RerunMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RerunMode::All => write!(f, "all"),
-            RerunMode::Glossary => write!(f, "glossary"),
-            RerunMode::Source => write!(f, "source"),
-        }
-    }
-}
 
 #[derive(Parser)]
 #[command(name = "cipher")]

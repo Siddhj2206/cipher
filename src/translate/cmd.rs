@@ -7,6 +7,7 @@ use crate::output;
 use crate::output::{
     stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
 };
+use crate::state::TranslationUsage;
 use crate::state::{
     ChapterState, GlossaryState, RunMetadata, RunOptions, load_all_chapter_states,
     load_glossary_state, save_run_metadata,
@@ -22,7 +23,7 @@ use crate::translate::rerun::{
     build_glossary_state, build_source_rerun_plan, combine_rerun_decisions,
     finalize_glossary_baseline, migrate_legacy_full_tracking,
 };
-use crate::translate::{TranslationUsage, Translator, report};
+use crate::translate::{Translator, report};
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
@@ -32,7 +33,7 @@ pub struct TranslateOptions {
     pub glossary_profile: Option<String>,
     pub overwrite: bool,
     pub fail_fast: bool,
-    pub rerun: Option<crate::RerunMode>,
+    pub rerun: Option<crate::state::RerunMode>,
     pub dry_run: bool,
 }
 
@@ -40,14 +41,14 @@ impl TranslateOptions {
     fn rerun_glossary_enabled(&self) -> bool {
         matches!(
             self.rerun,
-            Some(crate::RerunMode::All) | Some(crate::RerunMode::Glossary)
+            Some(crate::state::RerunMode::All) | Some(crate::state::RerunMode::Glossary)
         )
     }
 
     fn rerun_chapters_enabled(&self) -> bool {
         matches!(
             self.rerun,
-            Some(crate::RerunMode::All) | Some(crate::RerunMode::Source)
+            Some(crate::state::RerunMode::All) | Some(crate::state::RerunMode::Source)
         )
     }
 }
@@ -675,23 +676,23 @@ mod tests {
 
     use crate::translate::test_helpers::translate_options;
 
-    fn rerun_opts(rerun: Option<crate::RerunMode>) -> TranslateOptions {
+    fn rerun_opts(rerun: Option<crate::state::RerunMode>) -> TranslateOptions {
         translate_options(rerun)
     }
 
     #[test]
     fn rerun_glossary_enabled_for_all() {
-        assert!(rerun_opts(Some(crate::RerunMode::All)).rerun_glossary_enabled());
+        assert!(rerun_opts(Some(crate::state::RerunMode::All)).rerun_glossary_enabled());
     }
 
     #[test]
     fn rerun_glossary_enabled_for_glossary() {
-        assert!(rerun_opts(Some(crate::RerunMode::Glossary)).rerun_glossary_enabled());
+        assert!(rerun_opts(Some(crate::state::RerunMode::Glossary)).rerun_glossary_enabled());
     }
 
     #[test]
     fn rerun_glossary_disabled_for_source() {
-        assert!(!rerun_opts(Some(crate::RerunMode::Source)).rerun_glossary_enabled());
+        assert!(!rerun_opts(Some(crate::state::RerunMode::Source)).rerun_glossary_enabled());
     }
 
     #[test]
@@ -701,17 +702,17 @@ mod tests {
 
     #[test]
     fn rerun_chapters_enabled_for_all() {
-        assert!(rerun_opts(Some(crate::RerunMode::All)).rerun_chapters_enabled());
+        assert!(rerun_opts(Some(crate::state::RerunMode::All)).rerun_chapters_enabled());
     }
 
     #[test]
     fn rerun_chapters_enabled_for_source() {
-        assert!(rerun_opts(Some(crate::RerunMode::Source)).rerun_chapters_enabled());
+        assert!(rerun_opts(Some(crate::state::RerunMode::Source)).rerun_chapters_enabled());
     }
 
     #[test]
     fn rerun_chapters_disabled_for_glossary() {
-        assert!(!rerun_opts(Some(crate::RerunMode::Glossary)).rerun_chapters_enabled());
+        assert!(!rerun_opts(Some(crate::state::RerunMode::Glossary)).rerun_chapters_enabled());
     }
 
     #[test]
@@ -721,7 +722,7 @@ mod tests {
 
     #[test]
     fn test_translate_options_rerun_enables_both_rerun_modes() {
-        let options = translate_options(Some(crate::RerunMode::All));
+        let options = translate_options(Some(crate::state::RerunMode::All));
 
         assert!(options.rerun_glossary_enabled());
         assert!(options.rerun_chapters_enabled());

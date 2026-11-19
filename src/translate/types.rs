@@ -1,5 +1,6 @@
 use crate::book::{OutputConfig, StructuredChapter};
 use crate::glossary::GlossaryTerm;
+use crate::state::TranslationUsage;
 use serde::{Deserialize, Serialize};
 use std::ops::AddAssign;
 
@@ -10,15 +11,6 @@ pub struct ChapterError {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     pub message: String,
-}
-
-#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
-pub struct TranslationUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub total_tokens: u64,
-    pub cached_input_tokens: u64,
-    pub cache_creation_input_tokens: u64,
 }
 
 #[derive(Debug, Clone)]

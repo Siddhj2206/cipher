@@ -11,6 +11,7 @@ use crate::glossary::{
 };
 use crate::io;
 use crate::output::{stderr_detail, stderr_status, verbose_detail, verbose_detail_kv};
+use crate::state::TranslationUsage;
 use crate::state::{
     ChapterGlossaryTerm, ChapterGlossaryUsage, ChapterState, ChapterStatus,
     normalized_source_text_hash, save_chapter_state, save_run_metadata,
@@ -19,8 +20,7 @@ use crate::translate::backup::create_backup;
 use crate::translate::preview::EMPTY_CHAPTER_SKIP_REASON;
 use crate::translate::rerun::{RerunDecision, build_chapter_glossary_usage};
 use crate::translate::{
-    AcceptedTranslation, ChapterError, ProviderTextResult, ProviderTranslationResult,
-    TranslationUsage, Translator,
+    AcceptedTranslation, ChapterError, ProviderTextResult, ProviderTranslationResult, Translator,
 };
 use crate::validate::{ValidationOptions, validate_translation};
 use std::path::Path;
@@ -825,7 +825,7 @@ mod tests {
 
         fn provider_error(detail: &str) -> Error {
             Error::Provider {
-                kind: crate::config::ProviderKind::Gemini,
+                kind: crate::config::ProviderKind::Gemini.slug().to_string(),
                 detail: detail.to_string(),
             }
         }
@@ -1164,7 +1164,7 @@ mod tests {
             _req: GlossaryExtractionRequest,
         ) -> Result<ProviderGlossaryResult> {
             Err(Error::Provider {
-                kind: crate::config::ProviderKind::Gemini,
+                kind: crate::config::ProviderKind::Gemini.slug().to_string(),
                 detail: "extractor unavailable".to_string(),
             })
         }

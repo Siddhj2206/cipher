@@ -12,7 +12,7 @@ pub fn glossary_term(term: &str, og_term: Option<&str>, definition: &str) -> Glo
     }
 }
 
-pub fn translate_options(rerun: Option<crate::RerunMode>) -> TranslateOptions {
+pub fn translate_options(rerun: Option<crate::state::RerunMode>) -> TranslateOptions {
     TranslateOptions {
         profile: None,
         repair_profile: None,

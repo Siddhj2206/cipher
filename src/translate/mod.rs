@@ -14,7 +14,6 @@ pub use crate::translate::cmd::{TranslateOptions, translate_book};
 pub use crate::translate::types::{
     AcceptedTranslation, ChapterError, GlossaryExtractionRequest, ProviderGlossaryResult,
     ProviderTextResult, ProviderTranslationResult, RepairRequest, TranslationRequest,
-    TranslationUsage,
 };
 
 use crate::book::OutputConfig;

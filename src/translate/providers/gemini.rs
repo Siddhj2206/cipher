@@ -25,7 +25,7 @@ pub struct GeminiProvider {
 impl GeminiProvider {
     pub fn new(params: ProviderParams) -> Result<Self> {
         let client = gemini::Client::new(&params.api_key).map_err(|e| Error::Provider {
-            kind: crate::config::ProviderKind::Gemini,
+            kind: crate::config::ProviderKind::Gemini.slug().to_string(),
             detail: format!("Failed to build Gemini client: {e}"),
         })?;
 
@@ -60,7 +60,7 @@ impl shared::StructuredExtractor for GeminiProvider {
                 Err(err) => {
                     let detailed_error = shared::format_extraction_error(&err, &GEMINI_HTTP_MSGS);
                     Err(Error::Provider {
-                        kind: crate::config::ProviderKind::Gemini,
+                        kind: crate::config::ProviderKind::Gemini.slug().to_string(),
                         detail: detailed_error,
                     })
                 }

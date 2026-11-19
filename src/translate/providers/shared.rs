@@ -285,7 +285,7 @@ mod tests {
         set_verbose(false);
         let result = tracked_call("repair", "openai", "m", "https://example.com", async {
             Err::<u32, _>(Error::Provider {
-                kind: crate::config::ProviderKind::Openai,
+                kind: crate::config::ProviderKind::Openai.slug().to_string(),
                 detail: "boom".to_string(),
             })
         })
@@ -302,7 +302,7 @@ mod tests {
         .await;
         let _ = tracked_call("glossary", "openai", "m", "https://example.com", async {
             Err::<u32, _>(Error::Provider {
-                kind: crate::config::ProviderKind::Openai,
+                kind: crate::config::ProviderKind::Openai.slug().to_string(),
                 detail: "boom".to_string(),
             })
         })

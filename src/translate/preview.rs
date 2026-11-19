@@ -289,7 +289,7 @@ mod tests {
             &raw_path,
             "chapter1.md".to_string(),
             true,
-            &translate_options(Some(crate::RerunMode::Glossary)),
+            &translate_options(Some(crate::state::RerunMode::Glossary)),
             Some(&rerun_decision),
         )
         .unwrap();

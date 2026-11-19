@@ -5,10 +5,11 @@
 //! envelope for fatal failures. Human-readable progress stays on stderr.
 
 use crate::error::Error;
+use crate::state::TranslationUsage;
 use crate::state::{ChapterStatus, RunMetadata};
+use crate::translate::ChapterError;
 use crate::translate::orchestrate::ChapterResult;
 use crate::translate::preview::{ChapterPreview, PreviewAction, PreviewSummary};
-use crate::translate::{ChapterError, TranslationUsage};
 use serde::Serialize;
 #[derive(Debug, Serialize)]
 pub(crate) struct RunReport {
@@ -423,7 +424,7 @@ mod tests {
     #[test]
     fn error_report_carries_code_message_and_exit_code() {
         let err = Error::Provider {
-            kind: crate::config::ProviderKind::Gemini,
+            kind: crate::config::ProviderKind::Gemini.slug().to_string(),
             detail: "timeout".to_string(),
         };
         let json = serde_json::to_value(build_error_report(&err)).unwrap();

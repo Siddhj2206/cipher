@@ -3,9 +3,6 @@
 //! Codes E001–E007 are a public API contract — stable strings that are never
 //! removed or repurposed across releases (only deprecated and replaced).
 
-use crate::config::ProviderKind;
-use serde_json::Error as JsonError;
-
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Run-level exit code for `translate` when the run finished but one or more
@@ -53,8 +50,8 @@ pub enum Error {
     Glossary(String),
 
     /// E005 — Translation / Provider
-    #[error("{} request failed: {detail}", kind.slug())]
-    Provider { kind: ProviderKind, detail: String },
+    #[error("{kind} request failed: {detail}")]
+    Provider { kind: String, detail: String },
 
     /// E006 — Validation (user error; displays bare, without a code prefix)
     #[error("{message}")]
@@ -136,8 +133,8 @@ impl Error {
     }
 }
 
-impl From<JsonError> for Error {
-    fn from(e: JsonError) -> Self {
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Self {
         // JSON errors come from serializing our own plain structs, which
         // cannot fail in practice — treat as an internal state error.
         Error::State(format!("JSON error: {e}"))
@@ -157,7 +154,7 @@ mod tests {
             },
             Error::Glossary("bad glossary json".into()),
             Error::Provider {
-                kind: ProviderKind::Gemini,
+                kind: "gemini".into(),
                 detail: "timeout".to_string(),
             },
             Error::Validation {
@@ -218,7 +215,7 @@ mod tests {
         assert_eq!(Error::Glossary("x".into()).to_string(), "glossary error: x");
         assert_eq!(
             Error::Provider {
-                kind: ProviderKind::Gemini,
+                kind: "gemini".into(),
                 detail: "timeout".into()
             }
             .to_string(),

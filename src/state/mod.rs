@@ -1,11 +1,36 @@
 use crate::book::paths::BookPaths;
 use crate::error::{Error, Result};
 use crate::glossary::InjectionMode;
-use crate::translate::TranslationUsage;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
+
+#[derive(Clone, Debug, PartialEq, Eq, clap::ValueEnum, serde::Serialize, serde::Deserialize)]
+pub enum RerunMode {
+    All,
+    Glossary,
+    Source,
+}
+
+impl std::fmt::Display for RerunMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RerunMode::All => write!(f, "all"),
+            RerunMode::Glossary => write!(f, "glossary"),
+            RerunMode::Source => write!(f, "source"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct TranslationUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub total_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+}
 
 const RUN_METADATA_VERSION: u32 = 1;
 const GLOSSARY_STATE_VERSION: u32 = 1;
@@ -33,7 +58,7 @@ pub struct RunOptions {
     pub overwrite: bool,
     pub fail_fast: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rerun_mode: Option<crate::RerunMode>,
+    pub rerun_mode: Option<RerunMode>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

@@ -116,7 +116,7 @@ impl CohereProvider {
             .base_url(&endpoint)
             .build()
             .map_err(|e| Error::Provider {
-                kind: ProviderKind::Cohere,
+                kind: ProviderKind::Cohere.slug().to_string(),
                 detail: format!("Failed to build Cohere client: {e}"),
             })?;
 
@@ -158,7 +158,7 @@ impl shared::StructuredExtractor for CohereProvider {
                         let detailed_error =
                             shared::format_extraction_error(&err, &COHERE_HTTP_MSGS);
                         Err(Error::Provider {
-                            kind: ProviderKind::Cohere,
+                            kind: ProviderKind::Cohere.slug().to_string(),
                             detail: detailed_error,
                         })
                     }
