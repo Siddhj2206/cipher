@@ -49,20 +49,26 @@ impl SidebarLayout {
         let contents = contents.map(|w| w.clamp(Sidebar::Contents.min_width(), Sidebar::MAX_WIDTH));
         let context = context.map(|w| w.clamp(Sidebar::Context.min_width(), Sidebar::MAX_WIDTH));
         let room = Self::room(window);
-        match (contents, context) {
-            (Some(l), Some(r)) if l + r <= room => Self { contents, context },
-            (Some(l), _) if context.is_none() || !context_first => Self {
-                contents: (room >= Sidebar::Contents.min_width()).then_some(l.min(room)),
-                context: None,
-            },
-            (_, Some(r)) => {
-                let room = room - SCRUBBER_W;
-                Self {
-                    contents: None,
-                    context: (room >= Sidebar::Context.min_width()).then_some(r.min(room)),
-                }
+        if matches!((contents, context), (Some(l), Some(r)) if l + r <= room) {
+            return Self { contents, context };
+        }
+        let left = contents
+            .filter(|_| room >= Sidebar::Contents.min_width())
+            .map(|w| w.min(room));
+        let right_room = room - SCRUBBER_W;
+        let right = context
+            .filter(|_| right_room >= Sidebar::Context.min_width())
+            .map(|w| w.min(right_room));
+        if right.is_some() && (context_first || left.is_none()) {
+            Self {
+                contents: None,
+                context: right,
             }
-            _ => Self::default(),
+        } else {
+            Self {
+                contents: left,
+                context: None,
+            }
         }
     }
 
@@ -141,6 +147,18 @@ mod tests {
                 contents,
                 context: Some(max)
             },
+        );
+    }
+
+    #[test]
+    fn keeps_contents_when_priority_context_cannot_fit() {
+        let layout = SidebarLayout::fit(880.0, Some(272.0), Some(320.0), true);
+        assert_eq!(
+            layout,
+            SidebarLayout {
+                contents: Some(256.0),
+                context: None
+            }
         );
     }
 
