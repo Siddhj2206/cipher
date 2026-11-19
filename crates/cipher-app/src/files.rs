@@ -83,14 +83,77 @@ fn show_native(path: &Path, folder: &Path, target: Show) -> Result<(), String> {
 }
 
 #[cfg(target_os = "windows")]
-fn show_native(_: &Path, folder: &Path, _: Show) -> Result<(), String> {
-    let mut explorer = Command::new("explorer.exe")
-        .arg(folder)
+fn show_native(path: &Path, folder: &Path, target: Show) -> Result<(), String> {
+    use std::ffi::OsString;
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use std::os::windows::process::CommandExt;
+
+    let path = match target {
+        Show::Book => path,
+        Show::Folder => folder,
+    };
+    let wide: Vec<_> = path.as_os_str().encode_wide().collect();
+    let path = explorer_path(&wide).ok_or("Explorer cannot open this kind of path")?;
+    let path = OsString::from_wide(&path);
+    let mut command = Command::new("explorer.exe");
+    match target {
+        Show::Book => {
+            let mut select = OsString::from("/select,\"");
+            select.push(path);
+            select.push("\"");
+            command.raw_arg(select);
+        }
+        Show::Folder => {
+            command.arg(path);
+        }
+    }
+    let mut explorer = command
         .spawn()
         .map_err(|e| format!("Could not launch Explorer: {e}"))?;
     // Explorer may exit with a nonzero status after handing off to the desktop shell.
     let _ = explorer.wait();
     Ok(())
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn explorer_path(path: &[u16]) -> Option<Vec<u16>> {
+    const SLASH: u16 = b'\\' as u16;
+    const COLON: u16 = b':' as u16;
+    const VERBATIM: [u16; 4] = [SLASH, SLASH, b'?' as u16, SLASH];
+    const UNC: [u16; 4] = [b'U' as u16, b'N' as u16, b'C' as u16, SLASH];
+    let Some(rest) = path.strip_prefix(&VERBATIM) else {
+        return Some(path.to_vec());
+    };
+    if let Some(network) = rest.strip_prefix(&UNC) {
+        Some([&[SLASH, SLASH], network].concat())
+    } else if matches!(rest, [drive, COLON, SLASH, ..] if u8::try_from(*drive).is_ok_and(|b| b.is_ascii_alphabetic()))
+    {
+        Some(rest.to_vec())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn explorer_paths_preserve_drive_and_network_targets() {
+    for (input, expected) in [
+        (
+            r"\\?\C:\My Books\Тихая башня.cipher",
+            r"C:\My Books\Тихая башня.cipher",
+        ),
+        (r"\\?\UNC\server\share\é.cipher", r"\\server\share\é.cipher"),
+        (r"D:\Cipher", r"D:\Cipher"),
+        (r"\\server\share", r"\\server\share"),
+    ] {
+        let path: Vec<_> = input.encode_utf16().collect();
+        assert_eq!(
+            explorer_path(&path),
+            Some(expected.encode_utf16().collect())
+        );
+    }
+    let device: Vec<_> = r"\\?\Volume{device}\Cipher".encode_utf16().collect();
+    assert_eq!(explorer_path(&device), None);
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
