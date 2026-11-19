@@ -12,12 +12,15 @@ How to use it:
 
 ## Current
 
+- Reader Chapter titles: saved titles now appear in the opener and Contents, including queued drafts after reopening; untitled Chapters retain their existing labels.
+
 **Milestone 7c (a polished desktop app) in progress** (2026-11-16). Overall scope is through milestone 8; milestone 9 is on hold and milestone 10 (web Reader) is deferred, both until the user asks.
 - Done: milestones 0–6 and 8. The real-Endpoint checks ran on 2026-11-16 through the user's ChatGPT sign-in (Free plan, gpt-6-luna): see each milestone. The API-key routes (Chat Completions, Responses with a key) have still never met a real server.
 - Milestone 7: done except Test and Save against a real Endpoint from the form.
 - Milestone 7b: done; three Shelf actions unchecked on a real desktop.
 - Milestone 7c: packaging and CI are written but have never run on GitHub; the first push runs them (Windows and macOS have only been type-checked as far as C dependencies allow). Next is the rest of its list below, then a pass on a real desktop (theme following, window restore, drag and drop, `packaging/linux/install.sh`).
 - Open decision: inertial scrolling needs a Rune change (see Open questions); updating Rune to `8fc71fb` did not add it.
+- Book notes: editable Forms of Address and Story Notes now have a separate page beside Style, grouped saves and queued compaction. See `desktop-ux.md` › Book notes.
 
 ## Milestones
 
@@ -137,14 +140,16 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Find in Book (Ctrl+F): non-modal, Unicode-insensitive search with explicit Source/Translation scope and highlighted, navigable hits.
 - [x] A Style page: the Book's Style Rules as one text, sent with every Chapter (asked 2026-11-16: "a base prompt for a book"); import takes `style.md` whole.
 - [x] Drift redone (asked 2026-11-16, "fine with redoing our whole suggestions and drift workflow"; method simulated on Genius Wizard first): evidence of what the Book calls a Term, the user marks same-name wordings and keeps one (an exact Rename), the model only on request; answers checked locally; Review steps only through real changes and shows the paragraph in full, now and proposed (`translation-pipeline.md` › What the Book calls a Term).
+- [x] Piece Q: Drift Keep stages persistent Glossary, Story Note and prose proposals, with explicit independent Review decisions, conflict checks and Revision-based Undo. Cast says "No drift flagged" rather than claiming uniformity. From now on Suggestions outside Drift Keep are unchanged.
 - [ ] Term editing (accept or dismiss pending Terms, notes, forms, merging duplicate Terms such as 포혈공 / 포혈공(怖血公)) and a Book notes page (Story Notes, Forms of Address).
 - [x] Chapter actions: Translate again, and Translate all N from here (2026-11-16).
 - [ ] Delete a Chapter.
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
 - [ ] "Fetch models" from an API-key Endpoint's `/models`; several chapters at once (a multi-file pick, or a paste holding several numbered chapters).
 - [x] Sidebars that give way on narrow windows (2026-11-16).
-- [ ] Resizable, remembered sidebar widths.
-- [ ] A History panel: Revisions listed with Undo. Today only Reviews offer Undo, so a re-translation or a re-pair can't be undone from the app.
+- [x] Resizable, remembered sidebar widths.
+- [x] A History panel: persistent Revisions with dry-run previews, chapter conflicts and Undo, including re-translations and re-pairs (Ctrl+H).
+  - Metadata Review accepts also preview and undo after reopening; later Term edits are skipped, and restored proposals follow the normal pending/stale rules.
 - [ ] Notifications when a long translation finishes while the window is unfocused.
 
 Checked headless: `sh crates/cipher-app/scripts/check-desktop.sh <book>` (Ctrl+, → text size → Esc → Alt+→ → Ctrl+/ → Aa → Ctrl+-), plus the earlier checks; scenes `settings-*`, `shortcuts`, `type-popover`, `chapter-menu`, `model-menu`, `reading-sans`. Not checked on a real desktop yet: live theme following, window size restore, single-instance hand-off, drag and drop, install.sh.
@@ -186,6 +191,8 @@ Deferred by the user (2026-11-11): desktop only for now. To be designed in detai
 - **Wayland IME redraw bug (rune#225):** check that Korean input works in the fix box.
 
 ## Notes
+- 2026-11-19: Find in Book integrated with the current `next` sidebars and History scenes; both sets of headless checks remain enabled.
+- 2026-11-19: Linux CI and release build jobs install clang and mold before Cargo, matching `.cargo/config.toml`, plus `libxkbcommon-dev` for Rune; the stock runner lacked mold and the xkbcommon linker library.
 - 2026-11-16: The user's real Genius Wizard Book holds damage from the old position-paired drift fixes (accepted 2026-11-15): chapter 246 has a duplicated paragraph and lost "Contrary to Evelyn's concerns…" (blocks 10416/10417, Suggestion #2), and that Suggestion also turned "Blaiver Tower" into "Blaiver Magic Tower" in 9 accepted edits. Only these were checked. Undo needs a History panel or a by-hand restore from the tl/ files; the user hasn't been asked yet. Its open Suggestions #3–#5 are old drift fixes with 170 queued batches; dismissing them is the user's call.
 - 2026-11-16: Open on Drift: source words longer than a Term (흑마법사 is 61% of 흑마법's Pairs), Terms that aren't names (세 번째 = "The Third"), sibling Terms ("Magic Tower" family) and duplicate Terms. Glossary editing, not Drift, should handle them.
 
