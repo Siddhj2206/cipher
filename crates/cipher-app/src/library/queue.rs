@@ -169,6 +169,7 @@ impl Library {
             .chain(parts.iter().filter_map(|p| p.intake.number))
             .max()
             .unwrap_or(0);
+        parts.sort_by_key(|part| !restored.contains_key(&part.key));
         let mut seen = std::collections::HashSet::new();
         for part in &mut parts {
             let n = *part.intake.number.get_or_insert_with(|| {

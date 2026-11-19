@@ -1231,6 +1231,79 @@ fn bare_markdown_chapters_set_the_depth_for_titled_subsections() {
 }
 
 #[test]
+fn appended_files_cannot_claim_pending_paste_numbers() {
+    for explicit in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("");
+        let d = s.draft.as_mut().unwrap();
+        d.files = vec![
+            ("one.txt".into(), "One.".into()),
+            ("two.txt".into(), "Two.".into()),
+        ];
+        d.text = rune::TextEdit::new("Pending paste.");
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        s.draft.as_mut().unwrap().pick_file(
+            "new.txt".into(),
+            if explicit {
+                "Chapter 13\n\nNew."
+            } else {
+                "New."
+            }
+            .into(),
+            true,
+        );
+        let plan = s.draft_plan();
+        let paste = plan
+            .iter()
+            .find(|p| p.intake.blocks == ["Pending paste."])
+            .unwrap();
+        assert_eq!(paste.intake.number, Some(13));
+        assert_eq!(paste.issue, Some(IntakeIssue::NoNumber));
+        assert!(paste.include);
+        let new = plan
+            .iter()
+            .find(|p| p.source.as_deref() == Some("new.txt"))
+            .unwrap();
+        assert_eq!(new.intake.number, Some(if explicit { 13 } else { 14 }));
+        assert_eq!(
+            new.issue,
+            Some(if explicit {
+                IntakeIssue::Duplicate
+            } else {
+                IntakeIssue::NoNumber
+            })
+        );
+        assert_eq!(new.include, !explicit);
+        s.add_draft(&mut rune::Tx::default());
+        let expected = if explicit {
+            vec![10, 11, 12, 13]
+        } else {
+            vec![10, 11, 12, 13, 14]
+        };
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(s.draft.is_none());
+    }
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);
