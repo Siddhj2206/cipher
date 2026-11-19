@@ -18,6 +18,47 @@ fn book(dir: &tempfile::TempDir) -> Book {
     .unwrap()
 }
 
+#[test]
+fn notification_queue_uses_persisted_translation_states() {
+    use cipher_book::JobState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    assert!(!lib.translations_busy().unwrap());
+    let id = lib
+        .book
+        .enqueue(JobSpec {
+            kind: JobKind::Translate,
+            parent: None,
+            chapter: None,
+            suggestion: None,
+            input: None,
+        })
+        .unwrap();
+    let mut job = lib.book.job(id).unwrap();
+    for state in [JobState::Queued, JobState::Running, JobState::Checking] {
+        job.state = state;
+        lib.book.save_job(&job).unwrap();
+        assert!(lib.translations_busy().unwrap());
+    }
+    for state in [JobState::Done, JobState::Paused, JobState::Failed] {
+        job.state = state;
+        lib.book.save_job(&job).unwrap();
+        assert!(!lib.translations_busy().unwrap());
+    }
+    lib.book
+        .enqueue(JobSpec {
+            kind: JobKind::SuggestBatch,
+            parent: None,
+            chapter: None,
+            suggestion: None,
+            input: None,
+        })
+        .unwrap();
+    assert!(!lib.translations_busy().unwrap());
+    assert_eq!(lib.notification_chapter(ChapterId(999)), None);
+}
+
 fn term(book: &mut Book, source: &str, rendering: &str, status: TermStatus) -> TermId {
     let applied = book
         .apply(Change::UpsertTerm {

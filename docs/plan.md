@@ -145,7 +145,8 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Sidebars that give way on narrow windows (2026-11-16).
 - [ ] Resizable, remembered sidebar widths.
 - [ ] A History panel: Revisions listed with Undo. Today only Reviews offer Undo, so a re-translation or a re-pair can't be undone from the app.
-- [ ] Notifications when a long translation finishes while the window is unfocused.
+- [x] Notifications when a long translation finishes while the window is unfocused.
+  Translation Jobs coalesce when the queue drains; focus cancels pending notices, chapter names are opt-in, and headless runs stay silent.
 
 Checked headless: `sh crates/cipher-app/scripts/check-desktop.sh <book>` (Ctrl+, → text size → Esc → Alt+→ → Ctrl+/ → Aa → Ctrl+-), plus the earlier checks; scenes `settings-*`, `shortcuts`, `type-popover`, `chapter-menu`, `model-menu`, `reading-sans`. Not checked on a real desktop yet: live theme following, window size restore, single-instance hand-off, drag and drop, install.sh.
 

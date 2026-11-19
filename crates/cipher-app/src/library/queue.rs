@@ -23,6 +23,24 @@ pub struct Intake {
 }
 
 impl Library {
+    pub fn translations_busy(&self) -> Result<bool> {
+        Ok(self.book.jobs(true)?.iter().any(|job| {
+            job.kind == JobKind::Translate
+                && matches!(
+                    job.state,
+                    JobState::Queued | JobState::Running | JobState::Checking
+                )
+        }))
+    }
+
+    pub fn notification_chapter(&self, id: ChapterId) -> Option<String> {
+        let chapter = self.book.chapter(id).ok()?;
+        Some(match chapter.title.filter(|t| !t.trim().is_empty()) {
+            Some(title) => format!("Chapter {}: {}", chapter.number.unwrap_or(id.0), title),
+            None => format!("Chapter {}", chapter.number.unwrap_or(id.0)),
+        })
+    }
+
     /// Reads pasted text as a Chapter. `None` when it holds nothing but whitespace.
     pub fn intake(&self, text: &str) -> Option<Intake> {
         let mut blocks = blocks::split(text);
