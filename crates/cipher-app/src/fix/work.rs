@@ -26,6 +26,7 @@ pub enum Status {
 }
 
 pub enum Msg {
+    Found(u64, Result<crate::find::Results, String>),
     Event(Event),
     Reach {
         selection: Selection,
@@ -253,6 +254,7 @@ impl crate::state::State {
                 Msg::Evidence(term, generation, result) => {
                     self.on_evidence(term, generation, result)
                 }
+                Msg::Found(generation, result) => self.found(generation, result, tx),
                 Msg::Scanned(Ok(scan)) => self.lib.apply_scan(scan),
                 Msg::Scanned(Err(e)) => self.toast = Some(format!("Could not count Terms: {e}")),
                 Msg::Event(event) => match event {

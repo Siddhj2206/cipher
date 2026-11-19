@@ -181,6 +181,10 @@ Adding inserts the chapter in number order, queues it and opens it where it land
 
 ![A pasted chapter](img/light-new-chapter-pasted.png)
 
+## Find (Ctrl+F)
+
+A compact, non-modal bar at the reading area's top-right searches the whole Book without hiding the page. Translation is the default; Source is an explicit choice independent of Ctrl+T. Matching ignores case across scripts and searches the displayed text, without word boundaries. Results are ordered by Chapter and Block; Enter / Shift+Enter wrap through them, opening the Chapter and side and highlighting the match. The bar shows the current position, total and Chapter; totals beyond 10,000 show 10,000+. Search waits for 150 ms of quiet, then runs off-thread; superseded jobs stop between Chapters and old replies are ignored. Esc closes find and returns focus to reading; Ctrl+F refocuses and selects the query.
+
 ## Palette (Ctrl+K)
 
 A 600px sheet over a scrim, 110px from the top. It finds:
@@ -199,6 +203,7 @@ The full list lives in one table, `crates/cipher-app/src/keys.rs`; the shortcuts
 | Key | Action |
 |---|---|
 | Ctrl+K | Palette |
+| Ctrl+F | Find in Book; Enter / Shift+Enter next / previous, Esc close |
 | Ctrl+\\ | Contents sidebar |
 | Ctrl+J | Context sidebar |
 | Ctrl+G | Cast & terms |

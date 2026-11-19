@@ -1,0 +1,371 @@
+//! Book-wide search in the same plain text the reader sees.
+use std::ops::Range;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU64, Ordering},
+};
+
+use cipher_book::{BlockId, Book, ChapterId, Side};
+use rune::{Key, KeyEvent, TextEdit, Tx};
+use unicode_casefold::{Locale, UnicodeCaseFold, Variant};
+
+use crate::{fix::work::Msg, library::Library, state::State};
+
+pub const LIMIT: usize = 10_000;
+
+#[derive(Clone, Default)]
+pub struct Search {
+    latest: Arc<AtomicU64>,
+    generation: u64,
+}
+
+impl Search {
+    fn next(&self) -> Self {
+        Self {
+            latest: self.latest.clone(),
+            generation: self.latest.fetch_add(1, Ordering::Relaxed) + 1,
+        }
+    }
+
+    fn cancelled(&self) -> bool {
+        self.latest.load(Ordering::Relaxed) != self.generation
+    }
+}
+
+pub struct Hit {
+    pub chapter: ChapterId,
+    pub block: BlockId,
+    pub side: Side,
+    pub range: Range<usize>,
+}
+
+#[derive(Default)]
+pub struct Results {
+    pub hits: Vec<Hit>,
+    pub more: bool,
+}
+
+pub struct Find {
+    pub query: TextEdit,
+    pub scope: Side,
+    pub results: Results,
+    pub current: usize,
+    pub generation: u64,
+    pub searching: bool,
+    pub searched: String,
+    pub search: Search,
+    pub due: Option<f64>,
+}
+
+impl Drop for Find {
+    fn drop(&mut self) {
+        self.search.latest.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+fn fold(c: char) -> char {
+    c.case_fold_with(Variant::Simple, Locale::NonTurkic)
+        .next()
+        .unwrap()
+}
+
+pub fn matches(text: &str, query: &str) -> Vec<Range<usize>> {
+    if query.trim().is_empty() {
+        return Vec::new();
+    }
+    let needle: Vec<_> = query.chars().map(fold).collect();
+    let chars: Vec<_> = text.char_indices().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + needle.len() <= chars.len() {
+        if chars[i..i + needle.len()]
+            .iter()
+            .map(|(_, c)| fold(*c))
+            .eq(needle.iter().copied())
+        {
+            let end = chars.get(i + needle.len()).map_or(text.len(), |x| x.0);
+            out.push(chars[i].0..end);
+            i += needle.len();
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+impl Library {
+    pub fn find_job(
+        &self,
+        query: String,
+        side: Side,
+        search: Search,
+    ) -> impl FnOnce() -> cipher_book::Result<Results> + Send + 'static {
+        let path = self.path().to_path_buf();
+        let ids: Vec<_> = self.chapters.iter().map(|c| c.id).collect();
+        move || {
+            let mut out = Results::default();
+            if query.trim().is_empty() || search.cancelled() {
+                return Ok(out);
+            }
+            let book = Book::open(path)?;
+            for chapter in ids {
+                if search.cancelled() {
+                    return Ok(Results::default());
+                }
+                let ch = book.chapter(chapter)?;
+                let blocks = match side {
+                    Side::Source => ch.source,
+                    Side::Translation => ch.translation,
+                };
+                for b in blocks {
+                    for range in matches(&crate::library::shown(&b.text), &query) {
+                        if out.hits.len() == LIMIT {
+                            out.more = true;
+                            return Ok(out);
+                        }
+                        out.hits.push(Hit {
+                            chapter,
+                            block: b.id,
+                            side,
+                            range,
+                        });
+                    }
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+impl State {
+    pub fn open_find(&mut self, tx: &mut Tx) {
+        self.palette = None;
+        let f = self.find.get_or_insert_with(|| Find {
+            query: TextEdit::new(""),
+            scope: Side::Translation,
+            results: Results::default(),
+            current: 0,
+            generation: 0,
+            searching: false,
+            searched: String::new(),
+            search: Search::default(),
+            due: None,
+        });
+        f.query.focused = true;
+        f.query.anchor = 0;
+        f.query.focus = f.query.text.len();
+        tx.focus("find-input", false);
+    }
+
+    pub fn search_find(&mut self) {
+        let Some(f) = &mut self.find else {
+            return;
+        };
+        let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        f.generation = generation;
+        f.search = f.search.next();
+        f.searching = !f.query.text.trim().is_empty();
+        f.results = Results::default();
+        f.current = 0;
+        f.searched = f.query.text.clone();
+        f.due = f.searching.then_some(f64::INFINITY);
+    }
+
+    pub fn poll_find(&mut self, tx: &mut Tx) -> bool {
+        if self
+            .find
+            .as_ref()
+            .is_some_and(|f| f.searched != f.query.text)
+        {
+            self.search_find();
+        }
+        let Some(f) = &mut self.find else {
+            return false;
+        };
+        let Some(mut due) = f.due else {
+            return false;
+        };
+        if due.is_infinite() {
+            due = tx.clock() + 0.15;
+            f.due = Some(due);
+        }
+        if tx.clock() < due {
+            tx.wake_at(due);
+            return true;
+        }
+        f.due = None;
+        let generation = f.generation;
+        let job = self
+            .lib
+            .find_job(f.query.text.clone(), f.scope, f.search.clone());
+        self.bg
+            .spawn(move || Msg::Found(generation, job().map_err(|e| e.to_string())));
+        true
+    }
+
+    pub fn found(&mut self, generation: u64, result: Result<Results, String>, tx: &mut Tx) {
+        let Some(f) = &mut self.find else {
+            return;
+        };
+        if f.generation != generation {
+            return;
+        }
+        f.searching = false;
+        match result {
+            Ok(results) => {
+                f.results = results;
+                self.jump_find(tx);
+            }
+            Err(e) => self.toast = Some(format!("Could not search: {e}")),
+        }
+    }
+
+    pub fn jump_find(&mut self, tx: &mut Tx) {
+        let Some(hit) = self
+            .find
+            .as_ref()
+            .and_then(|f| f.results.hits.get(f.current))
+        else {
+            return;
+        };
+        let (chapter, block, side) = (hit.chapter, hit.block, hit.side);
+        self.go_block_side(tx, chapter, block, side);
+    }
+
+    pub fn go_block_side(&mut self, tx: &mut Tx, chapter: ChapterId, block: BlockId, side: Side) {
+        if let Some(at) = self.lib.chapter_index(chapter) {
+            self.source = side == Side::Source;
+            self.open_chapter(at);
+            self.pending_scroll = None;
+            tx.scroll_key_to(format!("row{}", block.0), 180.0);
+            tx.scroll_key_to(format!("ch{at}"), 200.0);
+        }
+    }
+
+    pub fn step_find(&mut self, tx: &mut Tx, backwards: bool) {
+        if let Some(f) = &mut self.find {
+            let n = f.results.hits.len();
+            if n == 0 {
+                return;
+            }
+            f.current = (f.current + if backwards { n - 1 } else { 1 }) % n;
+        }
+        self.jump_find(tx);
+    }
+
+    pub fn close_find(&mut self, tx: &mut Tx) {
+        self.find = None;
+        tx.focus("doc", false);
+    }
+}
+
+pub fn key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
+    match k.key {
+        Key::Command('f') => s.open_find(tx),
+        Key::Escape => s.close_find(tx),
+        Key::Enter => s.step_find(tx, k.mods.shift),
+        _ => return false,
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn find_mixed_scripts_and_offsets() {
+        let text = "포혈공(怖血公) met Ärzte ÄRZTE カナ ПрИвЕт";
+        for (q, count) in [
+            ("공(怖", 1),
+            ("ärzte", 2),
+            ("привет", 1),
+            ("カナ", 1),
+            ("missing", 0),
+            ("  ", 0),
+            ("", 0),
+        ] {
+            let ranges = matches(text, q);
+            assert_eq!(ranges.len(), count, "{q}");
+            for r in ranges {
+                assert!(text.get(r).is_some());
+            }
+        }
+        assert_eq!(matches("aaaaa", "AA"), vec![0..2, 2..4]);
+        assert_eq!(matches("ςΣσ", "σ").len(), 3);
+    }
+
+    #[test]
+    fn find_large_book_job_is_send_and_capped() {
+        use cipher_book::{BookMeta, Change};
+        let start = std::time::Instant::now();
+        let dir = tempfile::tempdir().unwrap();
+        let mut book = Book::create(
+            dir.path().join("large.cipher"),
+            BookMeta {
+                title: "Find test".into(),
+                source_lang: "ko".into(),
+                target_lang: "en".into(),
+            },
+        )
+        .unwrap();
+        for number in 1..=1500 {
+            let source = (0..40)
+                .map(|i| {
+                    if i == 0 {
+                        "**포혈공(怖血公)** met Ärzte カナ Привет".into()
+                    } else {
+                        "포혈공 walks through the tower".into()
+                    }
+                })
+                .collect();
+            book.apply(Change::AddChapter {
+                number: Some(number),
+                title: None,
+                source,
+            })
+            .unwrap();
+        }
+        drop(book);
+        let lib = Library::open_quick(&dir.path().join("large.cipher")).unwrap();
+        let job = lib.find_job("ärzte".into(), Side::Source, Search::default());
+        let result = std::thread::spawn(job).join().unwrap().unwrap();
+        assert_eq!(result.hits.len(), 1500);
+        assert!(!result.more);
+        for h in &result.hits {
+            assert_eq!(h.range, 25..31);
+        }
+        let result =
+            std::thread::spawn(lib.find_job("포혈공".into(), Side::Source, Search::default()))
+                .join()
+                .unwrap()
+                .unwrap();
+        assert_eq!(result.hits.len(), LIMIT);
+        assert!(result.more);
+        assert!(
+            std::thread::spawn(lib.find_job("".into(), Side::Source, Search::default()))
+                .join()
+                .unwrap()
+                .unwrap()
+                .hits
+                .is_empty()
+        );
+        let search = Search::default();
+        let superseded = lib.find_job("tower".into(), Side::Source, search.clone());
+        let _replacement = search.next();
+        let job = lib.find_job("tower".into(), Side::Source, Search::default());
+        drop(lib);
+        std::fs::remove_file(dir.path().join("large.cipher")).unwrap();
+        let cancelled = std::thread::spawn(superseded).join().unwrap().unwrap();
+        assert!(
+            cancelled.hits.is_empty(),
+            "superseded job exits without opening the Book"
+        );
+        assert!(std::thread::spawn(job).join().unwrap().is_err());
+        eprintln!(
+            "find_large_book_job_is_send_and_capped: {:?}",
+            start.elapsed()
+        );
+    }
+}
