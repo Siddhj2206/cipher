@@ -28,6 +28,31 @@ pub struct ReadingRow {
     pub height: f32,
 }
 
+#[derive(Clone, Copy)]
+struct ReadingAnchor {
+    row: ReadingRow,
+    offset: f32,
+}
+
+impl ReadingAnchor {
+    fn reflowed_offset(self, height: f32, padding: f32) -> f32 {
+        let old_text = self.row.height - padding;
+        let text = height - padding;
+        let into_row = -self.offset;
+        if into_row < old_text && into_row >= text && text > 0.0 {
+            -into_row / old_text * text
+        } else {
+            self.offset
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ActiveSidebarDrag {
+    sizing: SidebarDrag,
+    reading: Option<ReadingAnchor>,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Screen {
     Reading,
@@ -147,8 +172,8 @@ pub struct State {
     /// In a window too narrow for both sidebars, the context sidebar was opened last.
     context_first: bool,
     /// Live width during a drag; the preference changes only on release.
-    sidebar_drag: Option<SidebarDrag>,
-    sidebar_reflow: Option<(ReadingRow, f32)>,
+    sidebar_drag: Option<ActiveSidebarDrag>,
+    sidebar_reflow: Option<ReadingAnchor>,
     /// The Book whose old import Pairs were last checked for re-pairing.
     realigning: Option<std::path::PathBuf>,
     /// The running translation, from the worker's Events.
@@ -494,7 +519,7 @@ impl State {
 
     pub fn sidebar_layout(&self) -> SidebarLayout {
         let preferred = |side, saved| match self.sidebar_drag {
-            Some(drag) if drag.side == side => drag.width,
+            Some(drag) if drag.sizing.side == side => drag.sizing.width,
             _ => saved,
         };
         SidebarLayout::fit(
@@ -526,25 +551,30 @@ impl State {
         };
         let width = width.clamp(side.min_width(), self.sidebar_max_width(side));
         if current != width {
-            self.hold_reading_position(tx);
+            self.hold_reading_position(self.reading_anchor(), tx);
             self.remember_sidebar_width(side, width);
         }
     }
 
     pub fn start_sidebar_drag(&mut self, side: Sidebar) {
-        self.sidebar_drag = SidebarDrag::new(side, self.sidebar_layout());
+        self.sidebar_drag =
+            SidebarDrag::new(side, self.sidebar_layout()).map(|sizing| ActiveSidebarDrag {
+                sizing,
+                reading: self.reading_anchor(),
+            });
     }
 
     pub fn sidebar_dragging(&self, side: Sidebar) -> bool {
-        self.sidebar_drag.is_some_and(|drag| drag.side == side)
+        self.sidebar_drag
+            .is_some_and(|drag| drag.sizing.side == side)
     }
 
     pub fn preview_sidebar_drag(&mut self, side: Sidebar, delta: f32, tx: &mut Tx) {
-        if let Some(mut drag) = self.sidebar_drag.filter(|drag| drag.side == side) {
-            let width = drag.target(delta, self.avail_w());
-            if drag.width != width {
-                self.hold_reading_position(tx);
-                drag.width = width;
+        if let Some(mut drag) = self.sidebar_drag.filter(|drag| drag.sizing.side == side) {
+            let width = drag.sizing.target(delta, self.avail_w());
+            if drag.sizing.width != width {
+                self.hold_reading_position(drag.reading, tx);
+                drag.sizing.width = width;
                 self.sidebar_drag = Some(drag);
             }
         }
@@ -558,11 +588,11 @@ impl State {
             self.preview_sidebar_drag(side, delta, tx);
         }
         let shown = self.sidebar_layout().width(side).is_some();
-        let drag = self.sidebar_drag.take().unwrap();
-        if !cancelled && shown && delta != 0.0 && drag.width != drag.start {
-            self.remember_sidebar_width(side, drag.width);
-        } else if drag.width != drag.start {
-            self.hold_reading_position(tx);
+        let ActiveSidebarDrag { sizing, reading } = self.sidebar_drag.take().unwrap();
+        if !cancelled && shown && delta != 0.0 && sizing.width != sizing.start {
+            self.remember_sidebar_width(side, sizing.width);
+        } else if sizing.width != sizing.start {
+            self.hold_reading_position(reading, tx);
         }
     }
 
@@ -573,28 +603,34 @@ impl State {
         }
     }
 
-    fn hold_reading_position(&mut self, tx: &mut Tx) {
-        if self.screen == Screen::Reading
-            && let Some(row) = self.top_reading_row()
-        {
-            tx.keep_on_screen(format!("row{}", row.id.0));
-            self.sidebar_reflow = Some((row, row.top - self.scroll_y.get()));
+    fn reading_anchor(&self) -> Option<ReadingAnchor> {
+        if self.screen != Screen::Reading {
+            return None;
+        }
+        let row = self.top_reading_row()?;
+        Some(ReadingAnchor {
+            row,
+            offset: row.top - self.scroll_y.get(),
+        })
+    }
+
+    fn hold_reading_position(&mut self, anchor: Option<ReadingAnchor>, tx: &mut Tx) {
+        self.sidebar_reflow = anchor;
+        if let Some(anchor) = anchor {
+            tx.keep_on_screen(format!("row{}", anchor.row.id.0));
         }
     }
 
     pub fn sidebar_reflow_row(&self) -> Option<BlockId> {
-        self.sidebar_reflow.map(|(row, _)| row.id)
+        self.sidebar_reflow.map(|anchor| anchor.row.id)
     }
 
     pub fn finish_sidebar_reflow(&mut self, id: BlockId, height: f32, padding: f32, tx: &mut Tx) {
-        let reflow = self.sidebar_reflow.take_if(|(row, _)| row.id == id);
-        if let Some((row, offset)) = reflow
-            && row.height + offset > padding
-            && height + offset <= padding
-        {
-            // An unchanged pixel offset would put every line of the shortened Block above us.
-            let progress = -offset / (row.height - padding);
-            tx.scroll_key_to(format!("row{}", id.0), -progress * (height - padding));
+        if let Some(anchor) = self.sidebar_reflow.take_if(|anchor| anchor.row.id == id) {
+            tx.scroll_key_to(
+                format!("row{}", id.0),
+                anchor.reflowed_offset(height, padding),
+            );
         } else {
             tx.live_only();
         }

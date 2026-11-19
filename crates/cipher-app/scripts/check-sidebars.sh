@@ -61,27 +61,41 @@ cat >"$tmp/reflow.json" <<'JSON'
  {"t": 0.2, "type": "drag", "key": "resize-contents", "dx": 500, "dur": 0.2},
  {"t": 0.6, "type": "scroll", "key": "doc", "dy": -955, "dur": 0.4},
  {"t": 1.6, "type": "mark", "name": "before"},
- {"t": 1.75, "type": "drag", "key": "resize-contents", "dx": -500, "dur": 0.15},
- {"t": 2.1, "type": "mark", "name": "after"}
+ {"t": 1.75, "type": "down", "key": "resize-contents"},
+ {"t": 1.85, "type": "move", "x": 240, "y": 450},
+ {"t": 2.05, "type": "mark", "name": "widened"},
+ {"t": 2.15, "type": "key", "name": "Escape"},
+ {"t": 2.25, "type": "up"},
+ {"t": 2.45, "type": "mark", "name": "cancel"},
+ {"t": 2.55, "type": "down", "key": "resize-contents"},
+ {"t": 2.65, "type": "move", "x": 240, "y": 450},
+ {"t": 2.85, "type": "move"},
+ {"t": 2.95, "type": "up"},
+ {"t": 3.15, "type": "mark", "name": "reverse"}
 ]}
 JSON
-for m in before after; do
+for m in before widened cancel reverse; do
   "$bin" "$tmp/long.cipher" --size 1480x920 --scale .5 --fps 15 --script "$tmp/reflow.json" \
     --at "mark:$m" --tree "$tmp/$m.json" 2>"$tmp/log" || { cat "$tmp/log"; exit 1; }
 done
 python3 -I - "$tmp" <<'PY'
-import json, pathlib, sys
+import json, math, pathlib, sys
 
 def rects(mark):
     tree = json.loads((pathlib.Path(sys.argv[1]) / f"{mark}.json").read_text())
     return {e["key"]: e["rect"] for e in tree["elements"] if e.get("key") and not e.get("exiting")}
 
-before, after = rects("before"), rects("after")
+before, after = rects("before"), rects("widened")
 top = before["doc"][1]
 anchor = next(key for key, (_, y, _, h) in before.items()
               if key.startswith("b") and key[1:].isdigit() and y < top < y + h)
 _, y, _, height = after[anchor]
 assert top - before[anchor][1] > height, "reflow did not shorten the text past the old offset"
 assert y < after["doc"][1] < y + height, "widening skipped the paragraph at the top of the reader"
+for mark in ("cancel", "reverse"):
+    restored = rects(mark)
+    assert math.isclose(restored["contents"][2], before["contents"][2], abs_tol=1), mark
+    assert math.isclose(restored[anchor][1], before[anchor][1], abs_tol=1), (
+        mark, "original reading offset was not restored", restored[anchor], before[anchor])
 PY
 echo "ok: drag, keyboard, focus, reading anchor, clamp, auto-collapse and restore"
