@@ -19,7 +19,16 @@ impl State {
         });
     }
 
-    fn restore_cast_term(&mut self, id: Option<TermId>) {
+    fn term_card_id(&self) -> Option<TermId> {
+        self.term_card
+            .and_then(|card| self.lib.terms.get(card.term).map(|t| t.id))
+    }
+
+    fn restore_cast_term(&mut self, id: Option<TermId>, card: Option<TermId>) {
+        self.term_card = self.term_card.and_then(|mut selected| {
+            selected.term = self.lib.terms.iter().position(|t| Some(t.id) == card)?;
+            Some(selected)
+        });
         self.cast_open = id.and_then(|id| self.lib.terms.iter().position(|t| t.id == id));
         self.look = None;
         if let Some(index) = self.cast_open {
@@ -28,6 +37,7 @@ impl State {
     }
 
     pub fn decide_term(&mut self, index: usize, accept: bool) {
+        let card = self.term_card_id();
         let id = self.lib.terms[index].id;
         let result = self.lib.set_term_status(
             index,
@@ -37,27 +47,29 @@ impl State {
                 TermStatus::Dismissed
             },
         );
-        self.finish_term(result.map(Some), Some(id));
+        self.finish_term(result.map(Some), Some(id), card);
     }
 
     pub fn save_term(&mut self, index: usize) {
+        let card = self.term_card_id();
         let Some(e) = &self.term_editor else { return };
         let id = self.lib.terms[index].id;
         let result = self
             .lib
             .edit_term(index, &e.source.text, &e.rendering.text, &e.note.text);
-        self.finish_term(result, Some(id));
+        self.finish_term(result, Some(id), card);
     }
 
     fn finish_term(
         &mut self,
         result: cipher_book::Result<Option<(RevisionId, String)>>,
         id: Option<TermId>,
+        card: Option<TermId>,
     ) {
         match result {
             Ok(change) => {
                 self.term_editor = None;
-                self.restore_cast_term(id);
+                self.restore_cast_term(id, card);
                 if let Some((revision, label)) = change {
                     self.toast_undo = None;
                     self.term_toast_undo = Some(revision);
@@ -73,15 +85,68 @@ impl State {
     }
 
     pub fn undo_cast_term(&mut self, revision: RevisionId) {
+        let card = self.term_card_id();
         let id = self.cast_open.map(|i| self.lib.terms[i].id);
         match self.lib.undo_term(revision) {
             Ok(()) => {
-                self.restore_cast_term(id);
+                self.restore_cast_term(id, card);
                 self.toast = Some("Term change undone".into());
             }
             Err(e) => self.toast = Some(e.to_string()),
         }
         self.term_editor = None;
         self.term_toast_undo = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{library::Library, state::TermCard};
+    use cipher_book::{Book, BookMeta, Change, TermFields};
+
+    fn state() -> (tempfile::TempDir, State) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("terms.cipher");
+        let mut book = Book::create(
+            &path,
+            BookMeta {
+                title: "Test".into(),
+                source_lang: "ko".into(),
+                target_lang: "en".into(),
+            },
+        )
+        .unwrap();
+        for source in ["A", "B", "C"] {
+            book.apply(Change::UpsertTerm {
+                id: None,
+                fields: TermFields {
+                    source: source.into(),
+                    rendering: source.into(),
+                    ..Default::default()
+                },
+                status: TermStatus::Pending,
+                first_chapter: None,
+            })
+            .unwrap();
+        }
+        drop(book);
+        (dir, State::new(Library::open(&path).unwrap()))
+    }
+
+    #[test]
+    fn dismissal_preserves_card_identity_or_clears_removed_term() {
+        let (_dir, mut s) = state();
+        let id = s.lib.terms[2].id;
+        s.term_card = Some(TermCard {
+            block: cipher_book::BlockId(1),
+            term: 2,
+        });
+        s.decide_term(0, false);
+        assert_eq!(s.lib.terms[s.term_card.unwrap().term].id, id);
+        s.undo_cast_term(s.term_toast_undo.unwrap());
+        assert_eq!(s.lib.terms[s.term_card.unwrap().term].id, id);
+        s.decide_term(s.term_card.unwrap().term, false);
+        assert!(s.term_card.is_none());
     }
 }
