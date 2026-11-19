@@ -317,9 +317,11 @@ impl crate::state::State {
                         });
                         sync = true;
                     }
-                    Event::JobFinished { .. }
-                    | Event::JobFailed { .. }
-                    | Event::BookChanged { .. } => sync = true,
+                    Event::JobFinished { job, .. } => {
+                        self.on_notes_job_finished(job);
+                        sync = true;
+                    }
+                    Event::JobFailed { .. } | Event::BookChanged { .. } => sync = true,
                 },
             }
         }

@@ -13,6 +13,7 @@ mod history;
 mod home;
 mod keys;
 mod library;
+mod notes;
 mod palette;
 mod prefs;
 mod scenes;

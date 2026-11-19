@@ -287,6 +287,8 @@ pub fn header(s: &State, p: &Pal) -> El {
         ("New chapter".to_string(), String::new())
     } else if s.screen == Screen::Style {
         ("Style".to_string(), String::new())
+    } else if s.screen == Screen::Notes {
+        ("Book notes".to_string(), String::new())
     } else if s.screen == Screen::History {
         ("History".to_string(), String::new())
     } else {
@@ -316,7 +318,10 @@ pub fn header(s: &State, p: &Pal) -> El {
     );
     let mut right = row().gap(4.0).center_y();
     // Reading toggles mean nothing on the page of a Chapter not added yet.
-    if !matches!(s.screen, Screen::Draft | Screen::Style | Screen::History) {
+    if !matches!(
+        s.screen,
+        Screen::Draft | Screen::Style | Screen::Notes | Screen::History
+    ) {
         right = right
             .child(
                 toggle("Interlinear", s.interlinear, "h-inter", p)
@@ -351,7 +356,12 @@ pub fn header(s: &State, p: &Pal) -> El {
                 .child(kbd("Ctrl K", p))
                 .on_press(|s: &mut State| s.open_palette()),
         );
-    if !s.context_shown() && !matches!(s.screen, Screen::Draft | Screen::Style | Screen::History) {
+    if !s.context_shown()
+        && !matches!(
+            s.screen,
+            Screen::Draft | Screen::Style | Screen::Notes | Screen::History
+        )
+    {
         right = right.child(
             icon_btn(&I_RIGHT_PANEL, "show-right", false, p)
                 .help("Show context (Ctrl+J)")

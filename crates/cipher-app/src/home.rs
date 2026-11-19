@@ -185,6 +185,7 @@ impl State {
         self.toast_undo = None;
         self.fix = Fix::new();
         self.draft = None;
+        self.notes = None;
         self.progress = None;
         self.paused = None;
         self.tops.borrow_mut().clear();
