@@ -29,7 +29,7 @@ pub struct Draft {
     /// The Chapter's source, as pasted or typed.
     pub text: TextEdit,
     /// The Chapter that was open, to go back to when the draft is put aside.
-    pub back: usize,
+    pub back: Option<cipher_book::ChapterId>,
     pub files: Vec<(String, String)>,
     pub file_name: Option<String>,
     pub included: std::collections::BTreeMap<(usize, usize), bool>,
@@ -152,7 +152,7 @@ impl State {
         self.palette = None;
         self.term_card = None;
         self.fix.picked = None;
-        let back = self.lib.current();
+        let back = self.lib.chapters.get(self.lib.current()).map(|c| c.id);
         let draft = self.draft.get_or_insert_with(|| Draft {
             text: TextEdit::new(""),
             back,
@@ -325,7 +325,10 @@ impl State {
             self.draft = None;
         }
         self.screen = Screen::Reading;
-        self.go(tx, back.min(self.lib.chapters.len() - 1));
+        self.go(
+            tx,
+            back.and_then(|id| self.lib.chapter_index(id)).unwrap_or(0),
+        );
     }
 
     /// The number the next Chapter gets if its text names none.

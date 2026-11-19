@@ -672,7 +672,7 @@ fn batch_commit_rejects_empty_parts_before_adding_anything_and_allows_opted_in_d
 fn picking_more_files_preserves_the_first_file_and_any_later_paste() {
     let mut draft = crate::draft::Draft {
         text: rune::TextEdit::new("Old draft."),
-        back: 0,
+        back: None,
         files: Vec::new(),
         file_name: None,
         included: Default::default(),
@@ -1100,6 +1100,39 @@ fn appending_a_file_after_partial_import_preserves_saved_and_skipped_parts() {
             s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
             [10, 11, 12, 13, 14]
         );
+    }
+}
+
+#[test]
+fn leaving_a_partial_draft_returns_to_the_original_chapter_after_insertions() {
+    for discard in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Before."]);
+        let original = chapter(&mut b, 20, &["Reading."]);
+        chapter(&mut b, 30, &["After."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.go(&mut rune::Tx::default(), 1);
+        s.open_draft("1화\n\nOne.\n\n2화\n\nTwo.\n\n3화\n\nThree.");
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(1) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        assert!(s.draft.is_some());
+        assert_eq!(s.lib.chapters[0].number, 2);
+        s.leave_draft(&mut rune::Tx::default(), discard);
+        assert!(matches!(s.screen, crate::state::Screen::Reading));
+        assert_eq!(s.lib.chapters[s.lib.current()].id, original);
+        assert_eq!(s.draft.is_none(), discard);
     }
 }
 
