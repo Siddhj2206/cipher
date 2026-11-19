@@ -822,6 +822,42 @@ fn failed_batch_queue_keeps_every_saved_chapter_visible_and_refreshed() {
 }
 
 #[test]
+fn a_large_batch_fits_between_existing_chapters_in_number_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 0, &["Before."]);
+    chapter(&mut b, 1000, &["After."]);
+    let mut lib = Library::from_book(b).unwrap();
+    let text = (1..=128)
+        .map(|n| format!("Chapter {n}\n\nPart {n}."))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let plan = lib.intake_plan(&[], &text);
+    assert_eq!(lib.add_intakes(&plan).unwrap(), Some(1));
+    let expected = (0..=128).chain([1000]).collect::<Vec<_>>();
+    assert_eq!(
+        lib.book
+            .chapters()
+            .unwrap()
+            .iter()
+            .map(|c| c.number.unwrap())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        lib.chapters[1..129]
+            .iter()
+            .map(|c| c.queue_place.unwrap())
+            .collect::<Vec<_>>(),
+        (1..=128).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);

@@ -19,6 +19,19 @@ fn batch_heading(block: &str) -> Option<i64> {
     .then_some(number)
 }
 
+fn insertion_order<'a>(parts: &[&'a IntakePart], ordered: &mut Vec<&'a IntakePart>) {
+    if parts.is_empty() {
+        return;
+    }
+    let middle = parts.len() / 2;
+    let number = parts[middle].intake.number;
+    let first = parts.partition_point(|p| p.intake.number < number);
+    let end = parts.partition_point(|p| p.intake.number <= number);
+    ordered.extend_from_slice(&parts[first..end]);
+    insertion_order(&parts[..first], ordered);
+    insertion_order(&parts[end..], ordered);
+}
+
 /// Pasted text read as a new Chapter, for the paste sheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intake {
@@ -159,7 +172,7 @@ impl Library {
         mut create: impl FnMut(&mut Self, &Intake) -> Result<ChapterId>,
         queue: impl FnOnce(&mut cipher_book::Book, &[ChapterId]) -> Result<()>,
     ) -> Result<Option<usize>> {
-        let included: Vec<_> = parts.iter().filter(|p| p.include).collect();
+        let mut included: Vec<_> = parts.iter().filter(|p| p.include).collect();
         if included.iter().any(|p| p.intake.blocks.is_empty()) {
             return Err(Error::Invalid(
                 "the pasted Chapter has no paragraphs".into(),
@@ -167,7 +180,10 @@ impl Library {
         }
         let mut ids = Vec::new();
         let mut failure = None;
-        for part in included {
+        included.sort_by_key(|p| p.intake.number);
+        let mut ordered = Vec::with_capacity(included.len());
+        insertion_order(&included, &mut ordered);
+        for part in ordered {
             match create(self, &part.intake) {
                 Ok(id) => ids.push(id),
                 Err(error) => {
