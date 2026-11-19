@@ -97,7 +97,11 @@ my-book/
 cipher translate my-book
 ```
 
-Translated chapters are written to `tl/`.
+Chapters are discovered recursively under `raw/`, ordered by chapter number with
+relative-path ties sorted alphabetically. Translated chapters preserve their
+relative paths under `tl/`: `raw/part1/001.md` becomes `tl/part1/001.md`.
+Chapter identifiers in state, status, and JSON use the same relative paths with
+forward slashes, so `part1/001.md` and `part2/001.md` remain distinct.
 
 ### 5. Check status
 

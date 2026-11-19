@@ -51,6 +51,48 @@ fn book_with_chapter(home: &tempfile::TempDir, name: &str) -> std::path::PathBuf
 }
 
 #[test]
+fn nested_dry_run_uses_relative_identity_and_output_paths() {
+    let home = temp_dir();
+    let book = home.path().join("nested");
+    init_book(&mut isolated_command(&home), &book);
+    for relative in ["b/ch1.md", "a/ch1.md", "a/empty.md"] {
+        let file = book.join("raw").join(relative);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(
+            file,
+            if relative.ends_with("empty.md") {
+                ""
+            } else {
+                "# Chapter 1\n\nText"
+            },
+        )
+        .unwrap();
+    }
+    std::fs::create_dir_all(book.join("tl/a")).unwrap();
+    std::fs::write(book.join("tl/a/ch1.md"), "existing").unwrap();
+    let output = isolated_command(&home)
+        .args(["translate", "--json", "--dry-run"])
+        .arg(&book)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let chapters = report["chapters"].as_array().unwrap();
+    assert_eq!(chapters.len(), 3);
+    assert_eq!(chapters[0]["chapter"], "a/ch1.md");
+    assert_eq!(chapters[0]["action"], "skip");
+    assert_eq!(chapters[1]["chapter"], "b/ch1.md");
+    assert_eq!(chapters[1]["action"], "translate");
+    assert_eq!(chapters[2]["chapter"], "a/empty.md");
+    assert_eq!(chapters[2]["action"], "skip");
+    assert!(!book.join("tl/b/ch1.md").exists());
+}
+
+#[test]
 fn init_creates_book_structure() {
     let dir = temp_dir();
     let book_path = dir.path().join("test-book");

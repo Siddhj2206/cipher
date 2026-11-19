@@ -244,7 +244,7 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
         chapters
             .iter()
             .filter(|ch| {
-                chapter_output_path(out_dir, ch)
+                chapter_output_path(out_dir, &layout.paths.raw_dir, ch)
                     .map(|p| !p.exists())
                     .unwrap_or(true)
             })
@@ -385,7 +385,7 @@ async fn iterate_translation(
 
     while let Some(chapter_file) = remaining_chapters.pop_front() {
         let chapter_path = chapter_state_key(raw_dir, &chapter_file)?;
-        let out_path = chapter_output_path(out_dir, &chapter_file)?;
+        let out_path = chapter_output_path(out_dir, raw_dir, &chapter_file)?;
         let previous_chapter_state = previous_chapter_states.get(&chapter_path);
         let rerun_decision = combine_rerun_decisions(
             rerun_plan.decision_for(&chapter_path),
@@ -403,11 +403,7 @@ async fn iterate_translation(
         let paths = ChapterPaths::new(&chapter_file, &out_path, &chapter_path);
 
         if !output::is_quiet() && !output::is_json() {
-            let short = Path::new(&chapter_path)
-                .file_name()
-                .map(|f| f.to_string_lossy())
-                .unwrap_or_default();
-            eprint!("\r\x1b[K  Translating {} ...", short);
+            eprint!("\r\x1b[K  Translating {} ...", chapter_path);
         }
 
         let result = tokio::select! {

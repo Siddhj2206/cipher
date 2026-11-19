@@ -13,7 +13,16 @@ pub(crate) fn create_backup(book_dir: &Path, path: &Path) -> Result<PathBuf> {
         .to_string_lossy();
     let backup_name = format!("{}_{}.md", filename, timestamp);
 
-    let backup_dir = book_dir.join(".cipher").join("backups");
+    let paths = crate::book::paths::BookPaths::resolve(book_dir);
+    let relative_parent = path
+        .strip_prefix(paths.effective_out_dir())
+        .ok()
+        .and_then(Path::parent)
+        .unwrap_or_else(|| Path::new(""));
+    let backup_dir = book_dir
+        .join(".cipher")
+        .join("backups")
+        .join(relative_parent);
     std::fs::create_dir_all(&backup_dir)?;
 
     let backup_path = backup_dir.join(&backup_name);
@@ -51,5 +60,23 @@ mod tests {
 
         create_backup(dir.path(), &source).unwrap();
         assert!(backup_dir.exists());
+    }
+
+    #[test]
+    fn nested_backups_do_not_collide() {
+        let dir = tempfile::tempdir().unwrap();
+        for relative in ["a/ch1.md", "b/ch1.md"] {
+            let source = dir.path().join("tl").join(relative);
+            std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+            std::fs::write(&source, relative).unwrap();
+            let backup = create_backup(dir.path(), &source).unwrap();
+            assert_eq!(std::fs::read_to_string(backup).unwrap(), relative);
+        }
+        for part in ["a", "b"] {
+            let files: Vec<_> = std::fs::read_dir(dir.path().join(".cipher/backups").join(part))
+                .unwrap()
+                .collect();
+            assert_eq!(files.len(), 1);
+        }
     }
 }

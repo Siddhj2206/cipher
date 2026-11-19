@@ -9,7 +9,7 @@ A project directory containing raw chapters (`raw/`), translations (`tl/`), a gl
 _Avoid_: Project, workspace
 
 **Chapter**:
-A single markdown file in the `raw/` directory, identified by its filename. A chapter follows this lifecycle: raw markdown → glossary injection → translate → validate → repair (if needed) → write to `tl/` as translated markdown. The output path is derived from the input filename.
+A single markdown file under the `raw/` directory, identified by its relative path with forward slashes. A chapter follows this lifecycle: raw markdown → glossary injection → translate → validate → repair (if needed) → write to `tl/` as translated markdown. The output preserves the path relative to `raw/`.
 _Avoid_: Section, segment, doc
 
 **Translation**:

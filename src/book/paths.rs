@@ -133,11 +133,25 @@ pub fn chapter_state_key(raw_dir: &Path, chapter_file: &Path) -> Result<String> 
     Ok(normalize_chapter_path(relative_path))
 }
 
-pub fn chapter_output_path(out_dir: &Path, chapter_file: &Path) -> Result<PathBuf> {
-    let filename = chapter_file.file_name().ok_or_else(|| Error::Validation {
-        message: "Invalid chapter filename".to_string(),
-    })?;
-    Ok(out_dir.join(filename))
+pub fn chapter_output_path(out_dir: &Path, raw_dir: &Path, chapter_file: &Path) -> Result<PathBuf> {
+    let relative = chapter_file
+        .strip_prefix(raw_dir)
+        .map_err(|_| Error::Validation {
+            message: format!(
+                "Chapter is outside raw directory: {}",
+                chapter_file.display()
+            ),
+        })?;
+    if relative.as_os_str().is_empty()
+        || relative
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err(Error::Validation {
+            message: "Invalid relative chapter path".to_string(),
+        });
+    }
+    Ok(out_dir.join(relative))
 }
 
 pub(crate) fn discover_chapters(raw_dir: &Path) -> Result<Vec<PathBuf>> {
@@ -147,37 +161,36 @@ pub(crate) fn discover_chapters(raw_dir: &Path) -> Result<Vec<PathBuf>> {
         return Ok(chapters);
     }
 
-    for entry in std::fs::read_dir(raw_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        if path.extension().map(|e| e == "md").unwrap_or(false) {
-            chapters.push(path);
-        }
-    }
+    collect_chapters(raw_dir, &mut chapters)?;
 
     chapters.sort_by(|a, b| {
-        let a_name = a
-            .file_stem()
-            .map(|s| s.to_string_lossy())
-            .unwrap_or_default();
-        let b_name = b
-            .file_stem()
-            .map(|s| s.to_string_lossy())
-            .unwrap_or_default();
-
-        let a_num = extract_number(&a_name);
-        let b_num = extract_number(&b_name);
-
-        match (a_num, b_num) {
+        let a_name = a.file_stem().unwrap_or_default().to_string_lossy();
+        let b_name = b.file_stem().unwrap_or_default().to_string_lossy();
+        let order = match (extract_number(&a_name), extract_number(&b_name)) {
             (Some(n1), Some(n2)) => n1.cmp(&n2),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => a_name.cmp(&b_name),
-        }
+        };
+        order.then_with(|| a.cmp(b))
     });
 
     Ok(chapters)
+}
+
+fn collect_chapters(dir: &Path, chapters: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if entry.file_type()?.is_dir() {
+            collect_chapters(&path, chapters)?;
+        } else if path.is_file() && path.extension().map(|e| e == "md").unwrap_or(false) {
+            chapters.push(path);
+        }
+    }
+
+    Ok(())
 }
 
 pub(crate) fn extract_number(filename: &str) -> Option<u32> {
@@ -220,7 +233,7 @@ mod tests {
     fn chapter_output_path_joins_filename_with_out_dir() {
         let out = Path::new("/book/tl");
         let file = Path::new("/book/raw/01-intro.md");
-        let path = chapter_output_path(out, file).unwrap();
+        let path = chapter_output_path(out, Path::new("/book/raw"), file).unwrap();
         assert_eq!(path, Path::new("/book/tl/01-intro.md"));
     }
 
@@ -228,6 +241,81 @@ mod tests {
     fn test_extract_number_multiple_groups() {
         assert_eq!(extract_number("ch3_part2"), Some(3));
         assert_eq!(extract_number("v2_chapter10"), Some(2));
+    }
+
+    #[test]
+    fn nested_chapters_have_distinct_outputs_and_state() {
+        use crate::state::{
+            ChapterState, ChapterStatus, load_all_chapter_states, save_chapter_state,
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let paths = BookPaths::resolve(dir.path());
+        for relative in ["a/ch1.md", "b/ch1.md"] {
+            let file = paths.raw_dir.join(relative);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(&file, relative).unwrap();
+            let key = chapter_state_key(&paths.raw_dir, &file).unwrap();
+            assert_eq!(key, relative);
+            let output = chapter_output_path(&paths.out_dir, &paths.raw_dir, &file).unwrap();
+            crate::io::atomic_write(&output, relative).unwrap();
+            save_chapter_state(
+                dir.path(),
+                &ChapterState::new(
+                    key,
+                    ChapterStatus::Success,
+                    None,
+                    None,
+                    None,
+                    None,
+                    vec![],
+                    None,
+                ),
+            )
+            .unwrap();
+        }
+        let states = load_all_chapter_states(dir.path()).unwrap();
+        assert_eq!(states.len(), 2);
+        for relative in ["a/ch1.md", "b/ch1.md"] {
+            assert_eq!(states[relative].chapter_path, relative);
+            assert_eq!(
+                std::fs::read_to_string(paths.out_dir.join(relative)).unwrap(),
+                relative
+            );
+            assert!(!paths.out_dir.join(relative).with_extension("tmp").exists());
+        }
+    }
+
+    #[test]
+    fn nested_discovery_is_numeric_with_path_tiebreaker() {
+        let dir = tempfile::tempdir().unwrap();
+        for relative in ["b/ch1.md", "a/ch10.md", "a/ch1.md", "ch2.md", "a/notes.txt"] {
+            let file = dir.path().join(relative);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, "text").unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("empty.md")).unwrap();
+        let names: Vec<_> = discover_chapters(dir.path())
+            .unwrap()
+            .iter()
+            .map(|file| chapter_state_key(dir.path(), file).unwrap())
+            .collect();
+        assert_eq!(names, ["a/ch1.md", "b/ch1.md", "ch2.md", "a/ch10.md"]);
+    }
+
+    #[test]
+    fn chapter_output_rejects_paths_outside_raw() {
+        let raw = Path::new("/book/raw");
+        for file in ["/book/other/ch1.md", "/book/raw/../ch1.md", "/book/raw"] {
+            assert!(chapter_output_path(Path::new("/book/tl"), raw, Path::new(file)).is_err());
+        }
+    }
+
+    #[test]
+    fn discovery_reports_non_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("file");
+        std::fs::write(&file, "text").unwrap();
+        assert!(discover_chapters(&file).is_err());
     }
 
     #[test]

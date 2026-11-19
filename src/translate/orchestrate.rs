@@ -987,6 +987,57 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn nested_chapters_translate_and_checkpoint_independently() {
+        use crate::book::paths::{
+            BookPaths, chapter_output_path, chapter_state_key, discover_chapters,
+        };
+        use crate::state::load_all_chapter_states;
+        let dir = tempfile::tempdir().unwrap();
+        let book = BookPaths::resolve(dir.path());
+        for relative in ["a/ch1.md", "b/ch1.md"] {
+            let raw = book.raw_dir.join(relative);
+            std::fs::create_dir_all(raw.parent().unwrap()).unwrap();
+            std::fs::write(raw, "# Chapter 1\n\nOriginal text").unwrap();
+        }
+        let style = None;
+        let config = OutputConfig::default();
+        let translators = scripted_translators(
+            Box::new(ScriptedProvider::new().with_translate_ok(scripted_text_result("translated"))),
+            Box::new(ScriptedProvider::new()),
+        );
+        let ctx = ChapterContext::new(
+            &translators,
+            &style,
+            &config,
+            InjectionMode::Smart,
+            &book.glossary_json,
+            dir.path(),
+        );
+        for raw in discover_chapters(&book.raw_dir).unwrap() {
+            let key = chapter_state_key(&book.raw_dir, &raw).unwrap();
+            let out = chapter_output_path(&book.out_dir, &book.raw_dir, &raw).unwrap();
+            let paths = ChapterPaths::new(&raw, &out, &key);
+            let result =
+                translate_single_chapter(&ctx, &paths, false, false, None, None, &mut vec![])
+                    .await
+                    .unwrap();
+            assert!(result.translated());
+            save_chapter_state(dir.path(), &result.chapter_state).unwrap();
+            assert!(std::fs::read_to_string(out).unwrap().contains("translated"));
+        }
+        let states = load_all_chapter_states(dir.path()).unwrap();
+        assert_eq!(
+            states.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a/ch1.md", "b/ch1.md"]
+        );
+        assert!(
+            states
+                .values()
+                .all(|state| state.status == ChapterStatus::Success)
+        );
+    }
+
     struct TestChapter {
         _dir: TempDir,
         result: ChapterResult,

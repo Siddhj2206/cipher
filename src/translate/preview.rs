@@ -118,7 +118,7 @@ fn build_chapter_previews(
 
     for chapter_file in chapters {
         let chapter_path = chapter_state_key(raw_dir, chapter_file)?;
-        let output_exists = chapter_output_path(out_dir, chapter_file)?.exists();
+        let output_exists = chapter_output_path(out_dir, raw_dir, chapter_file)?.exists();
         let rerun_decision = combine_rerun_decisions(
             glossary_rerun_plan.decision_for(&chapter_path),
             source_rerun_plan.decision_for(&chapter_path),

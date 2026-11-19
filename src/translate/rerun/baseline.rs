@@ -102,7 +102,7 @@ pub(crate) fn migrate_legacy_full_tracking(
 
     for chapter_file in ctx.chapters {
         let chapter_path = chapter_state_key(ctx.raw_dir, chapter_file)?;
-        if !chapter_output_path(ctx.out_dir, chapter_file)?.exists() {
+        if !chapter_output_path(ctx.out_dir, ctx.raw_dir, chapter_file)?.exists() {
             continue;
         }
 

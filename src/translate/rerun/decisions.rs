@@ -166,7 +166,7 @@ fn chapters_with_output<'a>(ctx: &'a RerunPlanContext) -> Result<Vec<(String, &'
     let mut result = Vec::new();
     for chapter_file in ctx.chapters {
         let chapter_path = chapter_state_key(ctx.raw_dir, chapter_file)?;
-        if !chapter_output_path(ctx.out_dir, chapter_file)?.exists() {
+        if !chapter_output_path(ctx.out_dir, ctx.raw_dir, chapter_file)?.exists() {
             continue;
         }
         result.push((chapter_path, chapter_file));

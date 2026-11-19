@@ -192,7 +192,7 @@ pub(crate) fn count_chapters_still_stale_for_current_glossary(
 
     for chapter_file in ctx.chapters {
         let chapter_path = chapter_state_key(ctx.raw_dir, chapter_file)?;
-        let output_exists = chapter_output_path(ctx.out_dir, chapter_file)?.exists();
+        let output_exists = chapter_output_path(ctx.out_dir, ctx.raw_dir, chapter_file)?.exists();
         if !output_exists {
             continue;
         }
