@@ -12,6 +12,13 @@ impl Sink for Desktop {
         let _ = std::thread::Builder::new()
             .name("notification".into())
             .spawn(move || {
+                #[cfg(target_os = "macos")]
+                {
+                    static APPLICATION: std::sync::Once = std::sync::Once::new();
+                    APPLICATION.call_once(|| {
+                        let _ = notify_rust::set_application(crate::APP_ID);
+                    });
+                }
                 static WARNED: AtomicBool = AtomicBool::new(false);
                 if notify_rust::Notification::new()
                     .summary(&notice.title)
