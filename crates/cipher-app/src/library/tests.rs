@@ -64,6 +64,72 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 const LORD: &str = "마탑주";
 
 #[test]
+fn successive_review_accepts_keep_every_revision_for_undo() {
+    for accept_prose in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        let tid = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+        let ch = chapter(&mut b, 1, &["마탑주가 웃었다."]);
+        translate(&mut b, ch, &["The Magic Tower Lord smiled."], None);
+        b.apply(Change::AddStoryNote {
+            chapter: None,
+            text: "The Magic Tower Lord smiled.".into(),
+        })
+        .unwrap();
+        let glossary = b.glossary().unwrap();
+        let notes = b.story_notes().unwrap();
+        let original_chapter = b.chapter(ch).unwrap();
+        let path = b.path().to_owned();
+        drop(b);
+        let mut lib = Library::open(&path).unwrap();
+        let at = lib.terms.iter().position(|t| t.id == tid).unwrap();
+        let sid = lib.use_wording(at, "Tower Master", &[]).unwrap().unwrap();
+        let metadata: Vec<_> = lib
+            .suggestion(sid)
+            .unwrap()
+            .metadata
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(metadata.len(), 2);
+        let mut state = crate::state::State::new(lib);
+        for eid in metadata {
+            state.review_metadata(sid, vec![(eid, true)]);
+        }
+        assert_ne!(state.lib.book().glossary().unwrap(), glossary);
+        assert_ne!(state.lib.book().story_notes().unwrap(), notes);
+        if accept_prose {
+            state.accept_all(sid);
+            assert_ne!(state.lib.book().chapter(ch).unwrap(), original_chapter);
+        }
+        assert_eq!(state.fix.finished.len(), 1);
+        let finished = &state.fix.finished[0];
+        let count = if accept_prose { 3 } else { 2 };
+        assert_eq!(finished.revisions.len(), count);
+        assert!(finished.revisions.windows(2).all(|r| r[0].0 < r[1].0));
+        assert_eq!(finished.applied, count);
+        assert_eq!((finished.stale, finished.skipped), (0, 0));
+        assert_eq!(
+            finished.chapters,
+            if accept_prose { vec![ch] } else { vec![] }
+        );
+        state.undo(sid);
+        assert_eq!(state.lib.book().glossary().unwrap(), glossary);
+        assert_eq!(state.lib.book().story_notes().unwrap(), notes);
+        assert_eq!(state.lib.book().chapter(ch).unwrap(), original_chapter);
+        assert!(state.fix.finished.is_empty());
+        let pending = state.lib.suggestion(sid).unwrap();
+        assert!(
+            pending
+                .metadata
+                .iter()
+                .all(|e| e.state == EditState::Pending)
+        );
+        assert!(pending.edits.iter().all(|e| e.state == EditState::Pending));
+    }
+}
+
+#[test]
 fn drift_metadata_review_reloads_the_glossary_and_undo_restores_pending_items() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);

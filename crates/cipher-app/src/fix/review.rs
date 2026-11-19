@@ -131,9 +131,24 @@ impl State {
     /// Keeps a finished Review for Undo and says what it did.
     fn record(&mut self, acc: Finished) {
         self.toast = Some(acc.summary());
-        if acc.applied > 0 {
+        if let Some(fin) = self
+            .fix
+            .finished
+            .iter_mut()
+            .find(|f| f.suggestion == acc.suggestion)
+        {
+            fin.revisions.extend(acc.revisions);
+            for chapter in acc.chapters {
+                if !fin.chapters.contains(&chapter) {
+                    fin.chapters.push(chapter);
+                }
+            }
+            fin.applied += acc.applied;
+            fin.stale += acc.stale;
+            fin.skipped += acc.skipped;
             self.toast_undo = Some(acc.suggestion);
-            self.fix.finished.retain(|f| f.suggestion != acc.suggestion);
+        } else if acc.applied > 0 {
+            self.toast_undo = Some(acc.suggestion);
             self.fix.finished.push(acc);
         } else {
             self.toast_undo = None;
