@@ -220,7 +220,9 @@ impl NotesEdit {
 
 impl State {
     pub fn open_notes(&mut self) {
-        if self.screen == Screen::Draft || self.fix.review.is_some() {
+        if (self.screen == Screen::Draft && !self.lib.chapters.is_empty())
+            || self.fix.review.is_some()
+        {
             return;
         }
         if !self.notes.as_ref().is_some_and(NotesEdit::changed) {
@@ -407,6 +409,31 @@ mod tests {
     }
 
     #[test]
+    fn empty_book_opens_notes_and_escape_returns_to_its_draft() {
+        let (_dir, book) = fixture();
+        let mut state = State::new(Library::from_book(book).unwrap());
+        assert_eq!(state.screen, Screen::Draft);
+        state.open_notes();
+        assert_eq!(state.screen, Screen::Notes);
+        assert_eq!(state.notes.as_ref().unwrap().notes.len(), 2);
+        let mut runtime = rune::Runtime::new(
+            state,
+            crate::view::view,
+            (1280.0, 900.0),
+            rune::Env::new(false, 1.0),
+        );
+        runtime.on_key = Some(crate::state::on_key);
+        runtime.frame(1.0 / 60.0);
+        runtime.key(rune::KeyEvent {
+            key: rune::Key::Escape,
+            mods: Default::default(),
+        });
+        runtime.frame(1.0 / 60.0);
+        assert_eq!(runtime.state.screen, Screen::Draft);
+        assert!(runtime.state.draft.as_ref().unwrap().text.text.is_empty());
+    }
+
+    #[test]
     fn state_save_persists_one_revision_and_reloads() {
         let (_dir, book) = fixture();
         let path = book.path().to_path_buf();
@@ -511,7 +538,13 @@ mod tests {
 
     #[test]
     fn opening_reloads_clean_state_and_preserves_dirty_state() {
-        let (_dir, book) = fixture();
+        let (_dir, mut book) = fixture();
+        book.apply(Change::AddChapter {
+            number: Some(1),
+            title: None,
+            source: vec!["Source".into()],
+        })
+        .unwrap();
         let mut s = State::new(Library::open(book.path()).unwrap());
         s.screen = Screen::Draft;
         s.open_notes();

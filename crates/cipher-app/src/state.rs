@@ -928,7 +928,12 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     if s.screen == Screen::Notes {
         match &k.key {
             Key::Command('s') => s.save_notes(),
-            Key::Escape => s.screen = Screen::Reading,
+            Key::Escape => {
+                s.screen = Screen::Reading;
+                if s.lib.chapters.is_empty() {
+                    s.open_draft("");
+                }
+            }
             _ => return false,
         }
         return true;
