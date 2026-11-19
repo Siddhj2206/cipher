@@ -49,7 +49,7 @@ impl GlobalConfig {
         let path = Self::config_path()?;
         let content = toml::to_string_pretty(self)
             .map_err(|e| Error::Config(format!("Failed to serialize config: {e}")))?;
-        crate::io::atomic_write(&path, &content)
+        crate::io::atomic_write_private(&path, &content)
     }
 
     pub fn resolve_profile(&self, name: &str) -> Option<&ProfileConfig> {

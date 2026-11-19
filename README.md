@@ -283,7 +283,7 @@ It contains:
 
 Provider API keys are nested under each provider.
 
-The current implementation stores API keys as plain text in this config. Improving secret storage is planned.
+The current implementation stores API keys as plain text in this config, written with owner-only permissions (0600) on Unix. Improving secret storage is planned.
 
 ## Book config
 
