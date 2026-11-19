@@ -360,8 +360,16 @@ pub const SCENES: &[Scene] = &[
         settings(s);
         let form = s.settings.as_mut().expect("open");
         form.available = [
-            "gpt-4.1", "gpt-4.1-mini", "gpt-4o", "gpt-4o-mini", "model-fast", "model-large",
-            "model-medium", "model-small", "o3", "o4-mini",
+            "gpt-4.1",
+            "gpt-4.1-mini",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "model-fast",
+            "model-large",
+            "model-medium",
+            "model-small",
+            "o3",
+            "o4-mini",
         ]
         .map(String::from)
         .to_vec();
