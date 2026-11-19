@@ -14,6 +14,93 @@ use serde_json::{Map, Number, Value as Json};
 use crate::types::{Conflict, RevisionId, RevisionKind, UndoMode, UndoOutcome};
 use crate::{Error, Result, now};
 
+pub(crate) fn preview(tx: &Transaction<'_>, id: RevisionId) -> Result<crate::UndoPreview> {
+    let revision = tx
+        .query_row(
+            "SELECT kind, label, created_at, undone_by FROM revision WHERE id = ?1",
+            [id.0],
+            |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get::<_, Option<i64>>(3)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(Error::NotFound("revision", id.0))?;
+    let revision = crate::RevisionSummary {
+        id,
+        kind: RevisionKind::parse(&revision.0)?,
+        label: revision.1,
+        created_at: revision.2,
+        undone_by: revision.3.map(RevisionId),
+    };
+    let mut chapters = std::collections::BTreeSet::new();
+    let mut counts = std::collections::BTreeMap::new();
+    let mut locations = Vec::new();
+    {
+        let mut stmt = tx.prepare("SELECT entity, entity_id, before, after FROM revision_change WHERE revision_id = ?1 ORDER BY seq")?;
+        let rows = stmt.query_map([id.0], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, Option<String>>(3)?,
+            ))
+        })?;
+        for row in rows {
+            let (entity, row_id, before, after) = row?;
+            let table = Table::from_name(&entity)?;
+            *counts.entry(table.name()).or_insert(0) += 1;
+            for row in [decode(before)?, decode(after)?].into_iter().flatten() {
+                let chapter = if table == Table::Chapter {
+                    Some(row_id)
+                } else {
+                    row.get("chapter_id").and_then(Json::as_i64)
+                };
+                let chapter = match (chapter, row.get("block_id").and_then(Json::as_i64)) {
+                    (None, Some(block)) => tx
+                        .query_row("SELECT chapter_id FROM block WHERE id = ?1", [block], |r| {
+                            r.get(0)
+                        })
+                        .optional()?,
+                    (chapter, _) => chapter,
+                };
+                if let Some(chapter) = chapter {
+                    let chapter = crate::ChapterId(chapter);
+                    chapters.insert(chapter);
+                    let location = (
+                        crate::Conflict {
+                            entity: table.name(),
+                            id: row_id,
+                        },
+                        chapter,
+                    );
+                    if !locations.contains(&location) {
+                        locations.push(location);
+                    }
+                }
+            }
+        }
+    }
+    let (conflicts, already_undone_by) = match undo(tx, id, UndoMode::SkipConflicts)? {
+        UndoOutcome::Undone { skipped, .. } => (skipped, None),
+        UndoOutcome::AlreadyUndone { by } => (Vec::new(), Some(by)),
+        UndoOutcome::Conflict { conflicts } => (conflicts, None),
+    };
+    locations.retain(|(c, _)| conflicts.contains(c));
+    Ok(crate::UndoPreview {
+        revision,
+        chapters: chapters.into_iter().collect(),
+        changes: counts.into_iter().collect(),
+        conflicts,
+        conflict_chapters: locations,
+        already_undone_by,
+    })
+}
+
 /// The tables that Revisions cover. Jobs, Book metadata and publish state are operational
 /// and sit outside history.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

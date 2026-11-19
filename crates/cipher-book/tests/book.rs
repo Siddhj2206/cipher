@@ -21,6 +21,80 @@ fn new_book() -> Fixture {
     Fixture { _dir: dir, book }
 }
 
+#[test]
+fn undo_preview_is_read_only_and_reports_conflicts_and_undone() {
+    let mut f = new_book();
+    let book = &mut f.book;
+    let chapter = add_chapter(book, 1, &["Source"]);
+    let translation = translate_one_to_one(book, chapter).revision;
+    let before = seen(book);
+    let revisions = book.revisions(200).unwrap();
+    let preview = book.preview_undo(translation).unwrap();
+    assert_eq!(preview.chapters, vec![chapter]);
+    assert!(preview.conflicts.is_empty());
+    assert_eq!(seen(book), before);
+    assert_eq!(book.revisions(200).unwrap(), revisions);
+    let block = book.chapter(chapter).unwrap().translation[0].id;
+    book.apply(Change::EditBlock {
+        block,
+        text: "Later edit".into(),
+        hand: true,
+    })
+    .unwrap();
+    let before = seen(book);
+    let revisions = book.revisions(200).unwrap();
+    let preview = book.preview_undo(translation).unwrap();
+    assert!(
+        preview
+            .conflicts
+            .iter()
+            .any(|c| c.entity == "block" && c.id == block.0)
+    );
+    assert!(
+        preview.conflicts.iter().any(|c| c.entity == "pair"),
+        "a later-edited block prevents removing its pair"
+    );
+    assert!(
+        preview
+            .conflict_chapters
+            .iter()
+            .any(|(c, ch)| c.id == block.0 && *ch == chapter)
+    );
+    assert_eq!(seen(book), before);
+    assert_eq!(book.revisions(200).unwrap(), revisions);
+    let result = book.undo(translation, UndoMode::SkipConflicts).unwrap();
+    let UndoOutcome::Undone { revision, .. } = result else {
+        panic!("{result:?}")
+    };
+    assert_eq!(
+        book.preview_undo(translation).unwrap().already_undone_by,
+        Some(revision)
+    );
+    let revisions = book.revisions(200).unwrap();
+    assert!(book.preview_undo(RevisionId(i64::MAX)).is_err());
+    assert_eq!(book.revisions(200).unwrap(), revisions);
+}
+
+#[test]
+fn undo_preview_of_an_empty_revision_is_empty() {
+    let mut f = new_book();
+    let id = f
+        .book
+        .apply(Change::Group {
+            kind: RevisionKind::Review,
+            label: "No decisions".into(),
+            changes: Vec::new(),
+        })
+        .unwrap()
+        .revision;
+    let revisions = f.book.revisions(200).unwrap();
+    let preview = f.book.preview_undo(id).unwrap();
+    assert!(preview.chapters.is_empty());
+    assert!(preview.changes.is_empty());
+    assert!(preview.conflicts.is_empty());
+    assert_eq!(f.book.revisions(200).unwrap(), revisions);
+}
+
 /// Everything a reader can see, for comparing before and after an undo.
 #[derive(Debug, PartialEq)]
 struct Seen {

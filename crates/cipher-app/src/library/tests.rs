@@ -63,6 +63,241 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 
 const LORD: &str = "마탑주";
 
+fn history_fixture() -> (tempfile::TempDir, Library) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("quiet.cipher");
+    cipher_engine::import(
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/the-quiet-tower"),
+        &path,
+    )
+    .unwrap();
+    let lib = Library::open(&path).unwrap();
+    (dir, lib)
+}
+
+#[test]
+fn history_translation_reloads_page_and_whole_conflicts_are_located() {
+    use cipher_book::UndoOutcome;
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let before = lib.book().chapter(ch).unwrap();
+    let pairs = before
+        .source
+        .iter()
+        .map(|b| NewPair {
+            source: vec![b.id],
+            translation: vec!["New translation".into()],
+            flagged: None,
+        })
+        .collect();
+    let id = lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter: ch, pairs })
+        .unwrap()
+        .revision;
+    assert!(matches!(
+        lib.undo_revision(id).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(
+        lib.page()
+            .translation
+            .iter()
+            .map(|b| b.text.clone())
+            .collect::<Vec<_>>(),
+        before
+            .translation
+            .iter()
+            .map(|b| b.text.clone())
+            .collect::<Vec<_>>()
+    );
+    let pairs = before
+        .source
+        .iter()
+        .map(|b| NewPair {
+            source: vec![b.id],
+            translation: vec!["Another translation".into()],
+            flagged: None,
+        })
+        .collect();
+    let id = lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter: ch, pairs })
+        .unwrap()
+        .revision;
+    let block = lib.book().chapter(ch).unwrap().translation[0].id;
+    lib.book_mut()
+        .apply(Change::EditBlock {
+            block,
+            text: "Later hand edit".into(),
+            hand: true,
+        })
+        .unwrap();
+    let before = lib.book().chapter(ch).unwrap();
+    let revisions = lib.revisions().unwrap();
+    let preview = lib.preview_undo(id).unwrap();
+    assert!(
+        preview
+            .conflict_chapters
+            .iter()
+            .any(|(c, chapter)| c.id == block.0 && *chapter == ch)
+    );
+    assert!(matches!(
+        lib.undo_revision(id).unwrap(),
+        UndoOutcome::Conflict { .. }
+    ));
+    assert_eq!(lib.book().chapter(ch).unwrap(), before);
+    assert_eq!(lib.revisions().unwrap(), revisions);
+}
+
+#[test]
+fn history_review_survives_reopening() {
+    use cipher_book::{
+        EditOrigin, NewProposedEdit, NewSuggestion, Scope, SuggestionId, SuggestionKind,
+        SuggestionState, UndoOutcome,
+    };
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let block = lib.book().chapter(ch).unwrap().translation[0].clone();
+    let suggestion = lib
+        .book_mut()
+        .apply(Change::AddSuggestion(NewSuggestion {
+            chapter: ch,
+            block: block.id,
+            quote: block.text.clone(),
+            said: "A clearer opening".into(),
+            scope: Scope::Here,
+            is_rename: false,
+            source_expr: None,
+            state: SuggestionState::Ready,
+            kind: SuggestionKind::Reader,
+            edits: vec![NewProposedEdit {
+                block: block.id,
+                before: block.text.clone(),
+                after: Some("Reviewed opening".into()),
+                origin: EditOrigin::Model,
+                skip_reason: None,
+            }],
+        }))
+        .unwrap();
+    let edit = lib
+        .book()
+        .suggestions(Default::default())
+        .unwrap()
+        .into_iter()
+        .find(|s| s.id == SuggestionId(suggestion.created[0]))
+        .unwrap()
+        .edits[0]
+        .id;
+    let revision = lib
+        .book_mut()
+        .apply(Change::DecideEdits {
+            decisions: vec![(edit, true)],
+        })
+        .unwrap()
+        .revision;
+    let path = lib.path().to_owned();
+    drop(lib);
+    let mut lib = Library::open(&path).unwrap();
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.page().translation[0].text, block.text);
+    assert_eq!(lib.open_suggestions, 1);
+}
+
+#[test]
+fn history_skip_conflicts_empty_and_missing_revision() {
+    use cipher_book::{RevisionId, RevisionKind, UndoOutcome};
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let blocks = lib.book().chapter(ch).unwrap().translation;
+    let revision = lib
+        .book_mut()
+        .apply(Change::Group {
+            kind: RevisionKind::HandEdit,
+            label: "Two edits".into(),
+            changes: blocks[..2]
+                .iter()
+                .map(|b| Change::EditBlock {
+                    block: b.id,
+                    text: "Edited".into(),
+                    hand: true,
+                })
+                .collect(),
+        })
+        .unwrap()
+        .revision;
+    lib.book_mut()
+        .apply(Change::EditBlock {
+            block: blocks[0].id,
+            text: "Keep later work".into(),
+            hand: true,
+        })
+        .unwrap();
+    let outcome = lib.undo_revision(revision).unwrap();
+    let UndoOutcome::Undone { skipped, .. } = outcome else {
+        panic!("{outcome:?}")
+    };
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(lib.page().translation[0].text, "Keep later work");
+    assert_eq!(lib.page().translation[1].text, shown(&blocks[1].text));
+    let before = lib.book().chapter(ch).unwrap();
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::AlreadyUndone { .. }
+    ));
+    assert!(lib.undo_revision(RevisionId(i64::MAX)).is_err());
+    assert_eq!(lib.book().chapter(ch).unwrap(), before);
+    let mut empty = Library::blank();
+    assert!(empty.revisions().unwrap().is_empty());
+    assert!(empty.preview_undo(RevisionId(1)).is_err());
+}
+
+#[test]
+fn history_repair_import_and_added_chapter_undo() {
+    use cipher_book::UndoOutcome;
+    let (_dir, mut lib) = history_fixture();
+    let ch = lib.chapters[0].id;
+    let pairs = lib.book().chapter(ch).unwrap().pairs;
+    for pair in pairs {
+        lib.book_mut()
+            .apply(Change::FlagPair {
+                pair: pair.id,
+                reason: Some("imported".into()),
+            })
+            .unwrap();
+    }
+    let before = lib.book().chapter(ch).unwrap();
+    assert_eq!(cipher_engine::realign_imported(lib.book_mut()).unwrap(), 1);
+    let revision = lib.revisions().unwrap()[0].id;
+    assert!(lib.revisions().unwrap()[0].label.starts_with("Re-paired"));
+    assert_eq!(
+        undo_mode(&lib.preview_undo(revision).unwrap().revision),
+        cipher_book::UndoMode::Whole
+    );
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.book().chapter(ch).unwrap(), before);
+    let revision = lib
+        .book_mut()
+        .apply(Change::AddChapter {
+            number: Some(99),
+            title: None,
+            source: vec!["Extra".into()],
+        })
+        .unwrap()
+        .revision;
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert!(!lib.chapters.iter().any(|c| c.number == 99));
+}
+
 #[test]
 fn counts_and_order_of_first_appearance() {
     let dir = tempfile::tempdir().unwrap();

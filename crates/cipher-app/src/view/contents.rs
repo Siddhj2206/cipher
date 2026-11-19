@@ -263,6 +263,17 @@ pub fn contents(s: &State, p: &Pal) -> El {
         )
         .child(
             nav(
+                &I_PEN,
+                "History",
+                "Ctrl H".into(),
+                "nav-history",
+                s.screen == Screen::History,
+            )
+            .help("Undo translations, reviews and edits")
+            .on_press(|s: &mut State| s.open_history()),
+        )
+        .child(
+            nav(
                 &I_PLUS,
                 "New chapter",
                 "Ctrl N".into(),

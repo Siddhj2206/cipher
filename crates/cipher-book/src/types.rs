@@ -349,6 +349,17 @@ pub struct RevisionSummary {
     pub undone_by: Option<RevisionId>,
 }
 
+/// A dry run of Undo, read from the Book's persistent history.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UndoPreview {
+    pub revision: RevisionSummary,
+    pub chapters: Vec<ChapterId>,
+    pub changes: Vec<(&'static str, usize)>,
+    pub conflicts: Vec<Conflict>,
+    pub conflict_chapters: Vec<(Conflict, ChapterId)>,
+    pub already_undone_by: Option<RevisionId>,
+}
+
 /// What [`crate::Book::apply`] did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Applied {

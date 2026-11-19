@@ -273,7 +273,93 @@ fn shelf(s: &mut State) {
 
 type Scene = (&'static str, fn(&mut State));
 
+fn history(s: &mut State, conflict: bool, undone: bool) {
+    let chapter = s.lib.chapters[0].id;
+    let old = s.lib.book().chapter(chapter).expect("chapter");
+    let pairs = old
+        .source
+        .iter()
+        .enumerate()
+        .map(|(i, b)| cipher_book::NewPair {
+            source: vec![b.id],
+            translation: vec![
+                old.translation
+                    .get(i)
+                    .map(|b| b.text.clone())
+                    .unwrap_or_else(|| "The tower was quiet.".into())
+                    + " Revised.",
+            ],
+            flagged: None,
+        })
+        .collect();
+    let revision = s
+        .lib
+        .book_mut()
+        .apply(Change::SetTranslation { chapter, pairs })
+        .expect("translation")
+        .revision;
+    let block = s.lib.book().chapter(chapter).expect("chapter").translation[0].clone();
+    let suggestion = s
+        .lib
+        .book_mut()
+        .apply(Change::AddSuggestion(NewSuggestion {
+            chapter,
+            block: block.id,
+            quote: block.text.clone(),
+            said: "Make the opening clearer".into(),
+            scope: Scope::Here,
+            is_rename: false,
+            source_expr: None,
+            state: SuggestionState::Ready,
+            kind: SuggestionKind::Reader,
+            edits: vec![NewProposedEdit {
+                block: block.id,
+                before: block.text.clone(),
+                after: Some(block.text.clone() + " Reviewed."),
+                origin: EditOrigin::Model,
+                skip_reason: None,
+            }],
+        }))
+        .expect("suggestion");
+    let edit = s
+        .lib
+        .book()
+        .suggestions(Default::default())
+        .expect("suggestions")
+        .into_iter()
+        .find(|r| r.id.0 == suggestion.created[0])
+        .expect("suggestion")
+        .edits[0]
+        .id;
+    let review = s
+        .lib
+        .book_mut()
+        .apply(Change::DecideEdits {
+            decisions: vec![(edit, true)],
+        })
+        .expect("review")
+        .revision;
+    s.open_history();
+    let selected = if conflict { revision } else { review };
+    if let Some(index) = s.history.revisions.iter().position(|r| r.id == selected) {
+        s.select_history(index);
+    }
+    if undone {
+        s.undo_history();
+    }
+}
+
 pub const SCENES: &[Scene] = &[
+    ("history", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        history(s, false, false);
+    }),
+    ("dark-history", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+        history(s, false, false);
+    }),
+    ("history-conflict", |s| history(s, true, false)),
+    ("history-undone", |s| history(s, false, true)),
     ("reading", |_| {}),
     ("focus", |s| {
         s.prefs.contents_open = false;

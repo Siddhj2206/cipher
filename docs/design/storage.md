@@ -23,6 +23,8 @@ Every write goes through a `Writer` that snapshots the whole row before and afte
 
 Covered by Revisions: chapter, pair, block, term, forbidden_rendering, style_rule, form_of_address, story_note, suggestion, proposed_edit. Outside them, as operational state: book_meta, job, publish_state.
 
+`Book::preview_undo` runs the same Undo algorithm in an Immediate transaction using `SkipConflicts`, then always rolls it back. It returns the Revision, sorted affected Chapter ids, per-entity change counts, conflicts (including foreign-key-blocked restores) with Chapter locations, and any `already_undone_by`. It creates no Revision and changes no data.
+
 `book_meta` keys: `title`, `source_lang`, `target_lang`, `created_at`, and, when the Book has chosen a model, `model_endpoint` (an Endpoint id from the user's `endpoints.json`) with `model`.
 
 ## Rules the schema does not enforce
