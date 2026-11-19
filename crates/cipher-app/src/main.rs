@@ -8,6 +8,7 @@
 mod draft;
 mod drift;
 mod fix;
+mod history;
 mod home;
 mod keys;
 mod library;

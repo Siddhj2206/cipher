@@ -89,25 +89,21 @@ fn chapter_row(s: &State, i: usize, p: &Pal) -> El {
         )
         .child(
             col().grow(1.0).min_w(0.0).gap(1.0).child(
-                text(if ch.opening.is_empty() {
-                    format!("Chapter {}", ch.number)
-                } else {
-                    ch.opening.clone()
-                })
-                .font(
-                    TextStyle::new(12.5, 400.0)
-                        .lh(17.0)
-                        .family(if untranslated { CJK } else { SERIF }),
-                )
-                .color(if on {
-                    p.ink
-                } else if untranslated || ch.opening.is_empty() {
-                    p.ink3
-                } else {
-                    p.ink2
-                })
-                .wrap()
-                .max_lines(2),
+                text(ch.label())
+                    .font(
+                        TextStyle::new(12.5, 400.0)
+                            .lh(17.0)
+                            .family(if untranslated { CJK } else { SERIF }),
+                    )
+                    .color(if on {
+                        p.ink
+                    } else if untranslated || ch.opening.is_empty() {
+                        p.ink3
+                    } else {
+                        p.ink2
+                    })
+                    .wrap()
+                    .max_lines(2),
             ),
         )
         .child(badge(ch, p))
@@ -260,6 +256,17 @@ pub fn contents(s: &State, p: &Pal, width: f32) -> El {
             )
             .help("How this book should read: sent with every chapter")
             .on_press(|s: &mut State| s.open_style()),
+        )
+        .child(
+            nav(
+                &crate::theme::I_HISTORY,
+                "History",
+                "Ctrl H".into(),
+                "nav-history",
+                s.screen == Screen::History,
+            )
+            .help("Undo translations, reviews and edits")
+            .on_press(|s: &mut State| s.open_history()),
         )
         .child(
             nav(

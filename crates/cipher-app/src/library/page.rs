@@ -59,12 +59,17 @@ pub struct Page {
     /// Index in [`super::Library::chapters`].
     pub index: usize,
     pub number: i64,
+    pub title: Option<String>,
     pub source: Vec<PageBlock>,
     pub translation: Vec<PageBlock>,
     pub pairs: Vec<PairView>,
 }
 
 impl Page {
+    pub fn title(&self) -> Option<&str> {
+        super::chapter_title(self.title.as_deref())
+    }
+
     pub fn blocks(&self, side: Side) -> &[PageBlock] {
         match side {
             Side::Source => &self.source,
@@ -215,6 +220,7 @@ pub fn build(index: usize, number: i64, ch: &Chapter, cx: &Context) -> Page {
     Page {
         index,
         number,
+        title: ch.title.clone(),
         source,
         translation,
         pairs,

@@ -223,6 +223,11 @@ lucide!(
     r#"<path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/>"#
 );
 lucide!(I_UP, "l-chevron-up", r#"<path d="m18 15-6-6-6 6"/>"#);
+lucide!(
+    I_HISTORY,
+    "l-history",
+    r#"<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>"#
+);
 lucide!(I_DOWN, "l-chevron-down", r#"<path d="m6 9 6 6 6-6"/>"#);
 lucide!(
     I_PLUS,
