@@ -11,7 +11,8 @@ fn batch_heading(block: &str) -> Option<i64> {
     let line = block.trim().trim_start_matches('#').trim();
     let lower = line.to_lowercase();
     let rest = line.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
-    (lower.starts_with("chapter")
+    (block.trim_start().starts_with('#')
+        || lower.starts_with("chapter")
         || lower.starts_with("ch.")
         || line.starts_with(['제', '第'])
         || rest.is_empty()

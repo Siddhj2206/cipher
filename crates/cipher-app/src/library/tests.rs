@@ -986,6 +986,26 @@ fn a_fully_saved_draft_leaves_even_if_queueing_failed() {
 }
 
 #[test]
+fn titled_markdown_headings_split_without_splitting_plain_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    for first in ["# 321: The Gate", "## 321. The Gate", "# 321 - The Gate"] {
+        let text = format!(
+            "{first}\n\nOpening.\n\n1. Check the gate\n\n2. Light the lamp\n\n# 322: The Tower\n\nNext."
+        );
+        let parts = lib.intakes(&text);
+        assert_eq!(parts.len(), 2, "{first}");
+        assert_eq!(parts[0].number, Some(321));
+        assert_eq!(parts[0].title.as_deref(), Some("The Gate"));
+        assert_eq!(
+            parts[0].blocks,
+            ["Opening.", "1. Check the gate", "2. Light the lamp"]
+        );
+        assert_eq!(parts[1].number, Some(322));
+    }
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);
