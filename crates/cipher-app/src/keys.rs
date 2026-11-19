@@ -13,6 +13,7 @@ pub const SHORTCUTS: &[(&str, &str, &str)] = &[
     ("General", "Ctrl+Q", "Quit"),
     ("Reading", "Space", "Down a screen"),
     ("Reading", "Ctrl+F", "Find in book"),
+    ("Reading", "Ctrl+Shift+F", "Switch Find scope (in query)"),
     ("Reading", "Enter / Shift+Enter", "Next / previous match"),
     ("Reading", "Esc", "Close find"),
     ("Reading", "Shift+Space", "Up a screen"),

@@ -198,7 +198,7 @@ Adding inserts the chapter in number order, queues it and opens it where it land
 
 ## Find (Ctrl+F)
 
-A compact, non-modal bar at the reading area's top-right searches the whole Book without hiding the page. Translation is the default; Source is an explicit choice independent of Ctrl+T. Matching ignores case across scripts and searches the displayed text, without word boundaries. Results are ordered by Chapter and Block; Enter / Shift+Enter wrap through them, opening the Chapter and side and highlighting the match. The bar shows the current position, total and Chapter; totals beyond 10,000 show 10,000+. Search waits for 150 ms of quiet, then runs off-thread; superseded jobs stop between Chapters and old replies are ignored. Esc closes find and returns focus to reading; Ctrl+F refocuses and selects the query.
+A compact, non-modal bar at the reading area's top-right searches the whole Book without hiding the page. Translation is the default; Source is an explicit choice independent of Ctrl+T. With the query focused, Ctrl+Shift+F switches between Translation and Source without leaving the input. Matching ignores case across scripts and searches the displayed text, without word boundaries. Results are ordered by Chapter and Block; Enter / Shift+Enter wrap through them, opening the Chapter and side and highlighting the match. The bar shows the current position, total and Chapter; totals beyond 10,000 show 10,000+. Search waits for 150 ms of quiet, then runs off-thread; superseded jobs stop between Chapters and old replies are ignored. Esc closes find and returns focus to reading; Ctrl+F refocuses and selects the query.
 
 ## Palette (Ctrl+K)
 
@@ -219,6 +219,7 @@ The full list lives in one table, `crates/cipher-app/src/keys.rs`; the shortcuts
 |---|---|
 | Ctrl+K | Palette |
 | Ctrl+F | Find in Book; Enter / Shift+Enter next / previous, Esc close |
+| Ctrl+Shift+F | Switch Source / Translation search scope while the Find query is focused |
 | Ctrl+\\ | Contents sidebar |
 | Ctrl+J | Context sidebar |
 | Ctrl+G | Cast & terms |

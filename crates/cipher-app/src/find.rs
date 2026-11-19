@@ -272,10 +272,25 @@ impl State {
         self.find = None;
         tx.focus("doc", false);
     }
+
+    pub fn toggle_find_scope(&mut self, tx: &mut Tx) {
+        let Some(f) = &mut self.find else {
+            return;
+        };
+        f.scope = match f.scope {
+            Side::Source => Side::Translation,
+            Side::Translation => Side::Source,
+        };
+        self.search_find();
+        self.poll_find(tx);
+    }
 }
 
 pub fn key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     match k.key {
+        Key::Command('f') if k.mods.shift && s.find.as_ref().is_some_and(|f| f.query.focused) => {
+            s.toggle_find_scope(tx)
+        }
         Key::Command('f') => s.open_find(tx),
         Key::Escape => s.close_find(tx),
         Key::Enter => s.step_find(tx, k.mods.shift),

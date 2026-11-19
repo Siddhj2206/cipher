@@ -882,7 +882,7 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     if s.home.is_none() && s.screen == Screen::Reading && s.settings_page.is_none() {
         if k.key == Key::Command('f') {
-            s.open_find(tx);
+            crate::find::key(s, k, tx);
             return true;
         }
         if s.find.is_some() && s.palette.is_none() && crate::find::key(s, k, tx) {
