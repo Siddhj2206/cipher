@@ -25,6 +25,7 @@ impl State {
     }
 
     fn restore_cast_term(&mut self, id: Option<TermId>, card: Option<TermId>) {
+        self.load_strip(self.lib.current());
         self.term_card = self.term_card.and_then(|mut selected| {
             selected.term = self.lib.terms.iter().position(|t| Some(t.id) == card)?;
             Some(selected)
@@ -148,5 +149,27 @@ mod tests {
         assert_eq!(s.lib.terms[s.term_card.unwrap().term].id, id);
         s.decide_term(s.term_card.unwrap().term, false);
         assert!(s.term_card.is_none());
+    }
+
+    #[test]
+    fn term_reload_restores_neighboring_pages() {
+        let (_dir, mut s) = state();
+        for number in 1..=3 {
+            s.lib
+                .book_mut()
+                .apply(Change::AddChapter {
+                    number: Some(number),
+                    title: None,
+                    source: vec!["A".into()],
+                })
+                .unwrap();
+        }
+        s.lib.reload().unwrap();
+        s.open_chapter(1);
+        s.decide_term(0, true);
+        assert_eq!(s.strip, vec![0, 1, 2]);
+        assert!(s.strip.iter().all(|&i| s.lib.page_at(i).is_some()));
+        s.undo_cast_term(s.term_toast_undo.unwrap());
+        assert!(s.strip.iter().all(|&i| s.lib.page_at(i).is_some()));
     }
 }
