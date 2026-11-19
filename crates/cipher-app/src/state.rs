@@ -555,11 +555,19 @@ impl State {
         self.prefs_path = path;
     }
 
+    pub(crate) fn visible_term(&self) -> Option<usize> {
+        match self.screen {
+            Screen::Cast => self.cast_open,
+            Screen::Reading => self.term_card.map(|card| card.term),
+            _ => None,
+        }
+    }
+
     /// Light or dark, as chosen or as the desktop has it.
     /// Counts the open Book's Terms on another thread, once per load (`Library::scan`).
     pub fn start_scan(&mut self) {
         if self.lib.scanned()
-            && let Some(term) = self.cast_open.or(self.term_card.map(|card| card.term))
+            && let Some(term) = self.visible_term()
         {
             self.look_at(term);
         }

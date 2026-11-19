@@ -32,7 +32,7 @@ impl State {
         });
         self.cast_open = id.and_then(|id| self.lib.terms.iter().position(|t| t.id == id));
         self.look = None;
-        if let Some(index) = self.cast_open {
+        if let Some(index) = self.visible_term() {
             self.look_at(index);
         }
     }
@@ -103,7 +103,10 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{library::Library, state::TermCard};
+    use crate::{
+        library::Library,
+        state::{Screen, TermCard},
+    };
     use cipher_book::{Book, BookMeta, Change, TermFields};
 
     fn state() -> (tempfile::TempDir, State) {
@@ -199,6 +202,7 @@ mod tests {
             })
             .unwrap();
         s.lib.reload().unwrap();
+        s.screen = Screen::Cast;
         s.cast_open = Some(0);
         s.decide_term(0, true);
         assert!(s.lib.terms[0].forbidden.is_empty());
@@ -209,5 +213,41 @@ mod tests {
         assert!(s.look.as_ref().unwrap().evidence.is_none());
         s.start_scan();
         assert_eq!(s.look.as_ref().unwrap().generation, s.lib.generation());
+    }
+
+    #[test]
+    fn evidence_retry_tracks_the_visible_surface() {
+        let (_dir, mut s) = state();
+        for t in &mut s.lib.terms {
+            t.forbidden.push("old name".into());
+        }
+        s.cast_open = Some(0);
+        s.term_card = Some(TermCard {
+            block: cipher_book::BlockId(1),
+            term: 1,
+        });
+        s.screen = Screen::Cast;
+        s.start_scan();
+        assert_eq!(s.look.as_ref().unwrap().term, s.lib.terms[0].id);
+        s.open_chapter(0);
+        s.term_card = Some(TermCard {
+            block: cipher_book::BlockId(1),
+            term: 1,
+        });
+        s.look_at(1);
+        s.start_scan();
+        assert_eq!(s.look.as_ref().unwrap().term, s.lib.terms[1].id);
+        s.term_card = None;
+        s.look = None;
+        s.start_scan();
+        assert!(s.look.is_none());
+        s.screen = Screen::Cast;
+        s.cast_open = None;
+        s.term_card = Some(TermCard {
+            block: cipher_book::BlockId(1),
+            term: 1,
+        });
+        s.start_scan();
+        assert!(s.look.is_none());
     }
 }
