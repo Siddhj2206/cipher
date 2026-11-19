@@ -12,6 +12,8 @@ How to use it:
 
 ## Current
 
+- Reader Chapter titles: saved titles now appear in the opener and Contents, including queued drafts after reopening; untitled Chapters retain their existing labels.
+
 **Milestone 7c (a polished desktop app) in progress** (2026-11-16). Overall scope is through milestone 8; milestone 9 is on hold and milestone 10 (web Reader) is deferred, both until the user asks.
 - Done: milestones 0–6 and 8. The real-Endpoint checks ran on 2026-11-16 through the user's ChatGPT sign-in (Free plan, gpt-6-luna): see each milestone. The API-key routes (Chat Completions, Responses with a key) have still never met a real server.
 - Milestone 7: done except Test and Save against a real Endpoint from the form.
