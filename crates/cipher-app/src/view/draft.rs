@@ -202,7 +202,9 @@ pub fn draft_page(s: &State, p: &Pal) -> El {
                     .font(SMALL)
                     .color(if part.include { p.ink3 } else { p.ink4 }),
                 );
-            if let Some(issue) = part.issue {
+            if part.added {
+                detail = detail.child(text("Already added to the book.").font(SMALL).color(p.ink4));
+            } else if let Some(issue) = part.issue {
                 let (note, color) = match issue {
                     IntakeIssue::NoNumber => (
                         "No chapter number read; assigned the next free number.",
@@ -235,11 +237,13 @@ pub fn draft_page(s: &State, p: &Pal) -> El {
                             .w(50.0),
                     )
                     .child(detail)
-                    .child(
+                    .child(if part.added {
+                        text("Added").font(SMALL).color(p.ink4)
+                    } else {
                         btn(if part.include { "Skip" } else { "Include" }, false, p)
                             .key(format!("draft-include-{}-{}", key.0, key.1))
-                            .on_press(move |s: &mut State| s.toggle_draft_part(key)),
-                    ),
+                            .on_press(move |s: &mut State| s.toggle_draft_part(key))
+                    }),
             );
         }
         page = page.child(preview);
@@ -258,13 +262,13 @@ pub fn draft_page(s: &State, p: &Pal) -> El {
         .on_edit(move |s: &mut State| {
             let d = s.draft.as_mut().expect("the draft is open");
             if d.text.text != source {
-                d.included.clear();
+                d.reset_parts();
             }
             &mut d.text
         })
         .on_input_change(|s: &mut State, _| {
             if let Some(d) = &mut s.draft {
-                d.included.clear();
+                d.reset_parts();
             }
         })
         .on_input_key(|s: &mut State, k: &rune::KeyEvent, tx| {

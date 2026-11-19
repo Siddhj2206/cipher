@@ -676,6 +676,8 @@ fn picking_more_files_preserves_the_first_file_and_any_later_paste() {
         files: Vec::new(),
         file_name: None,
         included: Default::default(),
+        added: Default::default(),
+        numbers: Default::default(),
     };
     draft.pick_file("one.txt".into(), "1화\n\nOne.".into(), false);
     assert_eq!(draft.text.text, "1화\n\nOne.");
@@ -854,6 +856,132 @@ fn a_large_batch_fits_between_existing_chapters_in_number_order() {
             .map(|c| c.queue_place.unwrap())
             .collect::<Vec<_>>(),
         (1..=128).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_partial_draft_import_retains_unsaved_parts_and_retries_without_duplicates() {
+    for unnumbered_files in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("11화\n\nOne.\n\n12화\n\nTwo.\n\n13화\n\nThree.");
+        if unnumbered_files {
+            let d = s.draft.as_mut().unwrap();
+            d.text = rune::TextEdit::new("");
+            d.files = vec![
+                ("one.txt".into(), "One.".into()),
+                ("two.txt".into(), "Two.".into()),
+                ("three.txt".into(), "Three.".into()),
+            ];
+        }
+        let numbers = s
+            .draft_plan()
+            .iter()
+            .map(|p| (p.key, p.intake.number))
+            .collect::<Vec<_>>();
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        assert_eq!(s.lib.chapters.len(), 2);
+        assert!(
+            s.draft.is_some(),
+            "unsaved source must remain available for retry"
+        );
+        assert!(matches!(s.screen, crate::state::Screen::Draft));
+        let plan = s.draft_plan();
+        assert_eq!(
+            plan.iter()
+                .map(|p| (p.key, p.intake.number))
+                .collect::<Vec<_>>(),
+            numbers
+        );
+        let saved = plan
+            .iter()
+            .find(|p| p.intake.number == Some(12))
+            .unwrap()
+            .key;
+        assert!(!plan.iter().find(|p| p.key == saved).unwrap().include);
+        s.toggle_draft_part(saved);
+        assert!(
+            !s.draft_plan()
+                .iter()
+                .find(|p| p.key == saved)
+                .unwrap()
+                .include
+        );
+        assert!(
+            s.toast
+                .as_deref()
+                .unwrap()
+                .starts_with("Added 1 of 3 chapters:")
+        );
+        s.add_draft(&mut rune::Tx::default());
+        assert!(s.draft.is_none());
+        assert!(matches!(s.screen, crate::state::Screen::Reading));
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            [10, 11, 12, 13]
+        );
+    }
+}
+
+#[test]
+fn a_draft_import_with_nothing_saved_keeps_the_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 10, &["Existing."]);
+    let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+    s.open_draft("11화\n\nOne.\n\n12화\n\nTwo.");
+    s.add_draft_with(&mut rune::Tx::default(), |_, _| {
+        Err(cipher_book::Error::Invalid("nothing saved".into()))
+    });
+    assert!(s.draft.is_some());
+    assert!(matches!(s.screen, crate::state::Screen::Draft));
+    assert!(s.toast.as_deref().unwrap().contains("nothing saved"));
+    assert_eq!(s.lib.chapters.len(), 1);
+}
+
+#[test]
+fn a_fully_saved_draft_leaves_even_if_queueing_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 10, &["Existing."]);
+    let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+    s.open_draft("11화\n\nOne.\n\n12화\n\nTwo.");
+    s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+        lib.add_intakes_using(
+            plan,
+            |lib, intake| {
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            },
+            |_, _| Err(cipher_book::Error::Invalid("job insertion failed".into())),
+        )
+    });
+    assert!(s.draft.is_none());
+    assert!(matches!(s.screen, crate::state::Screen::Reading));
+    assert_eq!(s.lib.chapters[s.lib.current()].number, 11);
+    assert!(
+        s.toast
+            .as_deref()
+            .unwrap()
+            .starts_with("Added 2 of 2 chapters:")
     );
 }
 

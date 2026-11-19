@@ -62,6 +62,7 @@ pub struct IntakePart {
     pub intake: Intake,
     pub issue: Option<IntakeIssue>,
     pub include: bool,
+    pub added: bool,
 }
 
 impl Library {
@@ -128,6 +129,7 @@ impl Library {
                     intake,
                     issue,
                     include: !matches!(issue, Some(IntakeIssue::Duplicate | IntakeIssue::InBook)),
+                    added: false,
                 });
             }
         }

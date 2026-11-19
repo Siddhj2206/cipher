@@ -33,11 +33,19 @@ pub struct Draft {
     pub files: Vec<(String, String)>,
     pub file_name: Option<String>,
     pub included: std::collections::BTreeMap<(usize, usize), bool>,
+    pub added: std::collections::BTreeSet<(usize, usize)>,
+    pub numbers: std::collections::BTreeMap<(usize, usize), i64>,
 }
 
 impl Draft {
-    pub fn pick_file(&mut self, name: String, text: String, append: bool) {
+    pub fn reset_parts(&mut self) {
         self.included.clear();
+        self.added.clear();
+        self.numbers.clear();
+    }
+
+    pub fn pick_file(&mut self, name: String, text: String, append: bool) {
+        self.reset_parts();
         if append {
             if self.files.is_empty() && !self.text.text.trim().is_empty() {
                 self.files.push((
@@ -69,10 +77,18 @@ impl State {
             self.lib.intake_plan(&d.files, &d.text.text)
         };
         for part in &mut plan {
+            if let Some(&number) = d.numbers.get(&part.key) {
+                part.intake.number = Some(number);
+            }
             if let Some(&include) = d.included.get(&part.key) {
                 part.include = include;
             }
+            part.added = d.added.contains(&part.key);
+            if part.added {
+                part.include = false;
+            }
         }
+        plan.sort_by_key(|p| p.intake.number);
         plan
     }
 
@@ -80,7 +96,7 @@ impl State {
         let Some(include) = self
             .draft_plan()
             .iter()
-            .find(|p| p.key == key)
+            .find(|p| p.key == key && !p.added)
             .map(|p| p.include)
         else {
             return;
@@ -112,9 +128,11 @@ impl State {
             files: Vec::new(),
             file_name: None,
             included: Default::default(),
+            added: Default::default(),
+            numbers: Default::default(),
         });
         if !text.trim().is_empty() {
-            draft.included.clear();
+            draft.reset_parts();
             let joined = if draft.text.text.trim().is_empty() {
                 text.to_string()
             } else {
@@ -183,10 +201,28 @@ impl State {
 
     /// Adds the draft as a Chapter in number order, queues it and opens it.
     pub fn add_draft(&mut self, tx: &mut Tx) {
+        self.add_draft_with(tx, crate::library::Library::add_intakes);
+    }
+
+    pub(crate) fn add_draft_with(
+        &mut self,
+        tx: &mut Tx,
+        commit: impl FnOnce(
+            &mut crate::library::Library,
+            &[IntakePart],
+        ) -> cipher_book::Result<Option<usize>>,
+    ) {
         let plan = self.draft_plan();
         let batch = self.draft.as_ref().is_some_and(|d| !d.files.is_empty()) || plan.len() > 1;
+        let previous: std::collections::HashSet<_> =
+            self.lib.chapters.iter().map(|c| c.id).collect();
+        let total = plan.iter().filter(|p| p.include).count();
+        if batch && let Some(d) = &mut self.draft {
+            d.numbers
+                .extend(plan.iter().filter_map(|p| Some((p.key, p.intake.number?))));
+        }
         let result = if batch {
-            self.lib.add_intakes(&plan)
+            commit(&mut self.lib, &plan)
         } else {
             let Some(intake) = self.draft_intake() else {
                 return;
@@ -198,9 +234,44 @@ impl State {
                 self.draft = None;
                 self.screen = Screen::Reading;
                 self.go(tx, at);
+                if batch {
+                    self.toast = None;
+                    self.toast_undo = None;
+                }
             }
             Ok(None) => {}
-            Err(e) => self.fail(e),
+            Err(e) => {
+                let added: Vec<_> = self
+                    .lib
+                    .chapters
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(at, c)| (!previous.contains(&c.id)).then_some(at))
+                    .collect();
+                if let Some(&at) = added.first() {
+                    let mut saved: Vec<_> =
+                        added.iter().map(|&i| self.lib.chapters[i].number).collect();
+                    if let Some(d) = &mut self.draft {
+                        for part in plan.iter().filter(|p| p.include) {
+                            if let Some(i) =
+                                saved.iter().position(|&n| Some(n) == part.intake.number)
+                            {
+                                saved.remove(i);
+                                d.added.insert(part.key);
+                            }
+                        }
+                    }
+                    if added.len() == total {
+                        self.draft = None;
+                        self.screen = Screen::Reading;
+                        self.go(tx, at);
+                    }
+                    self.toast = Some(format!("Added {} of {total} chapters: {e}", added.len()));
+                    self.toast_undo = None;
+                } else {
+                    self.fail(e);
+                }
+            }
         }
     }
 
@@ -214,7 +285,7 @@ impl State {
                 d.text = TextEdit::new("");
                 d.files.clear();
                 d.file_name = None;
-                d.included.clear();
+                d.reset_parts();
             }
             return;
         }
