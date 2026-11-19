@@ -292,9 +292,42 @@ impl Book {
                 kind: SuggestionKind::parse(&kind)?,
                 created_at,
                 edits: self.edits(id)?,
+                metadata: self.metadata_edits(id)?,
             });
         }
         Ok(out)
+    }
+
+    fn metadata_edits(&self, suggestion: i64) -> Result<Vec<ProposedMetadata>> {
+        let mut stmt = self.conn.prepare("SELECT id, change, expected, before, state FROM proposed_metadata WHERE suggestion_id = ?1 ORDER BY id")?;
+        let rows = stmt
+            .query_map([suggestion], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        rows.into_iter()
+            .map(|(id, payload, expected, before, state)| {
+                let change = serde_json::from_str(&payload)?;
+                let mut state = EditState::parse(&state)?;
+                if state == EditState::Pending
+                    && crate::change::metadata_snapshot(&self.conn, &change)? != expected
+                {
+                    state = EditState::Stale;
+                }
+                Ok(ProposedMetadata {
+                    id: MetadataEditId(id),
+                    change,
+                    before,
+                    state,
+                })
+            })
+            .collect()
     }
 
     fn edits(&self, suggestion: i64) -> Result<Vec<ProposedEdit>> {

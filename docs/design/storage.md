@@ -21,7 +21,9 @@ Every write goes through a `Writer` that snapshots the whole row before and afte
 - `UndoMode::Whole` (structural Revisions: a Translation, an added Chapter) writes nothing if there is any Conflict; `UndoMode::SkipConflicts` (Reviews, made of independent Block edits) reverts the rest and reports the skipped rows, which the UI shows as conflicts;
 - an undo is itself a Revision (kind `undo`), and the undone one gets `undone_by`. Undoing an undo is a redo, and restored rows keep their ids.
 
-Covered by Revisions: chapter, pair, block, term, forbidden_rendering, style_rule, form_of_address, story_note, suggestion, proposed_edit. Outside them, as operational state: book_meta, job, publish_state.
+Covered by Revisions: chapter, pair, block, term, forbidden_rendering, style_rule, form_of_address, story_note, suggestion, proposed_edit, proposed_metadata. Outside them, as operational state: book_meta, job, publish_state.
+
+V5 adds `proposed_metadata`: Suggestion-linked Drift Glossary/Story Note proposals, in id order. Each stores a typed JSON change, the before text for Review, a deterministic full-row snapshot of the affected Term and its Forbidden Renderings or Story Note, and its decision state. Accept checks that snapshot inside the write transaction; mismatches become stale. Content writes and the decision share one Revision. A Suggestion is not Done while its metadata items remain pending or stale.
 
 Undoing an added Chapter removes its queued, never-started Jobs in the same transaction. Jobs with saved input, partial output, attempts or dependents, or Jobs no longer queued, block that Undo; previews report those Jobs as conflicts. If the Chapter cannot be removed, its Jobs remain untouched.
 
