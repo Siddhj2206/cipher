@@ -224,6 +224,11 @@ lucide!(
     "l-pen-line",
     r#"<path d="M12 20h9"/><path d="M16.376 3.622a1 1 0 0 1 3.002 3.002L7.368 18.635a2 2 0 0 1-.855.506l-2.872.838a.5.5 0 0 1-.62-.62l.838-2.872a2 2 0 0 1 .506-.854z"/>"#
 );
+lucide!(
+    I_NOTE,
+    "l-sticky-note",
+    r#"<path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2Z"/><path d="M16 21v-5h5"/>"#
+);
 lucide!(I_UP, "l-chevron-up", r#"<path d="m18 15-6-6-6 6"/>"#);
 lucide!(I_DOWN, "l-chevron-down", r#"<path d="m6 9 6 6 6-6"/>"#);
 lucide!(
