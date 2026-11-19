@@ -780,6 +780,48 @@ fn batch_boundaries_do_not_treat_numbered_lists_as_chapters() {
 }
 
 #[test]
+fn failed_batch_queue_keeps_every_saved_chapter_visible_and_refreshed() {
+    for partial_queue in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lib = Library::from_book(book(&dir)).unwrap();
+        let plan = lib.intake_plan(&[], "1화\n\nOne.\n\n2화\n\nTwo.");
+        let error = lib
+            .add_intakes_using(
+                &plan,
+                |lib, intake| {
+                    let applied = lib.book.apply(Change::AddChapter {
+                        number: intake.number,
+                        title: intake.title.clone(),
+                        source: intake.blocks.clone(),
+                    })?;
+                    Ok(ChapterId(applied.created[0]))
+                },
+                |book, ids| {
+                    if partial_queue {
+                        cipher_engine::translate(book, &ids[..1]).map_err(super::engine_error)?;
+                    }
+                    Err(cipher_book::Error::Invalid("job insertion failed".into()))
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("job insertion failed"));
+        assert_eq!(lib.book.chapters().unwrap().len(), 2);
+        assert_eq!(lib.chapters.len(), 2);
+        assert_eq!(
+            lib.chapters[0].state,
+            if partial_queue {
+                ChapterState::Queued
+            } else {
+                ChapterState::Waiting
+            }
+        );
+        assert_eq!(lib.chapters[1].state, ChapterState::Waiting);
+        lib.open_chapter(1).unwrap();
+        assert_eq!(lib.page().source[0].text, "Two.");
+    }
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);

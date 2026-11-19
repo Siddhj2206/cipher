@@ -146,7 +146,18 @@ impl Library {
     pub(super) fn add_intakes_with(
         &mut self,
         parts: &[IntakePart],
+        create: impl FnMut(&mut Self, &Intake) -> Result<ChapterId>,
+    ) -> Result<Option<usize>> {
+        self.add_intakes_using(parts, create, |book, ids| {
+            cipher_engine::translate(book, ids).map_err(super::engine_error)
+        })
+    }
+
+    pub(super) fn add_intakes_using(
+        &mut self,
+        parts: &[IntakePart],
         mut create: impl FnMut(&mut Self, &Intake) -> Result<ChapterId>,
+        queue: impl FnOnce(&mut cipher_book::Book, &[ChapterId]) -> Result<()>,
     ) -> Result<Option<usize>> {
         let included: Vec<_> = parts.iter().filter(|p| p.include).collect();
         if included.iter().any(|p| p.intake.blocks.is_empty()) {
@@ -170,7 +181,7 @@ impl Library {
         }
         let chapters = self.book.chapters()?;
         ids.sort_by_key(|id| chapters.iter().position(|c| c.id == *id));
-        cipher_engine::translate(&mut self.book, &ids).map_err(super::engine_error)?;
+        let queued = queue(&mut self.book, &ids);
         for id in &ids {
             self.insert_row(*id)?;
         }
@@ -184,6 +195,7 @@ impl Library {
             })
             .collect();
         self.refresh_chapters(&at)?;
+        queued?;
         if let Some(error) = failure {
             return Err(error);
         }
