@@ -755,7 +755,12 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                 .pb(24.0),
         );
     }
-    if let Some(e) = &h.error {
+    if let Some((message, color)) = h
+        .error
+        .as_deref()
+        .map(|error| (error, p.red))
+        .or_else(|| h.files_notice.map(|notice| (notice, p.ink2)))
+    {
         column = column.child(
             row()
                 .key("shelf-error")
@@ -764,9 +769,9 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                 .pb(24.0)
                 .center_y()
                 .child(
-                    text(e.clone())
+                    text(message.to_owned())
                         .font(UI)
-                        .color(p.red)
+                        .color(color)
                         .shrink()
                         .wrap_anywhere(),
                 )
@@ -775,7 +780,7 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                         .center()
                         .cursor(Cursor::Pointer)
                         .child(icon(&I_X, 12.0).color(p.ink3))
-                        .on_press(|s: &mut State| home(s).error = None),
+                        .on_press(|s: &mut State| home(s).clear_message()),
                 ),
         );
     }

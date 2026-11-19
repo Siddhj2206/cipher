@@ -325,12 +325,12 @@ fn general(s: &State, p: &Pal) -> El {
                 .on_press(|s: &mut State| s.show_books_folder()),
             p,
         ));
-    if let Some(error) = &s.settings_books_error {
+    if let Some(notice) = s.settings_books_notice {
         rows.child(
-            text(error.clone())
-                .key("set-books-error")
+            text(notice)
+                .key("set-books-notice")
                 .font(SMALL)
-                .color(p.red)
+                .color(p.ink2)
                 .wrap_anywhere()
                 .pt(8.0),
         )

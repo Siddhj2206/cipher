@@ -22,6 +22,13 @@ pub enum Prompt {
     OpenFile,
 }
 
+#[derive(Clone, Copy)]
+pub enum FilesSource {
+    Shelf,
+    Book,
+    Settings,
+}
+
 pub struct NewBook {
     pub title: TextEdit,
     pub lang: &'static str,
@@ -40,6 +47,7 @@ pub struct Home {
     /// Something running, such as an import.
     pub busy: Option<String>,
     pub error: Option<String>,
+    pub files_notice: Option<&'static str>,
     /// Filters the Shelf by title.
     pub search: TextEdit,
 }
@@ -55,6 +63,7 @@ impl Home {
             prompt: None,
             busy: None,
             error: None,
+            files_notice: None,
             search: TextEdit::new(""),
         }
     }
@@ -77,7 +86,12 @@ impl Home {
         self.menu = None;
         self.confirm = None;
         self.prompt = None;
+        self.clear_message();
+    }
+
+    pub fn clear_message(&mut self) {
         self.error = None;
+        self.files_notice = None;
     }
 }
 
@@ -383,16 +397,19 @@ impl State {
 
     /// Opens the folder Cipher keeps Books in, from Settings.
     pub fn show_books_folder(&mut self) {
-        self.settings_books_error = None;
+        self.settings_books_notice = None;
         if let Some(dir) = self
             .home
             .as_ref()
             .map(|h| h.shelf.dir.clone())
             .or_else(Shelf::default_dir)
         {
-            self.show_in_files(dir, Show::Folder, true);
+            self.show_in_files(dir, FilesSource::Settings);
         } else {
-            self.settings_books_error = Some("Could not locate the Books folder".into());
+            self.on_show_in_files(
+                FilesSource::Settings,
+                Err("Could not locate the Books folder".into()),
+            );
         }
     }
 
@@ -400,37 +417,45 @@ impl State {
     pub fn reveal_book(&mut self, path: &Path) {
         if let Some(h) = self.home() {
             h.menu = None;
-            h.error = None;
-            self.show_in_files(path.to_path_buf(), Show::Book, false);
+            h.clear_message();
+            self.show_in_files(path.to_path_buf(), FilesSource::Book);
         }
     }
 
     /// Opens the Shelf's folder in the file manager.
     pub fn show_folder(&mut self) {
         let Some(h) = self.home() else { return };
-        h.error = None;
+        h.clear_message();
         let dir = h.shelf.dir.clone();
-        self.show_in_files(dir, Show::Folder, false);
+        self.show_in_files(dir, FilesSource::Shelf);
     }
 
-    fn show_in_files(&self, path: PathBuf, target: Show, settings: bool) {
+    fn show_in_files(&self, path: PathBuf, source: FilesSource) {
         if !rune::is_headless() {
+            let target = match source {
+                FilesSource::Book => Show::Book,
+                FilesSource::Shelf | FilesSource::Settings => Show::Folder,
+            };
             self.bg.spawn(move || Msg::ShowInFiles {
-                settings,
+                source,
                 result: files::show(&path, target),
             });
         }
     }
 
-    pub fn on_show_in_files(&mut self, settings: bool, result: Result<(), String>) {
-        if let Err(e) = result {
-            if settings {
-                if self.settings_page.is_some() {
-                    self.settings_books_error = Some(e);
-                }
-            } else if let Some(h) = self.home() {
-                h.error = Some(e);
+    pub fn on_show_in_files(&mut self, source: FilesSource, result: Result<(), String>) {
+        let Err(e) = result else { return };
+        eprintln!("cipher: {e}");
+        let notice = match source {
+            FilesSource::Book => "Try opening the book’s folder manually.",
+            FilesSource::Shelf | FilesSource::Settings => "Try opening the Books folder manually.",
+        };
+        if matches!(source, FilesSource::Settings) {
+            if self.settings_page.is_some() {
+                self.settings_books_notice = Some(notice);
             }
+        } else if let Some(h) = self.home() {
+            h.files_notice = Some(notice);
         }
     }
 
@@ -446,7 +471,8 @@ impl State {
             || h.menu.is_some()
             || h.confirm.is_some()
             || h.prompt.is_some()
-            || h.error.is_some();
+            || h.error.is_some()
+            || h.files_notice.is_some();
         h.closed_forms();
         open
     }
@@ -467,21 +493,34 @@ mod tests {
 
         let mut state = State::new(Library::blank());
         state.home = Some(Home::load(Some(scratch.path())));
-        state.on_show_in_files(false, Err(error.clone()));
+        state.on_show_in_files(FilesSource::Book, Err(error.clone()));
+        let home = state.home.as_ref().unwrap();
         assert_eq!(
-            state.home.as_ref().unwrap().error.as_deref(),
-            Some(error.as_str())
+            home.files_notice,
+            Some("Try opening the book’s folder manually.")
         );
-        assert!(state.settings_books_error.is_none());
+        assert!(home.error.is_none());
+        assert!(state.settings_books_notice.is_none());
 
-        state.home.as_mut().unwrap().error = None;
+        assert!(state.shelf_escape());
+        assert!(state.home.as_ref().unwrap().files_notice.is_none());
+        state.on_show_in_files(FilesSource::Shelf, Err(error.clone()));
+        assert_eq!(
+            state.home.as_ref().unwrap().files_notice,
+            Some("Try opening the Books folder manually.")
+        );
+        state.home.as_mut().unwrap().clear_message();
+
         state.open_settings_at(Section::General);
-        state.on_show_in_files(true, Err(error.clone()));
-        assert_eq!(state.settings_books_error.as_deref(), Some(error.as_str()));
-        assert!(state.home.as_ref().unwrap().error.is_none());
+        state.on_show_in_files(FilesSource::Settings, Err(error.clone()));
+        assert_eq!(
+            state.settings_books_notice,
+            Some("Try opening the Books folder manually.")
+        );
+        assert!(state.home.as_ref().unwrap().files_notice.is_none());
 
         state.close_settings();
-        state.on_show_in_files(true, Err(error));
-        assert!(state.settings_books_error.is_none());
+        state.on_show_in_files(FilesSource::Settings, Err(error));
+        assert!(state.settings_books_notice.is_none());
     }
 }
