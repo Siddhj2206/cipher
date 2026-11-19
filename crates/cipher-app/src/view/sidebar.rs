@@ -15,14 +15,9 @@ pub fn grip(s: &State, p: &Pal, side: Sidebar, width: Option<f32>) -> Option<El>
     let grip = el()
         .key(key)
         .on_drag(move |s: &mut State, d: &mut Drag, tx| match d.phase {
-            Phase::Down => d.data = s.sidebar_layout().width(side).unwrap_or(0.0),
-            Phase::Move => s.resize_sidebar(side, d.data + sign * d.dx, false, tx),
-            Phase::Up => {
-                if !d.cancelled() && d.dx != 0.0 {
-                    s.resize_sidebar(side, d.data + sign * d.dx, false, tx);
-                }
-                s.finish_sidebar_drag(side, d.data, d.cancelled(), tx);
-            }
+            Phase::Down => s.start_sidebar_drag(side),
+            Phase::Move => s.preview_sidebar_drag(side, sign * d.dx, tx),
+            Phase::Up => s.finish_sidebar_drag(side, sign * d.dx, d.cancelled(), tx),
         });
     let Some(width) = width else {
         // If the window narrows mid-drag, keep the captured handler until it can clean up.
@@ -74,13 +69,13 @@ pub fn grip(s: &State, p: &Pal, side: Sidebar, width: Option<f32>) -> Option<El>
                 } else {
                     side.min_width()
                 };
-                s.resize_sidebar(side, width, true, tx);
+                s.resize_sidebar(side, width, tx);
             }),
     )
 }
 
 fn step(s: &mut State, side: Sidebar, delta: f32, tx: &mut Tx) {
     if let Some(width) = s.sidebar_layout().width(side) {
-        s.resize_sidebar(side, width + delta, true, tx);
+        s.resize_sidebar(side, width + delta, tx);
     }
 }

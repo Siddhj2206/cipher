@@ -15,7 +15,7 @@ use crate::library::Library;
 use crate::prefs::{Appearance, Prefs};
 use crate::settings::Settings;
 use crate::shelf::{Position, Shelf};
-use crate::sidebars::{PAGE_CHROME, Sidebar, SidebarLayout};
+use crate::sidebars::{PAGE_CHROME, Sidebar, SidebarDrag, SidebarLayout};
 use crate::welcome::Welcome;
 
 /// Paragraphs of a translating Chapter as they arrive: (first, last, text), 1-based.
@@ -140,7 +140,7 @@ pub struct State {
     /// In a window too narrow for both sidebars, the context sidebar was opened last.
     context_first: bool,
     /// Live width during a drag; the preference changes only on release.
-    sidebar_preview: Option<(Sidebar, f32)>,
+    sidebar_drag: Option<SidebarDrag>,
     /// The Book whose old import Pairs were last checked for re-pairing.
     realigning: Option<std::path::PathBuf>,
     /// The running translation, from the worker's Events.
@@ -206,7 +206,7 @@ impl State {
             drop_hover: false,
             scanning: 0,
             context_first: false,
-            sidebar_preview: None,
+            sidebar_drag: None,
             realigning: None,
             progress: None,
             streamed: None,
@@ -484,8 +484,8 @@ impl State {
     }
 
     pub fn sidebar_layout(&self) -> SidebarLayout {
-        let preferred = |side, saved| match self.sidebar_preview {
-            Some((preview, width)) if preview == side => width,
+        let preferred = |side, saved| match self.sidebar_drag {
+            Some(drag) if drag.side == side => drag.width,
             _ => saved,
         };
         SidebarLayout::fit(
@@ -511,37 +511,49 @@ impl State {
         self.sidebar_layout().max_width(side, self.avail_w())
     }
 
-    pub fn resize_sidebar(&mut self, side: Sidebar, width: f32, commit: bool, tx: &mut Tx) {
+    pub fn resize_sidebar(&mut self, side: Sidebar, width: f32, tx: &mut Tx) {
         let Some(current) = self.sidebar_layout().width(side) else {
             return;
         };
         let width = width.clamp(side.min_width(), self.sidebar_max_width(side));
         if current != width {
             self.hold_reading_position(tx);
+            self.remember_sidebar_width(side, width);
         }
-        if commit {
-            if current != width {
-                self.remember_sidebar_width(side, width);
-            }
-        } else if current != width {
-            self.sidebar_preview = Some((side, width));
-        }
+    }
+
+    pub fn start_sidebar_drag(&mut self, side: Sidebar) {
+        self.sidebar_drag = SidebarDrag::new(side, self.sidebar_layout());
     }
 
     pub fn sidebar_dragging(&self, side: Sidebar) -> bool {
-        self.sidebar_preview
-            .is_some_and(|(active, _)| active == side)
+        self.sidebar_drag.is_some_and(|drag| drag.side == side)
     }
 
-    pub fn finish_sidebar_drag(&mut self, side: Sidebar, start: f32, cancelled: bool, tx: &mut Tx) {
-        if self.sidebar_dragging(side)
-            && let Some((_, width)) = self.sidebar_preview.take()
-        {
-            if !cancelled && width != start {
-                self.remember_sidebar_width(side, width);
-            } else {
+    pub fn preview_sidebar_drag(&mut self, side: Sidebar, delta: f32, tx: &mut Tx) {
+        if let Some(mut drag) = self.sidebar_drag.filter(|drag| drag.side == side) {
+            let width = drag.target(delta, self.avail_w());
+            if drag.width != width {
                 self.hold_reading_position(tx);
+                drag.width = width;
+                self.sidebar_drag = Some(drag);
             }
+        }
+    }
+
+    pub fn finish_sidebar_drag(&mut self, side: Sidebar, delta: f32, cancelled: bool, tx: &mut Tx) {
+        if !self.sidebar_dragging(side) {
+            return;
+        }
+        if !cancelled {
+            self.preview_sidebar_drag(side, delta, tx);
+        }
+        let shown = self.sidebar_layout().width(side).is_some();
+        let drag = self.sidebar_drag.take().unwrap();
+        if !cancelled && shown && delta != 0.0 && drag.width != drag.start {
+            self.remember_sidebar_width(side, drag.width);
+        } else if drag.width != drag.start {
+            self.hold_reading_position(tx);
         }
     }
 

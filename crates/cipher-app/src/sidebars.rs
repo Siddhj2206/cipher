@@ -33,6 +33,34 @@ pub struct SidebarLayout {
     pub context: Option<f32>,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct SidebarDrag {
+    pub side: Sidebar,
+    layout: SidebarLayout,
+    pub start: f32,
+    pub width: f32,
+}
+
+impl SidebarDrag {
+    pub fn new(side: Sidebar, layout: SidebarLayout) -> Option<Self> {
+        let start = layout.width(side)?;
+        Some(Self {
+            side,
+            layout,
+            start,
+            width: start,
+        })
+    }
+
+    pub fn target(self, delta: f32, window: f32) -> f32 {
+        // A pane that returns mid-drag must not keep the pointer from returning to its start.
+        (self.start + delta).clamp(
+            self.side.min_width(),
+            self.layout.max_width(self.side, window),
+        )
+    }
+}
+
 impl SidebarLayout {
     fn room(window: f32) -> f32 {
         window - MIN_TEXT - PAGE_CHROME
@@ -160,6 +188,17 @@ mod tests {
                 context: None
             }
         );
+    }
+
+    #[test]
+    fn drag_can_return_to_start_after_the_other_sidebar_reappears() {
+        let window = 1220.0;
+        let fit = |width| SidebarLayout::fit(window, Some(width), Some(280.0), false);
+        let mut drag = SidebarDrag::new(Sidebar::Contents, fit(400.0)).unwrap();
+        drag.width = drag.target(-100.0, window);
+        assert_eq!(fit(drag.width).context, Some(280.0));
+        assert_eq!(fit(drag.width).max_width(Sidebar::Contents, window), 316.0);
+        assert_eq!(drag.target(0.0, window), drag.start);
     }
 
     #[test]
