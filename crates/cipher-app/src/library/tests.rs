@@ -1,6 +1,6 @@
 use cipher_book::{
-    Book, BookMeta, Change, ChapterId, ChapterState, JobKind, JobSpec, NewPair, Side, TermFields,
-    TermStatus,
+    Book, BookMeta, Change, ChapterId, ChapterState, EditState, JobKind, JobSpec, MetadataEditId,
+    NewPair, Side, SuggestionFilter, TermFields, TermStatus,
 };
 use cipher_text::drift::DriftKind;
 
@@ -62,6 +62,43 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 }
 
 const LORD: &str = "마탑주";
+
+#[test]
+fn drift_metadata_review_reloads_the_glossary_and_undo_restores_pending_items() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let tid = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+    let ch = chapter(&mut b, 1, &["마탑주가 웃었다."]);
+    translate(&mut b, ch, &["The Tower Master smiled."], None);
+    let path = b.path().to_owned();
+    drop(b);
+    let mut lib = Library::open(&path).unwrap();
+    let at = lib.terms.iter().position(|t| t.id == tid).unwrap();
+    let sid = lib.use_wording(at, "Tower Master", &[]).unwrap().unwrap();
+    assert_eq!(lib.terms[at].rendering, "Magic Tower Lord");
+    assert!(lib.suggestion(sid).unwrap().edits.is_empty());
+    let eid = lib.suggestion(sid).unwrap().metadata[0].id;
+    assert!(
+        lib.decide_metadata(vec![(MetadataEditId(-1), true)])
+            .is_err()
+    );
+    let empty = lib.decide_metadata(Vec::new()).unwrap();
+    assert_eq!((empty.applied, empty.stale), (0, 0));
+    let decided = lib.decide_metadata(vec![(eid, true)]).unwrap();
+    assert_eq!((decided.applied, decided.stale), (1, 0));
+    assert_eq!(lib.terms[at].rendering, "Tower Master");
+    assert!(lib.suggestion(sid).is_none());
+    lib.undo_review(decided.revision, &[]).unwrap();
+    assert_eq!(lib.terms[at].rendering, "Magic Tower Lord");
+    assert_eq!(
+        lib.suggestion(sid).unwrap().metadata[0].state,
+        EditState::Pending
+    );
+    let result = lib.decide_metadata(vec![(eid, false)]).unwrap();
+    assert_eq!(result.applied, 0);
+    let s = lib.book().suggestions(SuggestionFilter::default()).unwrap();
+    assert_eq!(s[0].metadata[0].state, EditState::Rejected);
+}
 
 #[test]
 fn counts_and_order_of_first_appearance() {

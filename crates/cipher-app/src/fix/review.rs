@@ -51,6 +51,26 @@ fn finished_for(sug: &Suggestion) -> Finished {
 }
 
 impl State {
+    pub fn review_metadata(
+        &mut self,
+        suggestion: SuggestionId,
+        decisions: Vec<(cipher_book::MetadataEditId, bool)>,
+    ) {
+        let Some(sug) = self.lib.suggestion(suggestion) else {
+            return;
+        };
+        let mut acc = finished_for(sug);
+        match self.lib.decide_metadata(decisions) {
+            Ok(d) => {
+                acc.revisions.push(d.revision);
+                acc.applied = d.applied;
+                acc.stale = d.stale;
+                self.record(acc);
+            }
+            Err(e) => self.toast = Some(format!("Could not apply Book changes: {e}")),
+        }
+    }
+
     /// Writes a batch of decisions as one Revision and adds what happened to `acc`.
     fn decide_into(&mut self, acc: &mut Finished, decisions: Vec<(ProposedEditId, bool)>) -> bool {
         let skipped = decisions.iter().filter(|d| !d.1).count();
