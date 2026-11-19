@@ -558,10 +558,10 @@ impl State {
     /// Light or dark, as chosen or as the desktop has it.
     /// Counts the open Book's Terms on another thread, once per load (`Library::scan`).
     pub fn start_scan(&mut self) {
-        if self.lib.scanned() {
-            if let Some(term) = self.cast_open.or(self.term_card.map(|card| card.term)) {
-                self.look_at(term);
-            }
+        if self.lib.scanned()
+            && let Some(term) = self.cast_open.or(self.term_card.map(|card| card.term))
+        {
+            self.look_at(term);
         }
         // Once the Book is counted, re-pair what an old import paired by position: once per
         // opened Book, after the counts, so they never wait on it.

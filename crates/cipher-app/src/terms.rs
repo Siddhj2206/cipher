@@ -118,7 +118,7 @@ mod tests {
             },
         )
         .unwrap();
-        for source in ["A", "B", "C"] {
+        for source in ["마탑주", "B", "C"] {
             book.apply(Change::UpsertTerm {
                 id: None,
                 fields: TermFields {
@@ -182,7 +182,7 @@ mod tests {
             .apply(Change::AddChapter {
                 number: Some(1),
                 title: None,
-                source: vec!["A A A A".into()],
+                source: vec!["마탑주, 마탑주, 마탑주, 마탑주.".into()],
             })
             .unwrap();
         let chapter = cipher_book::ChapterId(applied.created[0]);
