@@ -340,7 +340,7 @@ pub(crate) fn undo(
         let result = if table == Table::Chapter && before.is_none() && after.is_some() {
             let blocked = {
                 let mut stmt = tx.prepare(
-                    "SELECT id FROM job WHERE chapter_id = ?1 AND (state != 'queued' OR attempts != 0 OR EXISTS (SELECT 1 FROM job child WHERE child.parent_id = job.id))"
+                    "SELECT id FROM job WHERE chapter_id = ?1 AND (state != 'queued' OR attempts != 0 OR input IS NOT NULL OR partial != '' OR EXISTS (SELECT 1 FROM job child WHERE child.parent_id = job.id))"
                 )?;
                 stmt.query_map([id], |r| r.get::<_, i64>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?

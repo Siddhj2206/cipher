@@ -63,7 +63,7 @@ impl State {
             && !p.conflicts.is_empty()
         {
             self.toast = Some(if p.conflicts.iter().any(|c| c.entity == "job") {
-                "Not undone: this chapter has started work or dependent jobs. Finish that work first.".into()
+                "Not undone: this chapter has started work, saved progress or dependent jobs. Finish that work first.".into()
             } else {
                 "Not undone: later work changed these chapters. Structural changes must be undone as a whole.".into()
             });
