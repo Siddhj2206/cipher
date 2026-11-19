@@ -579,12 +579,12 @@ pub const SCENES: &[Scene] = &[
     }),
     ("chapter-deleted", |s| {
         let i = s.lib.current() + 2;
-        let number = s.lib.chapters[i].number;
-        s.lib.delete_chapter(i).unwrap();
-        s.load_strip(s.lib.current());
-        s.toast = Some(format!(
-            "Deleted Chapter {number}. Undo from History (Ctrl+H)."
-        ));
+        s.delete_chapter(i);
+    }),
+    ("chapter-deleted-empty", |s| {
+        while !s.lib.chapters.is_empty() {
+            s.delete_chapter(s.lib.chapters.len() - 1);
+        }
     }),
     ("chapter-delete-history", |s| {
         s.lib.delete_chapter(s.lib.current() + 2).unwrap();

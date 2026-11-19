@@ -434,23 +434,50 @@ pub fn chapter_menu(s: &State, p: &Pal) -> Option<El> {
             || format!("Chapter {number}"),
             |title| format!("Chapter {number}: {title}"),
         );
-        return Some(super::widgets::card(p).key("chapter-delete-confirm").w(340.0).padding(16.0)
-            .child(col().gap(12.0)
-                .child(text(format!("Delete {name}?")).font(UI).color(p.ink).wrap())
-                .child(text("You can undo this from History (Ctrl+H).").font(SMALL).color(p.ink2).wrap())
-                .child(row().gap(12.0)
-                    .child(text("Cancel").font(UI).color(p.ink).cursor(Cursor::Pointer).on_press(|s: &mut State| { s.chapter_menu = None; s.chapter_delete_confirm = false; }))
-                    .child(text("Delete chapter").key("cm-delete-confirm").font(UI).color(p.red).cursor(Cursor::Pointer).on_press(move |s: &mut State| {
-                        s.chapter_menu = None;
-                        s.chapter_delete_confirm = false;
-                        s.toast_undo = None;
-                        s.toast = Some(match s.lib.delete_chapter(i) {
-                            Ok(()) => { s.load_strip(s.lib.current()); format!("Deleted Chapter {number}. Undo from History (Ctrl+H).") },
-                            Err(e) => format!("Could not delete chapter: {e}"),
-                        });
-                    }))))
-            .pin(Some(x / s.prefs.zoom), Some(y / s.prefs.zoom), None, None)
-            .modal(true, |s: &mut State| { s.chapter_menu = None; s.chapter_delete_confirm = false; }));
+        return Some(
+            super::widgets::card(p)
+                .key("chapter-delete-confirm")
+                .w(340.0)
+                .padding(16.0)
+                .child(
+                    col()
+                        .gap(12.0)
+                        .child(text(format!("Delete {name}?")).font(UI).color(p.ink).wrap())
+                        .child(
+                            text("You can undo this from History (Ctrl+H).")
+                                .font(SMALL)
+                                .color(p.ink2)
+                                .wrap(),
+                        )
+                        .child(
+                            row()
+                                .gap(12.0)
+                                .child(
+                                    text("Cancel")
+                                        .font(UI)
+                                        .color(p.ink)
+                                        .cursor(Cursor::Pointer)
+                                        .on_press(|s: &mut State| {
+                                            s.chapter_menu = None;
+                                            s.chapter_delete_confirm = false;
+                                        }),
+                                )
+                                .child(
+                                    text("Delete chapter")
+                                        .key("cm-delete-confirm")
+                                        .font(UI)
+                                        .color(p.red)
+                                        .cursor(Cursor::Pointer)
+                                        .on_press(move |s: &mut State| s.delete_chapter(i)),
+                                ),
+                        ),
+                )
+                .pin(Some(x / s.prefs.zoom), Some(y / s.prefs.zoom), None, None)
+                .modal(true, |s: &mut State| {
+                    s.chapter_menu = None;
+                    s.chapter_delete_confirm = false;
+                }),
+        );
     }
     let item = |label: &str, key: &str| {
         text(label.to_string())

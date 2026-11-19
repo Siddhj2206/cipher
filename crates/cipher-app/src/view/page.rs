@@ -623,6 +623,9 @@ fn section(s: &State, page: &Page, p: &Pal) -> El {
 /// The page: the current Chapter between its neighbours, so reading runs on from one Chapter
 /// into the next in either direction. The scroll keeps its place as Chapters load above.
 pub fn reading(s: &State, cx: &mut Cx<State>, p: &Pal) -> El {
+    if s.lib.chapters.is_empty() {
+        return super::draft::draft_page(s, p);
+    }
     // Remember where each row of the current Chapter sits, for Ctrl+T to keep the position.
     let current = s.lib.page();
     let origin = cx.layout("page").map_or(0.0, |r| r[1]);

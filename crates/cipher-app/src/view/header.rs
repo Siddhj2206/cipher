@@ -13,7 +13,9 @@ use rune::Cursor;
 
 fn state_text(s: &State) -> String {
     let page = s.lib.page();
-    let row = &s.lib.chapters[page.index];
+    let Some(row) = s.lib.chapters.get(page.index) else {
+        return String::new();
+    };
     let mut parts: Vec<String> = Vec::new();
     match row.state {
         ChapterState::Waiting => parts.push("waiting to translate".into()),
@@ -64,7 +66,7 @@ fn state_text(s: &State) -> String {
 /// Chapter, when, and the tokens it took.
 fn made_by_help(s: &State) -> Option<String> {
     let page = s.lib.page();
-    let row = &s.lib.chapters[page.index];
+    let row = s.lib.chapters.get(page.index)?;
     if row.state != ChapterState::Translated {
         return None;
     }

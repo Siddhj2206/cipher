@@ -241,6 +241,28 @@ impl State {
             self.fail(e);
         }
         self.pending_scroll = (!self.strip.is_empty()).then(|| (format!("sec{at}"), 0.0));
+        if self.lib.chapters.is_empty() && self.screen == Screen::Reading {
+            self.open_draft("");
+        }
+    }
+
+    pub fn delete_chapter(&mut self, index: usize) {
+        let Some(chapter) = self.lib.chapters.get(index) else {
+            return;
+        };
+        let number = chapter.number;
+        self.chapter_menu = None;
+        self.chapter_delete_confirm = false;
+        self.toast_undo = None;
+        self.toast = Some(match self.lib.delete_chapter(index) {
+            Ok(()) => {
+                self.term_card = None;
+                self.fix.picked = None;
+                self.load_strip(self.lib.current());
+                format!("Deleted Chapter {number}. Undo from History (Ctrl+H).")
+            }
+            Err(e) => format!("Could not delete chapter: {e}"),
+        });
     }
 
     /// Reading has moved into Chapter `at` (it crosses the reading line): it becomes current,
