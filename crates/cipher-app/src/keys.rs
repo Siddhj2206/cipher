@@ -21,6 +21,11 @@ pub const SHORTCUTS: &[(&str, &str, &str)] = &[
     ("Reading", "Ctrl+0", "Text size back to normal"),
     ("Panels", "Ctrl+\\", "Contents"),
     ("Panels", "Ctrl+J", "Terms and Suggestions"),
+    (
+        "Panels",
+        "← / → on divider",
+        "Resize a sidebar (Tab to divider)",
+    ),
     ("Panels", "Ctrl+G", "Cast"),
     ("Adding", "Ctrl+V", "Paste a chapter onto a new page"),
     ("Adding", "Ctrl+Enter", "Add the chapter on the page"),

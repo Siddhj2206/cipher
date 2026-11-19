@@ -71,7 +71,9 @@ Three columns, each with a 52px header row so the headers line up.
   - then "In this chapter": every Term in order of first appearance, with its source form, its count here and a red dot if drifting here. A Chapter not translated yet lists "In the source" instead: the Terms its source names, with how often, so the names it will get are visible before translating.
 - **Suggestions tab:** grouped "This chapter" and "Elsewhere". Elsewhere items carry a "ch 231" link to the paragraph.
 
-**Narrow windows:** the reading column shrinks to fit (never under 520 points); when there is no room for both sidebars beside it, the one opened last stays and the other steps aside, its show button in the header. Hiding or showing one is remembered as before.
+**Sidebar widths:** drag an inner divider, or Tab to it and use ← / → to move it (Home sets the minimum width; End uses the available room). Each width is remembered independently and resizing keeps the current reading position.
+
+**Narrow windows:** the sidebars reserve 520 points for the reading column. If both chosen widths don't fit, the last-opened sidebar has priority and can narrow to fit; either can give way when there isn't enough room at the current interface zoom. The show buttons stay in the header, and the chosen widths return when there is room again. At very narrow sizes the page itself shrinks to fit.
 
 **Focus layout:** hide either sidebar and the page takes the room.
 - With the context sidebar hidden, notes move into a 260px page margin beside their paragraph, absolutely positioned so they never push text apart.
@@ -274,7 +276,7 @@ All connection and model setup lives in Settings › Translation; a Book only pi
 
 - **Identity:** app id `app.cipher.Cipher` (Wayland app_id, X11 WM_CLASS, the desktop entry and icon names). One instance: a later launch hands its `file://…/x.cipher` link to the running window, which opens that Book. Desktop entry, MIME type, icons and AppStream data are in `packaging/linux/` (`install.sh` installs them for the user).
 - **Window:** opens at its last size (minimum 760 × 520); the native frame stays (tiling window managers keep control), and the reading and Shelf headers also drag the window, double-click maximising.
-- **Remembered:** appearance, reading type, interface size, the sidebars, the Shelf's sort, the window's size, the open Book (reopened at launch unless turned off) and, per Book in `shelf.json`, the Chapter and the paragraph at the top of the window.
+- **Remembered:** appearance, reading type, interface size, the sidebars' visibility and widths, the Shelf's sort, the window's size, the open Book (reopened at launch unless turned off) and, per Book in `shelf.json`, the Chapter and the paragraph at the top of the window.
 - **Right-click:** a Shelf cover (its menu) and a Chapter in the contents (Open; Translate and Translate all N from here when it waits, Translate again when it is translated, Retry when it failed). Translate again keeps the current translation until the new one is written, says so in a toast, and the header reads "queued to translate again", then its progress.
 - **Toasts** go by themselves after five seconds plus a little per word (ten with Undo); ✕ closes one sooner.
 - **Drop** a Book or a folder anywhere on the window (see Shelf).
@@ -295,5 +297,4 @@ All connection and model setup lives in Settings › Translation; a Book only pi
   - splitting and merging Blocks are explicit commands that adjust Pairs, never Enter or Backspace at a paragraph edge, because Pairs drive every fix.
 - **Per-Chapter token usage** in Endpoint settings or the Chapter header (designed, not built).
 - **Follow the system theme** by default.
-- **Narrow windows:** below about 1,240px the context sidebar closes; below about 1,000px the contents does too.
 - **Later:** phone flags (select text in the Reader, sync down as unresolved Suggestions).

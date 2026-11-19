@@ -143,7 +143,7 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
 - [ ] "Fetch models" from an API-key Endpoint's `/models`; several chapters at once (a multi-file pick, or a paste holding several numbered chapters).
 - [x] Sidebars that give way on narrow windows (2026-11-16).
-- [ ] Resizable, remembered sidebar widths.
+- [x] Resizable, remembered sidebar widths.
 - [ ] A History panel: Revisions listed with Undo. Today only Reviews offer Undo, so a re-translation or a re-pair can't be undone from the app.
 - [ ] Notifications when a long translation finishes while the window is unfocused.
 

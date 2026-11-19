@@ -15,13 +15,11 @@ use crate::library::Library;
 use crate::prefs::{Appearance, Prefs};
 use crate::settings::Settings;
 use crate::shelf::{Position, Shelf};
+use crate::sidebars::{PAGE_CHROME, Sidebar, SidebarLayout};
 use crate::welcome::Welcome;
 
 /// Paragraphs of a translating Chapter as they arrive: (first, last, text), 1-based.
 pub type Streamed = Vec<(u32, u32, String)>;
-
-/// The narrowest reading column before a sidebar gives way to it.
-const MIN_TEXT: f32 = 520.0;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Screen {
@@ -141,6 +139,8 @@ pub struct State {
     scanning: u64,
     /// In a window too narrow for both sidebars, the context sidebar was opened last.
     context_first: bool,
+    /// Live width during a drag; the preference changes only on release.
+    sidebar_preview: Option<(Sidebar, f32)>,
     /// The Book whose old import Pairs were last checked for re-pairing.
     realigning: Option<std::path::PathBuf>,
     /// The running translation, from the worker's Events.
@@ -206,6 +206,7 @@ impl State {
             drop_hover: false,
             scanning: 0,
             context_first: false,
+            sidebar_preview: None,
             realigning: None,
             progress: None,
             streamed: None,
@@ -482,39 +483,81 @@ impl State {
         }
     }
 
-    /// Room the page needs beside the sidebars before one of them gives way.
-    fn fits(&self, contents: bool, context: bool) -> bool {
-        use crate::theme::{GUTTER_W, LEFT_W, RIGHT_W, SCRUBBER_W};
-        let left = if contents { LEFT_W } else { SCRUBBER_W };
-        let right = if context { RIGHT_W } else { 0.0 };
-        self.avail_w() - left - right >= MIN_TEXT + GUTTER_W + 48.0
+    pub fn sidebar_layout(&self) -> SidebarLayout {
+        let preferred = |side, saved| match self.sidebar_preview {
+            Some((preview, width)) if preview == side => width,
+            _ => saved,
+        };
+        SidebarLayout::fit(
+            self.avail_w(),
+            self.prefs
+                .contents_open
+                .then(|| preferred(Sidebar::Contents, self.prefs.contents_width)),
+            (self.prefs.context_open && self.screen_has_context())
+                .then(|| preferred(Sidebar::Context, self.prefs.context_width)),
+            self.context_first,
+        )
     }
 
-    /// Whether the contents sidebar shows: open, and the window wide enough beside what else
-    /// shows. In a narrow window the sidebar opened last wins.
     pub fn contents_shown(&self) -> bool {
-        let (a, b) = (
-            self.prefs.contents_open,
-            self.prefs.context_open && self.screen_has_context(),
-        );
-        match (a, b) {
-            (false, _) => false,
-            (true, false) => true,
-            (true, true) => {
-                self.fits(true, true) || (!self.context_first && self.fits(true, false))
+        self.sidebar_layout().contents.is_some()
+    }
+
+    pub fn context_shown(&self) -> bool {
+        self.sidebar_layout().context.is_some()
+    }
+
+    pub fn sidebar_max_width(&self, side: Sidebar) -> f32 {
+        self.sidebar_layout().max_width(side, self.avail_w())
+    }
+
+    pub fn resize_sidebar(&mut self, side: Sidebar, width: f32, commit: bool, tx: &mut Tx) {
+        let Some(current) = self.sidebar_layout().width(side) else {
+            return;
+        };
+        let width = width.clamp(side.min_width(), self.sidebar_max_width(side));
+        if current != width {
+            self.hold_reading_position(tx);
+        }
+        if commit {
+            if current != width {
+                self.remember_sidebar_width(side, width);
+            }
+        } else if current != width {
+            self.sidebar_preview = Some((side, width));
+        }
+    }
+
+    pub fn sidebar_dragging(&self, side: Sidebar) -> bool {
+        self.sidebar_preview
+            .is_some_and(|(active, _)| active == side)
+    }
+
+    pub fn finish_sidebar_drag(&mut self, side: Sidebar, start: f32, cancelled: bool, tx: &mut Tx) {
+        if self.sidebar_dragging(side)
+            && let Some((_, width)) = self.sidebar_preview.take()
+        {
+            if !cancelled && width != start {
+                self.remember_sidebar_width(side, width);
+            } else {
+                self.hold_reading_position(tx);
             }
         }
     }
 
-    /// Whether the context sidebar shows; see [`State::contents_shown`].
-    pub fn context_shown(&self) -> bool {
-        if !self.prefs.context_open || !self.screen_has_context() {
-            return false;
+    fn remember_sidebar_width(&mut self, side: Sidebar, width: f32) {
+        match side {
+            Sidebar::Contents => self.prefs.contents_width = width,
+            Sidebar::Context => self.prefs.context_width = width,
         }
-        if !self.prefs.contents_open {
-            return true;
+    }
+
+    fn hold_reading_position(&self, tx: &mut Tx) {
+        if self.screen == Screen::Reading
+            && let Some(block) = self.reading_position().and_then(|pos| pos.block)
+        {
+            tx.keep_on_screen(format!("row{block}"));
         }
-        self.fits(true, true) || (self.context_first && self.fits(false, true))
     }
 
     /// The new-Chapter page has no Terms or Suggestions yet: it gets the room.
@@ -524,28 +567,15 @@ impl State {
 
     /// The reading column: the chosen width, narrowed to what the window leaves.
     pub fn text_width(&self) -> f32 {
-        use crate::theme::{GUTTER_W, LEFT_W, RIGHT_W, SCRUBBER_W};
-        let left = if self.contents_shown() {
-            LEFT_W
-        } else {
-            SCRUBBER_W
-        };
-        let right = if self.context_shown() { RIGHT_W } else { 0.0 };
-        let room = self.avail_w() - left - right - GUTTER_W - 48.0;
-        self.prefs
-            .reading
-            .width
-            .min(room.max(MIN_TEXT.min(self.prefs.reading.width)))
+        let (left, right) = self.sidebar_layout().insets();
+        let room = self.avail_w() - left - right - PAGE_CHROME;
+        self.prefs.reading.width.min(room.max(0.0))
     }
 
     /// Whether the page margin has room for notes beside the column.
     pub fn margin_room(&self) -> bool {
-        use crate::theme::{GUTTER_W, LEFT_W, SCRUBBER_W};
-        let left = if self.contents_shown() {
-            LEFT_W
-        } else {
-            SCRUBBER_W
-        };
+        use crate::theme::GUTTER_W;
+        let (left, _) = self.sidebar_layout().insets();
         self.avail_w() - left - GUTTER_W - self.text_width() >= 316.0
     }
 

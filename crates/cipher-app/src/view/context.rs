@@ -8,9 +8,7 @@ use super::notes;
 use super::widgets::{dot, icon_btn, plural, scrolling, section};
 use crate::library::TermInfo;
 use crate::state::{State, Tab, TermCard};
-use crate::theme::{
-    CJK, HEADER_H, I_RIGHT_PANEL, I_X, LABEL, Pal, RIGHT_W, SERIF, SMALL, UI, UI_MED,
-};
+use crate::theme::{CJK, HEADER_H, I_RIGHT_PANEL, I_X, LABEL, Pal, SERIF, SMALL, UI, UI_MED};
 
 /// "never Tower Master, Mage Lord"
 fn never(t: &TermInfo) -> Option<String> {
@@ -155,7 +153,7 @@ fn listed(s: &State) -> Vec<(usize, u32)> {
     v
 }
 
-pub fn context(s: &State, p: &Pal) -> El {
+pub fn context(s: &State, p: &Pal, width: f32) -> El {
     let cur = s.lib.current();
     let here = listed(s);
     let open = s.lib.open_suggestions;
@@ -335,7 +333,7 @@ pub fn context(s: &State, p: &Pal) -> El {
     }
     col()
         .key("context")
-        .w(RIGHT_W)
+        .w(width)
         .h_full()
         .fill(p.side)
         .border_sides([0.0, 0.0, 0.0, 1.0], p.rule)

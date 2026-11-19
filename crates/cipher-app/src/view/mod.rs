@@ -16,12 +16,14 @@ mod preferences;
 mod review;
 mod sheets;
 mod shelf;
+mod sidebar;
 mod style;
 mod welcome;
 mod widgets;
 
 use rune::{Cx, El, col, row};
 
+use crate::sidebars::Sidebar;
 use crate::state::{Screen, State};
 use crate::theme::pal;
 pub use widgets::{ago, plural, thousands};
@@ -97,12 +99,21 @@ fn screen(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Style => style::style_page(s, &p),
         Screen::Reading => page::reading(s, cx, &p),
     };
+    let panes = s.sidebar_layout();
     let mut middle = row().w_full().grow(1.0).min_h(0.0);
-    if !s.contents_shown() {
+    if panes.contents.is_none() {
         middle = middle.child(contents::scrubber(s, &p));
     }
-    middle = middle.child(col().grow(1.0).h_full().min_w(0.0).child(content));
+    middle = middle.child(
+        col()
+            .key("page-slot")
+            .grow(1.0)
+            .h_full()
+            .min_w(0.0)
+            .child(content),
+    );
     let main = col()
+        .key("book-main")
         .grow(1.0)
         .h_full()
         .min_w(0.0)
@@ -111,13 +122,18 @@ fn screen(s: &State, cx: &mut Cx<State>) -> El {
         .child(middle);
 
     let mut shell = row().w_full().h_full();
-    if s.contents_shown() {
-        shell = shell.child(contents::contents(s, &p));
+    if let Some(width) = panes.contents {
+        shell = shell.child(contents::contents(s, &p, width));
     }
     shell = shell.child(main);
     // The new-Chapter page has no Terms or Suggestions yet: it gets the room.
-    if s.context_shown() {
-        shell = shell.child(context::context(s, &p));
+    if let Some(width) = panes.context {
+        shell = shell.child(context::context(s, &p, width));
+    }
+    for side in [Sidebar::Contents, Sidebar::Context] {
+        if let Some(grip) = sidebar::grip(s, &p, side, panes.width(side)) {
+            shell = shell.child(grip);
+        }
     }
 
     // Pages change in place: switching screens, Chapters or panels never fades or slides.

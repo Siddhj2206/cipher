@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs every headless GUI check from the checked-in fixture, so it needs no Test-Books/.
-# Imports tests/fixtures/the-quiet-tower into a temporary Book, runs check-queue, check-fix and
-# check-desktop on it and check-shelf on the fixture folder. One line per check; exits non-zero
+# Imports tests/fixtures/the-quiet-tower into a temporary Book and runs the checks below.
+# One line per check; exits non-zero
 # if any fails. Usage: scripts/check-all.sh [path/to/cipher] [path/to/cipher-dev]
 set -u
 here=$(cd "$(dirname "$0")" && pwd)
@@ -20,5 +20,6 @@ run() {
 run queue   sh "$here/check-queue.sh"   "$tmp/book.cipher" "$bin"
 run fix     sh "$here/check-fix.sh"     "$tmp/book.cipher" "$bin"
 run desktop sh "$here/check-desktop.sh" "$tmp/book.cipher" "$bin"
+run sidebars sh "$here/check-sidebars.sh" "$tmp/book.cipher" "$bin"
 run shelf   sh "$here/check-shelf.sh"   "$fixture" "$bin"
 exit $failed
