@@ -14,22 +14,25 @@ fn marker_heading(block: &str) -> Option<i64> {
     (lower.starts_with("chapter")
         || lower.starts_with("ch.")
         || line.starts_with(['제', '第'])
-        || rest.is_empty()
-        || (block.trim_start().starts_with('#')
-            && rest
-                .chars()
-                .all(|c| c.is_whitespace() || matches!(c, '.' | ':' | ')')))
+        || (rest.is_empty() && !block.trim_start().starts_with('#'))
         || rest.starts_with(['화', '話', '章', '장', '回']))
     .then_some(number)
 }
 
-fn titled_markdown_level(block: &str) -> Option<usize> {
-    heading::chapter_heading(block)?.title?;
+fn markdown_heading_level(block: &str) -> Option<usize> {
+    let heading = heading::chapter_heading(block)?;
     if marker_heading(block).is_some() {
         return None;
     }
     let level = block.trim_start().chars().take_while(|&c| c == '#').count();
-    (level > 0).then_some(level)
+    let line = block.trim().trim_start_matches('#').trim();
+    let rest = line.trim_start_matches(|c: char| c.is_ascii_digit());
+    (level > 0
+        && (heading.title.is_some()
+            || rest
+                .chars()
+                .all(|c| c.is_whitespace() || matches!(c, '.' | ':' | ')'))))
+    .then_some(level)
 }
 
 fn insertion_order<'a>(parts: &[&'a IntakePart], ordered: &mut Vec<&'a IntakePart>) {
@@ -82,13 +85,16 @@ impl Library {
     /// Splits only at numbered heading Blocks, leaving single-Chapter reading unchanged.
     pub fn intakes(&self, text: &str) -> Vec<Intake> {
         let blocks = blocks::split(text);
-        let level = blocks.iter().filter_map(|b| titled_markdown_level(b)).min();
+        let level = blocks
+            .iter()
+            .filter_map(|b| markdown_heading_level(b))
+            .min();
         let heads: Vec<_> = blocks
             .iter()
             .enumerate()
             .filter_map(|(i, b)| {
                 (marker_heading(b).is_some()
-                    || level.is_some_and(|level| titled_markdown_level(b) == Some(level)))
+                    || level.is_some_and(|level| markdown_heading_level(b) == Some(level)))
                 .then_some(i)
             })
             .collect();

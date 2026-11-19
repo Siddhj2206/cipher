@@ -1027,7 +1027,7 @@ fn titled_markdown_subsections_stay_inside_the_shallowest_chapters() {
     assert_eq!(
         lib.intakes("# 321: The Gate\n\nOpening.\n\n### 322\n\nNext.")
             .len(),
-        2
+        1
     );
 }
 
@@ -1190,12 +1190,12 @@ fn appended_explicit_numbers_conflict_with_restored_automatic_numbers() {
 }
 
 #[test]
-fn punctuated_bare_markdown_numbers_split_at_any_heading_level() {
+fn punctuated_bare_markdown_numbers_split_at_the_same_heading_level() {
     let dir = tempfile::tempdir().unwrap();
     let lib = Library::from_book(book(&dir)).unwrap();
     for hashes in ["#", "###"] {
         for punctuation in [".", ":", ")"] {
-            let text = format!("# 321\n\nFirst.\n\n{hashes} 322{punctuation}\n\nSecond.");
+            let text = format!("{hashes} 321\n\nFirst.\n\n{hashes} 322{punctuation}\n\nSecond.");
             let parts = lib.intakes(&text);
             assert_eq!(parts.len(), 2, "{hashes} 322{punctuation}");
             assert_eq!(parts[1].number, Some(322));
@@ -1205,6 +1205,29 @@ fn punctuated_bare_markdown_numbers_split_at_any_heading_level() {
     }
     let plain = "321\n\nFirst.\n\n322.\n\nSecond.";
     assert_eq!(lib.intakes(plain), vec![lib.intake(plain).unwrap()]);
+}
+
+#[test]
+fn bare_markdown_chapters_set_the_depth_for_titled_subsections() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 1, &["Existing chapter one."]);
+    let lib = Library::from_book(b).unwrap();
+    for first in ["# 321", "# 321.", "# 321:", "# 321)"] {
+        let text = format!("{first}\n\nOpening.\n\n## 1. Arrival\n\nAt the gate.");
+        assert_eq!(
+            lib.intakes(&text),
+            vec![lib.intake(&text).unwrap()],
+            "{first}"
+        );
+        let plan = lib.intake_plan(&[], &text);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].intake.number, Some(321));
+        assert!(plan[0].include);
+    }
+    let parts = lib.intakes("# 321\n\nFirst.\n\n# 322.\n\nSecond.");
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1].number, Some(322));
 }
 
 #[test]
