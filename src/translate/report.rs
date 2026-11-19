@@ -300,7 +300,6 @@ mod tests {
             glossary_profile: Some("cheap".to_string()),
             provider: "gemini".to_string(),
             model: "gemini-2.5-flash".to_string(),
-            options: None,
         }
     }
 

@@ -247,6 +247,9 @@ cipher doctor my-book
 ```
 
 Without a book directory, `doctor` checks global configuration.
+Failing checks (including malformed `cipher.toml`, invalid book layout, and invalid
+configured profiles) exit non-zero. An absent profile is informational, so a newly
+initialized book can still pass.
 With a book directory, it checks book layout and effective profile resolution.
 
 ## Errors and exit codes
@@ -255,13 +258,21 @@ Errors carry a stable code and exit status so scripts can react to failure class
 
 | Code | Meaning | Exit |
 | ---- | ------- | ---- |
-| E001 | Global/book config read or parse failed | 2 |
+| E001 | Global/book config read or parse failed | 78 |
 | E002 | I/O failure | 3 |
 | E003 | Profile not found | 5 |
 | E004 | Glossary JSON failure | 6 |
 | E005 | Provider (API key, client, request) | 4 |
 | E006 | Invalid input or usage | 1 |
 | E007 | Corrupt `.cipher` state | 70 |
+| E008 | Internal invariant failure | 71 |
+| E009 | User cancelled | 130 |
+
+Clap argument/usage errors exit **2**; help and version requests exit **0**.
+Interactive cancellation prints `Cancelled` and exits **130**. Interrupted translation
+runs also exit **130**, preserving completed chapters and leaving `finished_at` unset.
+Run metadata no longer writes the unused `options` field; existing `run.json` files
+containing it remain readable (formal versioned migration is tracked in #101).
 
 Every error code maps to a distinct exit code. `cipher translate` also exits with code **8** when the run completes but one or more chapters failed — distinct from every E00N error exit code, so scripts can distinguish a partial-failure run from a fatal error. Errors print as `[E00N] message` (validation errors print as the bare message) with an optional `suggestion:` line. Commands invoked with `--json` emit the typed error envelope `{"error": {"code", "message", "exit_code"}}` on stdout instead of the human-readable text. See `docs/adr/0003-structured-error-system.md` for details.
 

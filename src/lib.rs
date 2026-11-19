@@ -193,7 +193,7 @@ pub enum ProfileCommands {
         #[arg(long)]
         api_key_file: Option<PathBuf>,
         /// Set as default profile
-        #[arg(long)]
+        #[arg(long, num_args = 0..=1, default_missing_value = "true")]
         set_default: Option<bool>,
         /// Disable interactive prompts (fail if required flags are missing)
         #[arg(long = "no-input")]
@@ -318,8 +318,7 @@ fn run_doctor_command(book_dir: Option<PathBuf>) -> Result<()> {
     let config = load_global_config()?;
 
     if let Some(dir) = book_dir {
-        book::doctor::run_book_doctor(&dir, &config);
-        Ok(())
+        book::doctor::run_book_doctor(&dir, &config)
     } else {
         config::profile::run_global_doctor(&config)
     }
@@ -406,7 +405,7 @@ pub fn exit_with_error(err: Error) -> ! {
         std::process::exit(err.exit_code())
     }
     match &err {
-        Error::Validation { .. } => output::stderr_error(format_args!("{err}")),
+        Error::Validation { .. } | Error::Cancelled => output::stderr_error(format_args!("{err}")),
         _ => output::stderr_error(format_args!("[{}] {}", err.code(), err)),
     }
     if let Some(suggestion) = err.suggestion() {

@@ -24,16 +24,6 @@ pub struct RunMetadata {
     pub glossary_profile: Option<String>,
     pub provider: String,
     pub model: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub options: Option<RunOptions>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct RunOptions {
-    pub overwrite: bool,
-    pub fail_fast: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rerun_mode: Option<crate::RerunMode>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -107,12 +97,7 @@ pub struct RunSummary {
 }
 
 impl RunMetadata {
-    pub fn new(
-        profile: String,
-        provider: String,
-        model: String,
-        options: Option<RunOptions>,
-    ) -> Self {
+    pub fn new(profile: String, provider: String, model: String) -> Self {
         let now = now_rfc3339();
 
         Self {
@@ -125,7 +110,6 @@ impl RunMetadata {
             glossary_profile: None,
             provider,
             model,
-            options,
         }
     }
 
@@ -387,16 +371,7 @@ mod tests {
     #[test]
     fn test_run_metadata_roundtrip() {
         let dir = tempfile::tempdir().unwrap();
-        let mut metadata = RunMetadata::new(
-            "test-profile".into(),
-            "openai".into(),
-            "gpt-4".into(),
-            Some(RunOptions {
-                overwrite: true,
-                fail_fast: false,
-                rerun_mode: None,
-            }),
-        );
+        let mut metadata = RunMetadata::new("test-profile".into(), "openai".into(), "gpt-4".into());
         metadata.mark_finished();
 
         save_run_metadata(dir.path(), &metadata).unwrap();
@@ -407,6 +382,29 @@ mod tests {
         assert_eq!(loaded.model, "gpt-4");
         assert!(loaded.finished_at.is_some());
         assert!(loaded.updated_at >= loaded.started_at);
+    }
+
+    #[test]
+    fn legacy_run_options_load_but_are_not_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let metadata = RunMetadata::new("p".into(), "openai".into(), "model".into());
+        let mut legacy = serde_json::to_value(&metadata).unwrap();
+        legacy["options"] = serde_json::json!({
+            "overwrite": true, "fail_fast": false, "rerun_mode": "all"
+        });
+        std::fs::create_dir_all(dir.path().join(".cipher")).unwrap();
+        std::fs::write(
+            dir.path().join(".cipher/run.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let loaded = load_run_metadata(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.profile, "p");
+        save_run_metadata(dir.path(), &loaded).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.path().join(".cipher/run.json")).unwrap())
+                .unwrap();
+        assert!(saved.get("options").is_none());
     }
 
     #[test]
@@ -531,7 +529,7 @@ mod tests {
     #[test]
     fn test_temp_file_cleaned_up_after_save() {
         let dir = tempfile::tempdir().unwrap();
-        let metadata = RunMetadata::new("p".into(), "provider".into(), "model".into(), None);
+        let metadata = RunMetadata::new("p".into(), "provider".into(), "model".into());
         let path = BookPaths::resolve(dir.path()).run_json();
 
         save_run_metadata(dir.path(), &metadata).unwrap();

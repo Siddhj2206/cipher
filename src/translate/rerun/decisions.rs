@@ -1194,7 +1194,6 @@ mod tests {
             "default".to_string(),
             "openai".to_string(),
             "gpt-test".to_string(),
-            None,
         );
 
         checkpoint_chapter_progress(dir.path(), &mut run_metadata, &chapter_state).unwrap();

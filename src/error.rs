@@ -1,6 +1,6 @@
 //! Structured error type for cipher.
 //!
-//! Codes E001–E007 are a public API contract — stable strings that are never
+//! Codes E001–E009 are a public API contract — stable strings that are never
 //! removed or repurposed across releases (only deprecated and replaced).
 
 use crate::config::ProviderKind;
@@ -13,7 +13,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// distinguish a completed-but-partially-failed run from a fatal error.
 pub const PARTIAL_FAILURE_EXIT_CODE: i32 = 8;
 
-/// Stable error-code constants (E001–E007). These are the single source of
+/// Stable error-code constants (E001–E009). These are the single source of
 /// truth referenced by both [`Error::code`] and chapter-level report errors.
 pub const CODE_CONFIG: &str = "E001";
 pub const CODE_IO: &str = "E002";
@@ -22,18 +22,22 @@ pub const CODE_GLOSSARY: &str = "E004";
 pub const CODE_PROVIDER: &str = "E005";
 pub const CODE_VALIDATION: &str = "E006";
 pub const CODE_STATE: &str = "E007";
+pub const CODE_INTERNAL: &str = "E008";
+pub const CODE_CANCELLED: &str = "E009";
 
 /// Structured error type for cipher.
 ///
 /// | Code  | Domain                    | Exit code |
 /// |-------|---------------------------|-----------|
-/// | E001  | Configuration             | 2         |
+/// | E001  | Configuration             | 78        |
 /// | E002  | I/O                       | 3         |
 /// | E003  | Profile                   | 5         |
 /// | E004  | Glossary                  | 6         |
 /// | E005  | Translation / Provider    | 4         |
 /// | E006  | Validation                | 1         |
 /// | E007  | State                     | 70        |
+/// | E008  | Internal invariant        | 71        |
+/// | E009  | Cancelled                 | 130       |
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     /// E001 — Configuration
@@ -60,9 +64,15 @@ pub enum Error {
     #[error("{message}")]
     Validation { message: String },
 
-    /// E007 — State / internal invariant
+    /// E007 — State
     #[error("state error: {0}")]
     State(String),
+
+    #[error("internal error: {0}")]
+    Internal(String),
+
+    #[error("Cancelled")]
+    Cancelled,
 }
 
 impl Clone for Error {
@@ -80,6 +90,8 @@ impl Clone for Error {
                 message: message.clone(),
             },
             Error::State(s) => Error::State(s.clone()),
+            Error::Internal(s) => Error::Internal(s.clone()),
+            Error::Cancelled => Error::Cancelled,
         }
     }
 }
@@ -94,18 +106,22 @@ impl Error {
             Error::Provider { .. } => CODE_PROVIDER,
             Error::Validation { .. } => CODE_VALIDATION,
             Error::State(_) => CODE_STATE,
+            Error::Internal(_) => CODE_INTERNAL,
+            Error::Cancelled => CODE_CANCELLED,
         }
     }
 
     pub fn exit_code(&self) -> i32 {
         match self {
-            Error::Config(_) => 2,
+            Error::Config(_) => 78,
             Error::Io(_) => 3,
             Error::ProfileNotFound { .. } => 5,
             Error::Glossary(_) => 6,
             Error::Provider { .. } => 4,
             Error::Validation { .. } => 1,
             Error::State(_) => 70,
+            Error::Internal(_) => 71,
+            Error::Cancelled => 130,
         }
     }
 
@@ -121,7 +137,8 @@ impl Error {
                 Some("Run 'cipher profile test' to check your API key and model settings.")
             }
             Error::Validation { .. } => Some("Fix the reported issue and try again."),
-            Error::State(_) => {
+            Error::Cancelled => None,
+            Error::State(_) | Error::Internal(_) => {
                 Some("This looks like an internal error — rerun with --verbose and report it.")
             }
         }
@@ -164,12 +181,16 @@ mod tests {
                 message: "no chapters found".to_string(),
             },
             Error::State("corrupt state file".into()),
+            Error::Internal("invalid selection".into()),
+            Error::Cancelled,
         ]
     }
 
     #[test]
     fn codes_follow_contract() {
-        let expected = ["E001", "E002", "E003", "E004", "E005", "E006", "E007"];
+        let expected = [
+            "E001", "E002", "E003", "E004", "E005", "E006", "E007", "E008", "E009",
+        ];
         for (err, code) in sample_errors().into_iter().zip(expected) {
             assert_eq!(err.code(), code, "for {err:?}");
         }
@@ -177,7 +198,7 @@ mod tests {
 
     #[test]
     fn exit_codes_follow_table() {
-        let expected = [2, 3, 5, 6, 4, 1, 70];
+        let expected = [78, 3, 5, 6, 4, 1, 70, 71, 130];
         for (err, code) in sample_errors().into_iter().zip(expected) {
             assert_eq!(err.exit_code(), code, "for {err:?}");
         }
@@ -186,6 +207,7 @@ mod tests {
     #[test]
     fn partial_failure_exit_code_is_distinct_from_all_error_exit_codes() {
         for err in sample_errors() {
+            assert_ne!(err.exit_code(), 2, "clap reserves exit 2");
             assert_ne!(
                 PARTIAL_FAILURE_EXIT_CODE,
                 err.exit_code(),
@@ -198,7 +220,7 @@ mod tests {
 
     #[test]
     fn suggestions_cover_all_variants() {
-        let expected = [true, true, true, true, true, true, true];
+        let expected = [true, true, true, true, true, true, true, true, false];
         for (err, has) in sample_errors().into_iter().zip(expected) {
             assert_eq!(err.suggestion().is_some(), has, "for {err:?}");
         }

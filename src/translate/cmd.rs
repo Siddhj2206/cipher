@@ -8,8 +8,8 @@ use crate::output::{
     stderr_detail_kv, stderr_status, stderr_warn, verbose_detail, verbose_detail_kv,
 };
 use crate::state::{
-    ChapterState, GlossaryState, RunMetadata, RunOptions, load_all_chapter_states,
-    load_glossary_state, save_run_metadata,
+    ChapterState, GlossaryState, RunMetadata, load_all_chapter_states, load_glossary_state,
+    save_run_metadata,
 };
 use crate::translate::orchestrate::{
     ChapterContext, ChapterPaths, ChapterResult, Translators, checkpoint_chapter_progress,
@@ -263,17 +263,10 @@ async fn translate_book_inner(book_dir: &Path, options: TranslateOptions) -> Res
         ));
     }
 
-    let run_options = RunOptions {
-        overwrite: options.overwrite,
-        fail_fast: options.fail_fast,
-        rerun_mode: options.rerun.clone(),
-    };
-
     let mut run_metadata = RunMetadata::new(
         profile_names.translation_name.to_string(),
         profile.provider.clone(),
         profile.model.clone(),
-        Some(run_options),
     )
     .with_task_profiles(
         (profile_names.repair_name != profile_names.translation_name)
@@ -591,12 +584,16 @@ fn finalize_run(
         failed,
     )?;
 
-    run_metadata.mark_finished();
+    if !cancelled {
+        run_metadata.mark_finished();
+    }
     save_run_metadata(book_dir, &run_metadata)?;
 
     if output::is_json() {
         return Ok((
-            if failed > 0 {
+            if cancelled {
+                Error::Cancelled.exit_code()
+            } else if failed > 0 {
                 crate::error::PARTIAL_FAILURE_EXIT_CODE
             } else {
                 0
@@ -660,7 +657,9 @@ fn finalize_run(
     }
 
     Ok((
-        if failed > 0 {
+        if cancelled {
+            Error::Cancelled.exit_code()
+        } else if failed > 0 {
             crate::error::PARTIAL_FAILURE_EXIT_CODE
         } else {
             0
@@ -732,7 +731,6 @@ mod tests {
             "default".to_string(),
             "gemini".to_string(),
             "gemini-2.5-flash".to_string(),
-            None,
         )
     }
 
@@ -740,7 +738,7 @@ mod tests {
         GlossaryState::new(InjectionMode::Smart, BTreeMap::new())
     }
 
-    fn finalize_for_failed_count(failed: usize) -> i32 {
+    fn finalize_for_outcome(failed: usize, cancelled: bool) -> i32 {
         let dir = tempfile::tempdir().unwrap();
         let raw_dir = dir.path().join("raw");
         let out_dir = dir.path().join("tl");
@@ -762,13 +760,13 @@ mod tests {
             0,
             &TranslationUsage::default(),
             run_metadata_sample(),
-            false,
+            cancelled,
         )
         .unwrap();
 
         assert!(
-            metadata.finished_at.is_some(),
-            "run must be marked finished"
+            metadata.finished_at.is_some() != cancelled,
+            "only uninterrupted runs must be marked finished"
         );
         exit_code
     }
@@ -776,13 +774,19 @@ mod tests {
     #[test]
     fn finalize_run_exits_partial_failure_code_when_chapters_failed() {
         assert_eq!(
-            finalize_for_failed_count(1),
+            finalize_for_outcome(1, false),
             crate::error::PARTIAL_FAILURE_EXIT_CODE
         );
     }
 
     #[test]
     fn finalize_run_exits_0_when_nothing_failed() {
-        assert_eq!(finalize_for_failed_count(0), 0);
+        assert_eq!(finalize_for_outcome(0, false), 0);
+    }
+
+    #[test]
+    fn finalize_cancelled_run_exits_130_even_with_failures() {
+        assert_eq!(finalize_for_outcome(0, true), 130);
+        assert_eq!(finalize_for_outcome(1, true), 130);
     }
 }

@@ -27,11 +27,39 @@ fn handle_inquire_error<T>(result: std::result::Result<T, InquireError>) -> Resu
     match result {
         Ok(val) => Ok(val),
         Err(InquireError::OperationInterrupted | InquireError::OperationCanceled) => {
-            std::process::exit(0);
+            Err(Error::Cancelled)
         }
         Err(e) => Err(Error::Validation {
             message: format!("Failed to read input: {e}"),
         }),
+    }
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+
+    #[test]
+    fn cancellation_is_propagated() {
+        for error in [
+            InquireError::OperationCanceled,
+            InquireError::OperationInterrupted,
+        ] {
+            assert!(matches!(
+                handle_inquire_error::<()>(Err(error)),
+                Err(Error::Cancelled)
+            ));
+        }
+    }
+
+    #[test]
+    fn input_results_are_preserved() {
+        assert_eq!(handle_inquire_error(Ok("")).unwrap(), "");
+        assert_eq!(handle_inquire_error(Ok("answer")).unwrap(), "answer");
+        assert!(matches!(
+            handle_inquire_error::<()>(Err(InquireError::NotTTY)),
+            Err(Error::Validation { .. })
+        ));
     }
 }
 
@@ -56,7 +84,7 @@ pub fn prompt_select(prompt: &str, items: &[&str]) -> Result<usize> {
     items
         .iter()
         .position(|&x| x == result)
-        .ok_or_else(|| Error::State("Selected item not found in list".to_string()))
+        .ok_or_else(|| Error::Internal("Selected item not found in list".to_string()))
 }
 
 pub fn prompt_confirm(prompt: &str, default: bool) -> Result<bool> {
@@ -78,9 +106,7 @@ pub fn prompt_profile_name(config: &GlobalConfig) -> Result<String> {
                 false,
             )?;
             if !overwrite {
-                return Err(Error::Validation {
-                    message: "Cancelled.".to_string(),
-                });
+                return Err(Error::Cancelled);
             }
         }
 
@@ -159,9 +185,7 @@ fn create_openai_compatible_provider(config: &mut GlobalConfig) -> Result<String
                 false,
             )?;
             if !overwrite {
-                return Err(Error::Validation {
-                    message: "Cancelled.".to_string(),
-                });
+                return Err(Error::Cancelled);
             }
         }
 
@@ -244,8 +268,9 @@ pub fn select_or_create_api_key(
     if let Some(selection) = select_existing_api_key(provider_keys)? {
         let key = &provider_keys[selection];
         if key.name.is_none() {
-            let label = prompt_key_label(provider_keys, true)?
-                .ok_or_else(|| Error::State("Key label required but not provided".to_string()))?;
+            let label = prompt_key_label(provider_keys, true)?.ok_or_else(|| {
+                Error::Internal("Key label required but not provided".to_string())
+            })?;
             provider_keys[selection].name = Some(label.clone());
             Ok(Some(label))
         } else {

@@ -2,9 +2,10 @@ use std::path::Path;
 
 use crate::book::BookLayout;
 use crate::config::{self, GlobalConfig};
+use crate::error::{Error, Result};
 use crate::output::{detail, detail_kv, section, status};
 
-pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
+pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) -> Result<()> {
     let layout = BookLayout::discover(dir);
 
     section("Book doctor");
@@ -73,12 +74,19 @@ pub fn run_book_doctor(dir: &Path, config: &GlobalConfig) {
         }
     }
 
-    print_profile_info(&layout, config);
+    let profiles_valid = print_profile_info(&layout, config)?;
+    if !layout.is_valid_book() || !profiles_valid {
+        return Err(Error::Validation {
+            message: "Doctor checks failed".into(),
+        });
+    }
+    Ok(())
 }
 
-fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
+fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) -> Result<bool> {
     status("Profile configuration");
-    let book_config = crate::book::load_book_config(&layout.paths.config_toml).unwrap_or_default();
+    let book_config = crate::book::load_book_config(&layout.paths.config_toml)?;
+    let mut valid = true;
     let profile_name = config.effective_profile_name(book_config.profile.as_deref());
     let repair_profile_name = book_config.repair_profile.as_deref().or(profile_name);
     let glossary_profile_name = book_config.glossary_profile.as_deref().or(profile_name);
@@ -107,6 +115,7 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
                 if validation.is_valid() {
                     detail("Profile configuration is valid");
                 } else {
+                    valid = false;
                     detail("Profile configuration has errors");
                     for err in &validation.errors {
                         detail(err);
@@ -123,6 +132,7 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
                         if validation.is_valid() {
                             detail_kv(label, format!("{} is valid", profile_name));
                         } else {
+                            valid = false;
                             detail_kv(label, format!("{} has errors", profile_name));
                             for err in &validation.errors {
                                 detail(err);
@@ -132,6 +142,7 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
                 }
             }
             None => {
+                valid = false;
                 detail_kv("Profile", format!("{} (not found)", name));
                 if book_config.profile.is_some() {
                     detail("Profile is set in book config");
@@ -142,6 +153,7 @@ fn print_profile_info(layout: &BookLayout, config: &GlobalConfig) {
         detail("No profile configured");
         detail("Run: cipher profile new");
     }
+    Ok(valid)
 }
 
 fn format_path_status(path: &Path, exists: bool) -> String {

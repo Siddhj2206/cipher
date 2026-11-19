@@ -344,6 +344,7 @@ pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
         if config_path.exists() { "yes" } else { "no" },
     );
 
+    let mut valid = true;
     if config_path.exists() {
         detail_kv("Providers", config.providers.len());
         detail_kv("Profiles", config.profiles.len());
@@ -355,6 +356,7 @@ pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
             section("Profile validation");
             for name in config.profiles.keys() {
                 let validation = validate_profile(config, name);
+                valid &= validation.is_valid();
                 detail_kv(
                     name,
                     if validation.is_valid() {
@@ -367,6 +369,11 @@ pub fn run_global_doctor(config: &GlobalConfig) -> Result<()> {
         }
     }
 
+    if !valid {
+        return Err(Error::Validation {
+            message: "Doctor checks failed".into(),
+        });
+    }
     Ok(())
 }
 

@@ -4,6 +4,93 @@ fn cipher_binary() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cipher"))
 }
 
+#[test]
+fn clap_usage_errors_exit_2() {
+    let home = temp_dir();
+    let output = isolated_command(&home)
+        .arg("--unknown-flag")
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn doctor_rejects_broken_book_config_and_invalid_layout() {
+    let home = temp_dir();
+    let book = book_with_chapter(&home, "broken");
+    std::fs::write(book.join("cipher.toml"), "[[invalid").unwrap();
+    let output = isolated_command(&home)
+        .arg("doctor")
+        .arg(&book)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(78));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cipher.toml"));
+    let output = isolated_command(&home)
+        .arg("doctor")
+        .arg(home.path().join("missing"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
+fn doctor_rejects_invalid_profiles() {
+    let home = temp_dir();
+    write_global_config(
+        &home,
+        "default_profile = 'bad'\n[profiles.bad]\nprovider = 'missing'\nmodel = 'model'\n",
+    );
+    let book = book_with_chapter(&home, "book");
+    for book_dir in [None, Some(&book)] {
+        let mut command = isolated_command(&home);
+        command.arg("doctor");
+        if let Some(dir) = book_dir {
+            command.arg(dir);
+        }
+        let output = command.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+    }
+}
+
+#[test]
+fn set_default_accepts_bare_flag_and_explicit_booleans() {
+    let home = temp_dir();
+    let key_file = home.path().join("test-key");
+    std::fs::write(&key_file, "fake-test-key").unwrap();
+    for (name, value, expected) in [
+        ("first", None, "first"),
+        ("second", Some("false"), "first"),
+        ("third", Some("true"), "third"),
+    ] {
+        let mut command = isolated_command(&home);
+        command
+            .args([
+                "profile",
+                "new",
+                "--no-input",
+                "--name",
+                name,
+                "--provider",
+                "openai",
+                "--model",
+                "test",
+                "--api-key-file",
+            ])
+            .arg(&key_file)
+            .arg("--set-default");
+        if let Some(value) = value {
+            command.arg(value);
+        }
+        let output = command.output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let config =
+            std::fs::read_to_string(home.path().join("config/cipher/config.toml")).unwrap();
+        let config: toml::Value = toml::from_str(&config).unwrap();
+        assert_eq!(config["default_profile"].as_str(), Some(expected));
+    }
+}
+
 fn temp_dir() -> tempfile::TempDir {
     tempfile::tempdir().expect("Failed to create temp dir")
 }
@@ -601,7 +688,7 @@ fn translate_with_malformed_book_config_fails_with_e001() {
         .output()
         .expect("translate failed");
 
-    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(output.status.code(), Some(78));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("[E001]"), "got: {stderr}");
 }
