@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::sidebars::Sidebar;
+
 /// Light, dark, or whatever the desktop says.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -125,6 +127,8 @@ pub struct Prefs {
     pub window: WindowState,
     pub contents_open: bool,
     pub context_open: bool,
+    pub contents_width: f32,
+    pub context_width: f32,
     /// Open the Book that was open when the app last closed, instead of the Shelf.
     pub reopen_last: bool,
     pub last_book: Option<PathBuf>,
@@ -142,6 +146,8 @@ impl Default for Prefs {
             window: WindowState::default(),
             contents_open: true,
             context_open: true,
+            contents_width: Sidebar::Contents.default_width(),
+            context_width: Sidebar::Context.default_width(),
             reopen_last: true,
             last_book: None,
             shelf_sort: ShelfSort::Recent,
@@ -209,6 +215,8 @@ mod tests {
         assert_eq!(p.reading.size, 21.0);
         assert_eq!(p.reading.width, Reading::default().width);
         assert!(p.contents_open);
+        assert_eq!(p.contents_width, Sidebar::Contents.default_width());
+        assert_eq!(p.context_width, Sidebar::Context.default_width());
     }
 
     #[test]
@@ -217,6 +225,8 @@ mod tests {
         let path = dir.path().join("sub/prefs.json");
         let p = Prefs {
             appearance: Appearance::Light,
+            contents_width: 318.0,
+            context_width: 396.0,
             window: WindowState {
                 maximized: true,
                 ..WindowState::default()

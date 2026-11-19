@@ -42,6 +42,8 @@ pub enum Msg {
     Scanned(Result<crate::library::Scan, String>),
     /// The models an Endpoint's plan offers: (Endpoint id, slugs).
     ModelsListed(String, Result<Vec<String>, String>),
+    /// An API-key Endpoint's model list, for the form `id` asking that protocol and base URL.
+    ModelsFetched(String, crate::settings::Source, Result<Vec<String>, String>),
     /// How many Chapters an old import's Pairs were re-paired in.
     Realigned(Result<usize, String>),
     /// How the Book names a Term (`Library::evidence`), for the Library generation it was
@@ -53,6 +55,10 @@ pub enum Msg {
     ),
     /// A folder import finished: the new Book and what it holds, or why it failed.
     Imported(Result<(std::path::PathBuf, cipher_engine::ImportReport), String>),
+    ShowInFiles {
+        source: crate::home::FilesSource,
+        result: Result<(), String>,
+    },
 }
 
 /// Sends to the app from any thread and wakes its event loop.
@@ -244,7 +250,11 @@ impl crate::state::State {
                 Msg::SignedIn(result) => self.on_signed_in(result),
                 Msg::OpenUrl(url) => self.open_url(tx, &url),
                 Msg::Imported(result) => self.on_imported(result),
+                Msg::ShowInFiles { source, result } => self.on_show_in_files(source, result),
                 Msg::ModelsListed(id, result) => self.on_models_listed(id, result),
+                Msg::ModelsFetched(id, source, result) => {
+                    self.on_models_fetched(id, source, result)
+                }
                 Msg::Realigned(Ok(0)) => {}
                 Msg::Realigned(Ok(n)) => self.on_realigned(n),
                 Msg::Realigned(Err(e)) => {

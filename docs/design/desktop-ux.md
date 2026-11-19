@@ -24,6 +24,7 @@ The home screen: `cipher` opens here, and the library icon at the top of the con
 
 ![New book](img/shelf-new.png)
 - **"⋯" on a cover (on hover), or right-clicking it,** opens Open, Show in Files, Rename… and Move to Trash… (Remove from shelf for a Book from elsewhere, which never deletes the file); Rename and Remove confirm in the label's place.
+- **Show in Files** selects the Book in the system file manager on Linux and macOS where supported, or opens its containing folder. The Shelf's Show folder and Settings › General › Books folder open the Shelf folder in the file manager. If it can't open, the control's screen shows an error.
 - **Header** (it drags the window): the Cipher wordmark, a Search books field (filters by title; no match says so), bordered Import (a folder) and Open (a .cipher file) buttons and a filled New book button (Ctrl+N), Endpoints and models, Settings, and the theme toggle. Without an XDG file chooser portal, Import and Open ask for a typed path in a sheet.
 - **Above the shelf:** "Continue *Title* | Chapter N →" on one baseline, a hover-lit button, for the Book read last, then the count of Books and a Recent / Title sort (remembered).
 - **Labels** read "Chapter N of M" once a Book has been read.
@@ -33,6 +34,12 @@ The home screen: `cipher` opens here, and the library icon at the top of the con
 - **Dropping** a `.cipher` file on the window opens it (it joins the Shelf); dropping a folder imports it.
 
 An empty Book opens on the page for its first chapter (Adding chapters).
+
+## History
+
+Open History beside Style in Contents, with Ctrl+H, or the palette's “History — Undo translations, reviews and edits”. It reads the latest 200 Revisions from the Book, newest first, including work from earlier sessions. Each row shows its label, kind, age and a greyed “Undone” marker. Up/Down selects; Tab and Enter reach and activate actions; Esc returns to reading.
+
+The selected Revision previews affected Chapters (links back to reading), change counts in plain words and rows changed since, grouped by Chapter. Translation, added Chapter, Import (including re-pair), and Undo Revisions are all-or-nothing: conflicts disable Undo and explain why. Reviews, Hand Edits, Glossary, Suggestions and Notes offer “Undo what's unchanged” when needed. Undo rechecks conflicts transactionally, reports its result in a toast and refreshes both history and the Book's reading data. An Undo Revision can itself be undone to redo.
 
 ## Welcome
 
@@ -53,9 +60,9 @@ Three columns, each with a 52px header row so the headers line up.
 **Contents (left, 272px, Ctrl+\\)**
 - **Header:** the Book title (serif italic) and a hide button.
 - **Progress:** one hairline bar (translated in ink3, waiting in amber) and the line "92 translated · 2 waiting · 94 chapters".
-- **Pages:** Reading, Cast & terms (with its drifting count), Style, Book notes and New chapter (Ctrl N).
+- **Pages:** Reading, Cast & terms (with its drifting count), Style, Book notes, History (Ctrl H) and New chapter (Ctrl N).
 - **Chapter list:**
-  - each row shows the number in tabular figures, the Chapter's opening line (two lines, serif) and badges;
+  - each row shows the number in tabular figures, the saved Chapter title (or its opening line when untitled; two lines, serif) and badges;
   - badges: a red count of pending Proposed Edits, an amber dot for waiting to translate;
   - the current Chapter has a selected fill and a red number;
   - the list scrolls to follow the current Chapter.
@@ -71,7 +78,9 @@ Three columns, each with a 52px header row so the headers line up.
   - then "In this chapter": every Term in order of first appearance, with its source form, its count here and a red dot if drifting here. A Chapter not translated yet lists "In the source" instead: the Terms its source names, with how often, so the names it will get are visible before translating.
 - **Suggestions tab:** grouped "This chapter" and "Elsewhere". Elsewhere items carry a "ch 231" link to the paragraph.
 
-**Narrow windows:** the reading column shrinks to fit (never under 520 points); when there is no room for both sidebars beside it, the one opened last stays and the other steps aside, its show button in the header. Hiding or showing one is remembered as before.
+**Sidebar widths:** drag an inner divider, or Tab to it and use ← / → to move it (Home sets the minimum width; End uses the available room). Each width is remembered independently and resizing keeps the current reading position.
+
+**Narrow windows:** the sidebars reserve 520 points for the reading column. If both chosen widths don't fit, the last-opened sidebar has priority and can narrow to fit; either can give way when there isn't enough room at the current interface zoom. The show buttons stay in the header, and the chosen widths return when there is room again. At very narrow sizes the page itself shrinks to fit.
 
 **Focus layout:** hide either sidebar and the page takes the room.
 - With the context sidebar hidden, notes move into a 260px page margin beside their paragraph, absolutely positioned so they never push text apart.
@@ -83,7 +92,7 @@ Three columns, each with a 52px header row so the headers line up.
 
 ## The page
 
-- **Opener:** a red tracked label "CHAPTER", the number set at 60px light serif, and a 36px rule. There is no title and no counts.
+- **Opener:** a red tracked label "CHAPTER", the number set at 60px light serif, the saved title when present, and a 36px rule. Untitled Chapters show only the number; there are no counts.
 - **Paragraphs:** serif 18/31 with 18px between paragraphs. A Translation's leading `# Chapter N:` heading Block is not shown, since the opener replaces it.
 - **Glossary Terms:**
   - a faint underline; hover shows the source form and definition as a tooltip, with a tinted background;
@@ -271,7 +280,7 @@ The quick switches (Ctrl+D, the theme item in "Aa") choose the other look; choos
 
 All connection and model setup lives in Settings › Translation; a Book only picks a model.
 - **The list:** every Endpoint, with its URL (or "ChatGPT plan"), its default model and how many more. The default Endpoint says so; the others have Make default. Edit loads one into the form; Remove forgets it and its keychain key (Books that chose it fall back to the default). "+ Add Endpoint" starts a blank form.
-- **The form:** API key (base URL, key, Chat Completions or Responses) or Sign in with ChatGPT; Default model (for a signed-in plan, "Models on your plan" lists the models the backend offers, fetched when the form opens, and one click makes one the default), optional Small model, "More models Books can choose" (comma-separated), reasoning effort chips (Default, Minimal, Low, Medium, High), optional name (else the URL's host, or "ChatGPT").
+- **The form:** API key (base URL, key, Chat Completions or Responses) or Sign in with ChatGPT; Default model (for a signed-in plan, "Models on your plan" lists the models the backend offers, fetched when the form opens, and one click makes one the default; for an API key, Fetch models asks `GET {base URL}/models` with the base URL, key and protocol as typed, saved or not, only when pressed, shows the list as the same chips, narrowed by the Default model field once it runs past 24, and on failure says why with Retry while every model field stays typeable), optional Small model, "More models Books can choose" (comma-separated), reasoning effort chips (Default, Minimal, Low, Medium, High), optional name (else the URL's host, or "ChatGPT").
 - **Test** makes one tiny call with the key as typed and shows the reply, time and tokens. **Save** stores the key in the OS keychain and the rest in `endpoints.json` and restarts the worker. Save is explicit here, unlike the rest of Settings, so a half-typed key is never used. Revert drops what was typed. The first Endpoint saved becomes the default.
 
 **The Book's model:** the reading header shows what the open Book translates with ("api.example.com · model-medium"; amber "Choose a model" when there is no Endpoint; red "Model unavailable" with the reason as tooltip). Clicking it opens a menu: "Default · Endpoint · model", then each Endpoint's models under its name, a check on the chosen one, and "Endpoints and models…" to Settings. The choice is stored in the Book; picking one restarts the worker on it.
@@ -280,7 +289,7 @@ All connection and model setup lives in Settings › Translation; a Book only pi
 
 - **Identity:** app id `app.cipher.Cipher` (Wayland app_id, X11 WM_CLASS, the desktop entry and icon names). One instance: a later launch hands its `file://…/x.cipher` link to the running window, which opens that Book. Desktop entry, MIME type, icons and AppStream data are in `packaging/linux/` (`install.sh` installs them for the user).
 - **Window:** opens at its last size (minimum 760 × 520); the native frame stays (tiling window managers keep control), and the reading and Shelf headers also drag the window, double-click maximising.
-- **Remembered:** appearance, reading type, interface size, the sidebars, the Shelf's sort, the window's size, the open Book (reopened at launch unless turned off) and, per Book in `shelf.json`, the Chapter and the paragraph at the top of the window.
+- **Remembered:** appearance, reading type, interface size, the sidebars' visibility and widths, the Shelf's sort, the window's size, the open Book (reopened at launch unless turned off) and, per Book in `shelf.json`, the Chapter and the paragraph at the top of the window.
 - **Right-click:** a Shelf cover (its menu) and a Chapter in the contents (Open; Translate and Translate all N from here when it waits, Translate again when it is translated, Retry when it failed). Translate again keeps the current translation until the new one is written, says so in a toast, and the header reads "queued to translate again", then its progress.
 - **Toasts** go by themselves after five seconds plus a little per word (ten with Undo); ✕ closes one sooner.
 - **Drop** a Book or a folder anywhere on the window (see Shelf).
@@ -301,5 +310,4 @@ All connection and model setup lives in Settings › Translation; a Book only pi
   - splitting and merging Blocks are explicit commands that adjust Pairs, never Enter or Backspace at a paragraph edge, because Pairs drive every fix.
 - **Per-Chapter token usage** in Endpoint settings or the Chapter header (designed, not built).
 - **Follow the system theme** by default.
-- **Narrow windows:** below about 1,240px the context sidebar closes; below about 1,000px the contents does too.
 - **Later:** phone flags (select text in the Reader, sync down as unresolved Suggestions).

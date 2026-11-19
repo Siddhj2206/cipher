@@ -197,4 +197,14 @@ impl Book {
         }
         Ok(outcome)
     }
+
+    /// Runs the real undo algorithm, including constraint checks, without writing anything.
+    pub fn preview_undo(&mut self, id: RevisionId) -> Result<UndoPreview> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let preview = revision::preview(&tx, id)?;
+        tx.rollback()?;
+        Ok(preview)
+    }
 }

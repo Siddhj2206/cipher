@@ -49,14 +49,25 @@ pub fn drift_panel(s: &State, term: usize, p: &Pal) -> Option<El> {
 
     if let Some(fix) = s.drift_fix(term) {
         let n = crate::library::counts(fix);
+        let metadata = fix
+            .metadata
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.state,
+                    cipher_book::EditState::Pending | cipher_book::EditState::Stale
+                )
+            })
+            .count();
+        let book_only = n.pending == 0 && metadata > 0;
         let id = fix.id;
         let working = fix.state == cipher_book::SuggestionState::Working;
         let line = if working {
             "The model is reading the paragraphs that leave it out.".to_string()
-        } else if n.pending > 0 {
+        } else if n.pending + metadata > 0 {
             format!(
                 "{} to review under Suggestions.",
-                plural(n.pending, "change")
+                plural(n.pending + metadata, "change")
             )
         } else {
             "Nothing left to review.".to_string()
@@ -66,7 +77,7 @@ pub fn drift_panel(s: &State, term: usize, p: &Pal) -> Option<El> {
                 btn(if working { "Show it" } else { "Review" }, true, p)
                     .key(format!("fix-drift{term}"))
                     .on_press_tx(move |s: &mut State, tx| {
-                        if working {
+                        if working || book_only {
                             s.tab = crate::state::Tab::Suggestions;
                             s.show_context();
                         } else {

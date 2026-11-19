@@ -27,7 +27,7 @@ pub fn book_notes(s: &State, p: &Pal) -> El {
                 .child(
                     text("Style rules live on the Style page")
                         .font(SMALL)
-                        .color(p.ink3),
+                        .color(p.ink2),
                 )
                 .child(
                     btn("Open Style", false, p)
@@ -48,7 +48,7 @@ pub fn book_notes(s: &State, p: &Pal) -> El {
         );
     let mut headings = row().w_full().gap(8.0);
     for label in ["Speaker", "Listener", "Source form", "Rendering"] {
-        headings = headings.child(text(label).font(SMALL).color(p.ink3).grow(1.0).w(0.0));
+        headings = headings.child(text(label).font(SMALL).color(p.ink2).grow(1.0).w(0.0));
     }
     body = body.child(headings.child(text("").w(70.0)));
     for (i, form) in edit.forms.iter().enumerate() {
@@ -118,7 +118,7 @@ pub fn book_notes(s: &State, p: &Pal) -> El {
         body = body.child(
             text("No Story Notes yet. Translating a Chapter writes its first note.")
                 .font(SMALL)
-                .color(p.ink3)
+                .color(p.ink2)
                 .wrap(),
         );
     }
@@ -134,7 +134,7 @@ pub fn book_notes(s: &State, p: &Pal) -> El {
                         .child(
                             text(note.origin.clone())
                                 .font(SMALL)
-                                .color(p.ink3)
+                                .color(p.ink2)
                                 .grow(1.0),
                         )
                         .child(
@@ -180,7 +180,7 @@ pub fn book_notes(s: &State, p: &Pal) -> El {
                         .key("notes-revert")
                         .on_press(|s: &mut State| s.revert_notes()),
                 )
-                .child(text("Not saved · Ctrl S").font(SMALL).color(p.ink3)),
+                .child(text("Not saved · Ctrl S").font(SMALL).color(p.ink2)),
         );
     }
     col()

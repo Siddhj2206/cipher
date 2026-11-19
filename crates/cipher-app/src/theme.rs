@@ -53,8 +53,6 @@ pub const SPARK: TextStyle = TextStyle::new(7.5, 400.0)
     .lh(14.0)
     .family(Family::Named("DejaVu Sans Mono"));
 
-pub const LEFT_W: f32 = 272.0;
-pub const RIGHT_W: f32 = 320.0;
 pub const HEADER_H: f32 = 52.0;
 pub const SCRUBBER_W: f32 = 44.0;
 pub const GUTTER_W: f32 = 56.0;
@@ -230,6 +228,11 @@ lucide!(
     r#"<path d="M16 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11l5-5V5a2 2 0 0 0-2-2Z"/><path d="M16 21v-5h5"/>"#
 );
 lucide!(I_UP, "l-chevron-up", r#"<path d="m18 15-6-6-6 6"/>"#);
+lucide!(
+    I_HISTORY,
+    "l-history",
+    r#"<path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>"#
+);
 lucide!(I_DOWN, "l-chevron-down", r#"<path d="m6 9 6 6 6-6"/>"#);
 lucide!(
     I_PLUS,
