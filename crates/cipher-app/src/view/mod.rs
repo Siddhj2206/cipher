@@ -1,6 +1,7 @@
 //! The views: each takes the state and a palette and returns Rune elements. Nothing in here
 //! reads the Book.
 
+mod book_notes;
 mod cast;
 mod contents;
 mod context;
@@ -98,6 +99,7 @@ fn screen(s: &State, cx: &mut Cx<State>) -> El {
         Screen::Cast => cast::cast(s, &p),
         Screen::Draft => draft::draft_page(s, &p),
         Screen::Style => style::style_page(s, &p),
+        Screen::Notes => book_notes::book_notes(s, &p),
         Screen::History => history::history_page(s, &p),
         Screen::Reading => page::reading(s, cx, &p),
     };

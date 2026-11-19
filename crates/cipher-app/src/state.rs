@@ -120,6 +120,7 @@ pub enum Screen {
     Draft,
     /// The Book's style, as one text (`style.rs`).
     Style,
+    Notes,
     History,
 }
 
@@ -216,6 +217,7 @@ pub struct State {
     pub draft: Option<Draft>,
     /// The Style page's text, and what is saved, while it is open.
     pub style: Option<crate::style::StyleEdit>,
+    pub notes: Option<crate::notes::NotesEdit>,
     pub history: crate::history::History,
     /// The Settings window, open at this section.
     pub settings_page: Option<Section>,
@@ -297,6 +299,7 @@ impl State {
             home: None,
             draft: None,
             style: None,
+            notes: None,
             history: Default::default(),
             welcome: None,
             settings_page: None,
@@ -710,7 +713,10 @@ impl State {
 
     /// The new-Chapter page has no Terms or Suggestions yet: it gets the room.
     fn screen_has_context(&self) -> bool {
-        !matches!(self.screen, Screen::Draft | Screen::Style | Screen::History)
+        !matches!(
+            self.screen,
+            Screen::Draft | Screen::Style | Screen::Notes | Screen::History
+        )
     }
 
     /// The reading column: the chosen width, narrowed to what the window leaves.
@@ -896,6 +902,14 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         return false;
+    }
+    if s.screen == Screen::Notes {
+        match &k.key {
+            Key::Command('s') => s.save_notes(),
+            Key::Escape => s.screen = Screen::Reading,
+            _ => return false,
+        }
+        return true;
     }
     if s.screen == Screen::History
         && s.palette.is_none()
