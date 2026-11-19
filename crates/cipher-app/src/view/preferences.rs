@@ -255,7 +255,7 @@ fn general(s: &State, p: &Pal) -> El {
         .map(|h| h.shelf.dir.clone())
         .or_else(Shelf::default_dir)
         .map_or_else(|| "—".to_string(), |d| d.display().to_string());
-    col()
+    let rows = col()
         .w_full()
         .child(setting_row(
             "Appearance",
@@ -322,9 +322,21 @@ fn general(s: &State, p: &Pal) -> El {
             &books,
             btn("Show", false, p)
                 .key("set-books")
-                .on_press_tx(|s: &mut State, tx| s.show_books_folder(tx)),
+                .on_press(|s: &mut State| s.show_books_folder()),
             p,
-        ))
+        ));
+    if let Some(error) = &s.settings_books_error {
+        rows.child(
+            text(error.clone())
+                .key("set-books-error")
+                .font(SMALL)
+                .color(p.red)
+                .wrap_anywhere()
+                .pt(8.0),
+        )
+    } else {
+        rows
+    }
 }
 
 fn reading(s: &State, p: &Pal) -> El {

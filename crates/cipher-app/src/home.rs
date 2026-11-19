@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use rune::{FileDialogOptions, TextEdit, Tx};
 
+use crate::files::{self, Show};
 use crate::fix::Fix;
 use crate::fix::work::Msg;
 use crate::library::Library;
@@ -381,41 +382,55 @@ impl State {
     }
 
     /// Opens the folder Cipher keeps Books in, from Settings.
-    pub fn show_books_folder(&mut self, tx: &mut Tx) {
-        let Some(dir) = self
+    pub fn show_books_folder(&mut self) {
+        self.settings_books_error = None;
+        if let Some(dir) = self
             .home
             .as_ref()
             .map(|h| h.shelf.dir.clone())
             .or_else(Shelf::default_dir)
-        else {
-            return;
-        };
-        let _ = std::fs::create_dir_all(&dir);
-        if tx.open_url(&format!("file://{}", dir.display())).is_err() {
-            self.toast = Some(format!("Could not open {}", dir.display()));
+        {
+            self.show_in_files(dir, Show::Folder, true);
+        } else {
+            self.settings_books_error = Some("Could not locate the Books folder".into());
         }
     }
 
-    /// Shows a Book's folder in the file manager.
-    pub fn reveal_book(&mut self, tx: &mut Tx, path: &Path) {
-        let dir = path.parent().unwrap_or(path);
-        if tx.open_url(&format!("file://{}", dir.display())).is_err() {
-            self.home_error(format!("Could not open {}", dir.display()));
-        }
+    /// Shows a Book in the file manager.
+    pub fn reveal_book(&mut self, path: &Path) {
         if let Some(h) = self.home() {
             h.menu = None;
+            h.error = None;
+            self.show_in_files(path.to_path_buf(), Show::Book, false);
         }
     }
 
     /// Opens the Shelf's folder in the file manager.
-    pub fn show_folder(&mut self, tx: &mut Tx) {
+    pub fn show_folder(&mut self) {
         let Some(h) = self.home() else { return };
+        h.error = None;
         let dir = h.shelf.dir.clone();
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            return h.error = Some(format!("Could not make {}: {e}", dir.display()));
+        self.show_in_files(dir, Show::Folder, false);
+    }
+
+    fn show_in_files(&self, path: PathBuf, target: Show, settings: bool) {
+        if !rune::is_headless() {
+            self.bg.spawn(move || Msg::ShowInFiles {
+                settings,
+                result: files::show(&path, target),
+            });
         }
-        if tx.open_url(&format!("file://{}", dir.display())).is_err() {
-            h.error = Some(format!("Could not open {}", dir.display()));
+    }
+
+    pub fn on_show_in_files(&mut self, settings: bool, result: Result<(), String>) {
+        if let Err(e) = result {
+            if settings {
+                if self.settings_page.is_some() {
+                    self.settings_books_error = Some(e);
+                }
+            } else if let Some(h) = self.home() {
+                h.error = Some(e);
+            }
         }
     }
 
@@ -434,5 +449,39 @@ impl State {
             || h.error.is_some();
         h.closed_forms();
         open
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Section;
+
+    #[test]
+    fn show_in_files_reports_errors_at_the_entry_point() {
+        let scratch = tempfile::tempdir().unwrap();
+        let path = scratch.path().join("Missing Book é.cipher");
+        let error = files::show(&path, Show::Book).unwrap_err();
+        assert!(error.starts_with("Could not show the Book in the file manager:"));
+        assert!(error.contains("Missing Book é.cipher"));
+
+        let mut state = State::new(Library::blank());
+        state.home = Some(Home::load(Some(scratch.path())));
+        state.on_show_in_files(false, Err(error.clone()));
+        assert_eq!(
+            state.home.as_ref().unwrap().error.as_deref(),
+            Some(error.as_str())
+        );
+        assert!(state.settings_books_error.is_none());
+
+        state.home.as_mut().unwrap().error = None;
+        state.open_settings_at(Section::General);
+        state.on_show_in_files(true, Err(error.clone()));
+        assert_eq!(state.settings_books_error.as_deref(), Some(error.as_str()));
+        assert!(state.home.as_ref().unwrap().error.is_none());
+
+        state.close_settings();
+        state.on_show_in_files(true, Err(error));
+        assert!(state.settings_books_error.is_none());
     }
 }

@@ -228,6 +228,7 @@ impl State {
 
     pub fn close_settings(&mut self) {
         self.settings_page = None;
+        self.settings_books_error = None;
         self.settings = None;
     }
 

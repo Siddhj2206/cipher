@@ -397,7 +397,7 @@ fn label(h: &Home, b: &ShelfBook, i: usize, p: &Pal) -> El {
                 )
                 .child(
                     item("Show in Files", format!("reveal{i}"))
-                        .on_press_tx(move |s: &mut State, tx| s.reveal_book(tx, &fp)),
+                        .on_press(move |s: &mut State| s.reveal_book(&fp)),
                 )
                 .child(
                     item("Rename…", format!("rename{i}"))
@@ -759,10 +759,11 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
         column = column.child(
             row()
                 .key("shelf-error")
+                .max_w(440.0)
                 .gap(8.0)
                 .pb(24.0)
                 .center_y()
-                .child(text(e.clone()).font(UI).color(p.red).wrap())
+                .child(text(e.clone()).font(UI).color(p.red).wrap_anywhere())
                 .child(
                     el().size(22.0, 22.0)
                         .center()
@@ -853,7 +854,7 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                     .color(p.ink3)
                     .key("show-folder")
                     .cursor(Cursor::Pointer)
-                    .on_press_tx(|s: &mut State, tx| s.show_folder(tx)),
+                    .on_press(|s: &mut State| s.show_folder()),
             ),
     );
 

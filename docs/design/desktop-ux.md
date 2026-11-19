@@ -24,6 +24,7 @@ The home screen: `cipher` opens here, and the library icon at the top of the con
 
 ![New book](img/shelf-new.png)
 - **"⋯" on a cover (on hover), or right-clicking it,** opens Open, Show in Files, Rename… and Move to Trash… (Remove from shelf for a Book from elsewhere, which never deletes the file); Rename and Remove confirm in the label's place.
+- **Show in Files** selects the Book in the system file manager on Linux and macOS where supported, or opens its containing folder. The Shelf's Show folder and Settings › General › Books folder open the Shelf folder in the file manager. If it can't open, the control's screen shows an error.
 - **Header** (it drags the window): the Cipher wordmark, a Search books field (filters by title; no match says so), bordered Import (a folder) and Open (a .cipher file) buttons and a filled New book button (Ctrl+N), Endpoints and models, Settings, and the theme toggle. Without an XDG file chooser portal, Import and Open ask for a typed path in a sheet.
 - **Above the shelf:** "Continue *Title* | Chapter N →" on one baseline, a hover-lit button, for the Book read last, then the count of Books and a Recent / Title sort (remembered).
 - **Labels** read "Chapter N of M" once a Book has been read.

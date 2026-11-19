@@ -53,6 +53,10 @@ pub enum Msg {
     ),
     /// A folder import finished: the new Book and what it holds, or why it failed.
     Imported(Result<(std::path::PathBuf, cipher_engine::ImportReport), String>),
+    ShowInFiles {
+        settings: bool,
+        result: Result<(), String>,
+    },
 }
 
 /// Sends to the app from any thread and wakes its event loop.
@@ -244,6 +248,7 @@ impl crate::state::State {
                 Msg::SignedIn(result) => self.on_signed_in(result),
                 Msg::OpenUrl(url) => self.open_url(tx, &url),
                 Msg::Imported(result) => self.on_imported(result),
+                Msg::ShowInFiles { settings, result } => self.on_show_in_files(settings, result),
                 Msg::ModelsListed(id, result) => self.on_models_listed(id, result),
                 Msg::Realigned(Ok(0)) => {}
                 Msg::Realigned(Ok(n)) => self.on_realigned(n),
