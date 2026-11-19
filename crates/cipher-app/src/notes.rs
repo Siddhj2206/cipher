@@ -237,6 +237,11 @@ impl State {
     }
 
     pub fn save_notes(&mut self) {
+        if self.notes_compacting() {
+            self.toast =
+                Some("Wait for Story Notes compaction to finish before saving Book notes.".into());
+            return;
+        }
         let Some(edit) = &mut self.notes else { return };
         self.toast = Some(match edit.save(self.lib.book_mut()) {
             Ok(true) => "Book notes saved: future translations follow them.".into(),
@@ -581,6 +586,29 @@ mod tests {
                 if dirty { "Unsaved" } else { "New summary" }
             );
             assert_eq!(edit.changed(), dirty);
+        }
+    }
+
+    #[test]
+    fn saves_during_active_compaction_do_not_write() {
+        for state in [JobState::Queued, JobState::Running, JobState::Paused] {
+            let (_dir, book) = fixture();
+            let mut s = State::new(Library::open(book.path()).unwrap());
+            s.open_notes();
+            s.compact_notes();
+            let mut job = s.lib.book().jobs(true).unwrap().remove(0);
+            job.state = state;
+            s.lib.book_mut().save_job(&job).unwrap();
+            let notes = s.lib.book().story_notes().unwrap();
+            let forms = s.lib.book().glossary().unwrap().forms_of_address;
+            let revisions = s.lib.book().revisions(100).unwrap().len();
+            edit_all(s.notes.as_mut().unwrap());
+            s.save_notes();
+            assert!(s.toast.as_ref().unwrap().contains("compaction to finish"));
+            assert_eq!(s.lib.book().story_notes().unwrap(), notes);
+            assert_eq!(s.lib.book().glossary().unwrap().forms_of_address, forms);
+            assert_eq!(s.lib.book().revisions(100).unwrap().len(), revisions);
+            assert!(s.notes.as_ref().unwrap().changed());
         }
     }
 
