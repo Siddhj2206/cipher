@@ -250,6 +250,7 @@ fn delete_chapter_checks_cross_chapter_suggestion_jobs() {
                     let mut job = book.job(id).unwrap();
                     job.state = state;
                     book.save_job(&job).unwrap();
+                    let job = book.job(id).unwrap();
                     let blocked = scope != Scope::Here
                         && kind != JobKind::Translate
                         && suggestion_state != SuggestionState::Done
