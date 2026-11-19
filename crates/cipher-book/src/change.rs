@@ -191,6 +191,7 @@ fn decide_metadata(
 ) -> Result<String> {
     let mut touched = Vec::new();
     let (mut accepted, mut rejected, mut stale) = (0, 0, 0);
+    let mut accepted_labels = Vec::new();
     for (id, accept) in decisions {
         let (suggestion, payload, expected, state): (i64, String, String, String) = w.tx().query_row(
             "SELECT suggestion_id, change, expected, state FROM proposed_metadata WHERE id = ?1", [id.0],
@@ -213,6 +214,7 @@ fn decide_metadata(
                     fields,
                     forbidden,
                 } => {
+                    accepted_labels.push(format!("glossary change for {}", fields.source));
                     let status: String = w.tx().query_row(
                         "SELECT status FROM term WHERE id = ?1",
                         [term.0],
@@ -233,6 +235,7 @@ fn decide_metadata(
                     }
                 }
                 MetadataChange::StoryNote { note, text } => {
+                    accepted_labels.push("story note change".into());
                     write(
                         w,
                         Change::EditStoryNote {
@@ -262,6 +265,9 @@ fn decide_metadata(
         if open == 0 {
             w.update(Table::Suggestion, id, &[("state", text("done"))])?;
         }
+    }
+    if accepted > 0 && rejected == 0 && stale == 0 {
+        return Ok(format!("Accepted {}", accepted_labels.join(", ")));
     }
     Ok(format!(
         "Reviewed Book changes: {accepted} accepted, {rejected} rejected, {stale} stale"

@@ -141,6 +141,7 @@ pub fn entity_words(entity: &str, count: usize) -> String {
         "form_of_address" => "form of address",
         "story_note" => "story note",
         "proposed_edit" => "proposed edit",
+        "proposed_metadata" => "proposed Book change",
         other => other,
     };
     crate::view::plural(count, word)

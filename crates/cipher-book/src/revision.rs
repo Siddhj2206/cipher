@@ -68,6 +68,17 @@ pub(crate) fn preview(tx: &Transaction<'_>, id: RevisionId) -> Result<crate::Und
                         .optional()?,
                     (chapter, _) => chapter,
                 };
+                let chapter = match (chapter, row.get("suggestion_id").and_then(Json::as_i64)) {
+                    (None, Some(suggestion)) => tx
+                        .query_row(
+                            "SELECT chapter_id FROM suggestion WHERE id = ?1",
+                            [suggestion],
+                            |r| r.get(0),
+                        )
+                        .optional()?
+                        .flatten(),
+                    (chapter, _) => chapter,
+                };
                 if let Some(chapter) = chapter {
                     let chapter = crate::ChapterId(chapter);
                     chapters.insert(chapter);
@@ -80,6 +91,19 @@ pub(crate) fn preview(tx: &Transaction<'_>, id: RevisionId) -> Result<crate::Und
                     );
                     if !locations.contains(&location) {
                         locations.push(location);
+                    }
+                    if table == Table::ProposedMetadata
+                        && let Some(payload) = row.get("change").and_then(Json::as_str)
+                    {
+                        let change: crate::MetadataChange = serde_json::from_str(payload)?;
+                        let (entity, id) = match change {
+                            crate::MetadataChange::Term { term, .. } => ("term", term.0),
+                            crate::MetadataChange::StoryNote { note, .. } => ("story_note", note.0),
+                        };
+                        let location = (crate::Conflict { entity, id }, chapter);
+                        if !locations.contains(&location) {
+                            locations.push(location);
+                        }
                     }
                 }
             }
