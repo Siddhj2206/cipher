@@ -39,11 +39,41 @@ impl ReadingAnchor {
         let old_text = self.row.height - padding;
         let text = height - padding;
         let into_row = -self.offset;
-        if into_row < old_text && into_row >= text && text > 0.0 {
+        if text > 0.0 && text != old_text && (0.0..old_text).contains(&into_row) {
             -into_row / old_text * text
         } else {
             self.offset
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reflow_keeps_the_same_paragraph_progress_on_either_side_of_the_old_offset() {
+        let anchor = ReadingAnchor {
+            row: ReadingRow {
+                id: BlockId(1),
+                top: 0.0,
+                height: 824.0,
+            },
+            offset: -758.0,
+        };
+        let padding = 18.0;
+        let progress = -anchor.offset / (anchor.row.height - padding);
+        for text in [620.0, 750.0, 765.0, 806.0, 837.0] {
+            let offset = anchor.reflowed_offset(text + padding, padding);
+            assert!(
+                (-offset / text - progress).abs() < 0.001,
+                "{text}: {offset}"
+            );
+        }
+        assert_eq!(
+            anchor.reflowed_offset(anchor.row.height, padding),
+            anchor.offset
+        );
     }
 }
 
