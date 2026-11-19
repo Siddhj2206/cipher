@@ -15,6 +15,13 @@ The SQLite schema behind `cipher-book` (ADR 0004, `architecture.md`).
 
 ## Revisions
 
+Chapter deletion records dependent content rows through the Revision writer in
+foreign-key-safe order. Story Notes remain as book-wide notes, and Terms retain
+their definitions with their first Chapter cleared. Undo restores their original
+links and content; reusing a deleted id conflicts rather than overwriting work.
+Active jobs prevent deletion. Finished/failed jobs and publish state are operational
+and are removed outside History, so undo does not restore them.
+
 Every write goes through a `Writer` that snapshots the whole row before and after as a JSON object of its columns, in `revision_change` (`before = NULL`: created; `after = NULL`: deleted). So undo has no per-table logic:
 - it walks the Revision's changes backwards and restores each `before`;
 - it only does so while the row still equals `after`. Otherwise later work touched it: a Conflict. A foreign key that blocks a restore is also a Conflict;

@@ -63,6 +63,47 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 
 const LORD: &str = "마탑주";
 
+#[test]
+fn delete_reopen_undo_chapter() {
+    let (_dir, mut lib) = history_fixture();
+    let original = lib.book().chapters().unwrap();
+    let index = 1;
+    lib.delete_chapter(index).unwrap();
+    assert_eq!(lib.chapters[index].id, original[index + 1].id);
+    let revision = lib.revisions().unwrap()[0].id;
+    let path = lib.book().path().to_owned();
+    drop(lib);
+    let mut lib = Library::open(&path).unwrap();
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        cipher_book::UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.book().chapters().unwrap(), original);
+    assert_eq!(lib.chapters.len(), original.len());
+    assert!(lib.chapters.iter().any(|c| c.id == original[index].id));
+}
+
+#[test]
+fn delete_last_chapters_and_undo_empty_library() {
+    let (_dir, mut lib) = history_fixture();
+    while !lib.chapters.is_empty() {
+        let index = lib.chapters.len() - 1;
+        assert!(!lib.chapter_has_active_job(index));
+        lib.delete_chapter(index).unwrap();
+        if index > 0 {
+            assert_eq!(lib.current(), index - 1);
+        }
+    }
+    assert!(lib.delete_chapter(0).is_err());
+    let revision = lib.revisions().unwrap()[0].id;
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        cipher_book::UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.chapters.len(), 1);
+    assert_eq!(lib.current(), 0);
+}
+
 fn history_fixture() -> (tempfile::TempDir, Library) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("quiet.cipher");

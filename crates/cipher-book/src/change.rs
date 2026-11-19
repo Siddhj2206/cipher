@@ -12,6 +12,9 @@ use crate::{Error, Result};
 /// One edit. `Book::apply` turns it into one Revision, so it is also one undo step.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Change {
+    DeleteChapter {
+        chapter: ChapterId,
+    },
     /// Appends a Chapter, or, when `number` is set, inserts it in number order.
     /// Creates a Chapter id. `source` is already split into Blocks.
     AddChapter {
@@ -127,7 +130,7 @@ impl Change {
     fn kind(&self) -> RevisionKind {
         use Change::*;
         match self {
-            AddChapter { .. } => RevisionKind::Chapter,
+            AddChapter { .. } | DeleteChapter { .. } => RevisionKind::Chapter,
             SetTranslation { .. } | FlagPair { .. } => RevisionKind::Translation,
             EditBlock { hand: true, .. } => RevisionKind::HandEdit,
             EditBlock { hand: false, .. } => RevisionKind::Translation,
@@ -331,6 +334,72 @@ fn write(w: &mut Writer<'_>, change: Change, created: &mut Vec<i64>) -> Result<S
             Ok(label)
         }
         Change::DecideMetadata { decisions } => decide_metadata(w, decisions, created),
+        Change::DeleteChapter { chapter } => {
+            let (number, title) = chapter_head(w, chapter)?;
+            let jobs = "chapter_id = ?1 OR suggestion_id IN (SELECT id FROM suggestion WHERE chapter_id = ?1)";
+            let active: bool = w.tx().query_row(
+                &format!("SELECT EXISTS (SELECT 1 FROM job WHERE ({jobs}) AND state IN ('queued', 'running', 'checking', 'paused'))"),
+                [chapter.0], |r| r.get(0),
+            )?;
+            if active {
+                return Err(Error::Invalid(
+                    "Cannot delete a chapter with an active job; stop its jobs first".into(),
+                ));
+            }
+            w.tx()
+                .execute(&format!("DELETE FROM job WHERE {jobs}"), [chapter.0])?;
+            w.tx().execute(
+                "DELETE FROM publish_state WHERE chapter_id = ?1",
+                [chapter.0],
+            )?;
+            for (table, query) in [
+                (
+                    Table::ProposedMetadata,
+                    "SELECT id FROM proposed_metadata WHERE suggestion_id IN (SELECT id FROM suggestion WHERE chapter_id = ?1) ORDER BY id",
+                ),
+                (
+                    Table::ProposedEdit,
+                    "SELECT id FROM proposed_edit WHERE suggestion_id IN (SELECT id FROM suggestion WHERE chapter_id = ?1) OR block_id IN (SELECT id FROM block WHERE chapter_id = ?1) ORDER BY id",
+                ),
+                (
+                    Table::Suggestion,
+                    "SELECT id FROM suggestion WHERE chapter_id = ?1 ORDER BY id",
+                ),
+                (
+                    Table::Block,
+                    "SELECT id FROM block WHERE chapter_id = ?1 ORDER BY id",
+                ),
+                (
+                    Table::Pair,
+                    "SELECT id FROM pair WHERE chapter_id = ?1 ORDER BY id",
+                ),
+            ] {
+                for id in ids(w, query, chapter.0)? {
+                    w.delete(table, id)?;
+                }
+            }
+            for (table, column) in [
+                (Table::StoryNote, "chapter_id"),
+                (Table::Term, "first_chapter_id"),
+            ] {
+                for id in ids(
+                    w,
+                    &format!(
+                        "SELECT id FROM {} WHERE {column} = ?1 ORDER BY id",
+                        table.name()
+                    ),
+                    chapter.0,
+                )? {
+                    w.update(table, id, &[(column, Value::Null)])?;
+                }
+            }
+            w.delete(Table::Chapter, chapter.0)?;
+            let name = number.map_or_else(|| "Chapter".into(), |n| format!("Chapter {n}"));
+            let name = title
+                .filter(|t| !t.is_empty())
+                .map_or(name.clone(), |t| format!("{name}: {t}"));
+            Ok(format!("Delete {name}"))
+        }
         Change::AddChapter {
             number,
             title,

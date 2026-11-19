@@ -22,6 +22,208 @@ fn new_book() -> Fixture {
 }
 
 #[test]
+fn delete_chapter_survives_reopen_and_redoes() {
+    let Fixture { _dir, mut book } = new_book();
+    let (chapter, _, _) = with_suggestion(&mut book);
+    let other = add_chapter(&mut book, 2, &["Other"]);
+    let target = book.chapter(chapter).unwrap().translation[0].clone();
+    let source = book.chapter(other).unwrap().source[0].id;
+    book.apply(Change::AddSuggestion(NewSuggestion {
+        chapter: other,
+        block: source,
+        quote: "Other".into(),
+        said: "Else".into(),
+        scope: Scope::Everywhere,
+        is_rename: false,
+        source_expr: None,
+        state: SuggestionState::Ready,
+        kind: SuggestionKind::Reader,
+        edits: vec![NewProposedEdit {
+            block: target.id,
+            before: target.text,
+            after: Some("Else".into()),
+            origin: EditOrigin::Rename,
+            skip_reason: None,
+        }],
+    }))
+    .unwrap();
+    book.apply(Change::AddStoryNote {
+        chapter: Some(chapter),
+        text: "Keep this note".into(),
+    })
+    .unwrap();
+    book.apply(Change::UpsertTerm {
+        id: None,
+        fields: TermFields {
+            source: "Term".into(),
+            rendering: "Word".into(),
+            ..TermFields::default()
+        },
+        status: TermStatus::Accepted,
+        first_chapter: Some(chapter),
+    })
+    .unwrap();
+    let note = book.story_notes().unwrap()[0].id;
+    book.apply(Change::AddSuggestionWithMetadata {
+        suggestion: NewSuggestion {
+            chapter,
+            block: book.chapter(chapter).unwrap().source[0].id,
+            quote: "Note".into(),
+            said: "Update".into(),
+            scope: Scope::Everywhere,
+            is_rename: false,
+            source_expr: None,
+            state: SuggestionState::Ready,
+            kind: SuggestionKind::Reader,
+            edits: vec![],
+        },
+        changes: vec![MetadataChange::StoryNote {
+            note,
+            text: "Updated note".into(),
+        }],
+    })
+    .unwrap();
+    let before = seen(&book);
+    let revision = book
+        .apply(Change::DeleteChapter { chapter })
+        .unwrap()
+        .revision;
+    assert!(book.chapter(chapter).is_err());
+    assert!(
+        book.story_notes()
+            .unwrap()
+            .iter()
+            .all(|n| n.chapter.is_none())
+    );
+    assert!(
+        book.glossary()
+            .unwrap()
+            .terms
+            .iter()
+            .all(|t| t.first_chapter.is_none())
+    );
+    assert!(
+        book.suggestions(SuggestionFilter::default())
+            .unwrap()
+            .iter()
+            .all(|s| s.chapter != chapter && s.edits.is_empty())
+    );
+    let deleted = seen(&book);
+    let path = book.path().to_owned();
+    drop(book);
+    let mut book = Book::open(path).unwrap();
+    let preview = book.preview_undo(revision).unwrap();
+    assert!(preview.conflicts.is_empty());
+    assert!(preview.changes.contains(&("chapter", 1)));
+    assert_eq!(seen(&book), deleted);
+    let UndoOutcome::Undone { revision: undo, .. } = book.undo(revision, UndoMode::Whole).unwrap()
+    else {
+        panic!("undo failed")
+    };
+    assert_eq!(seen(&book), before);
+    assert!(matches!(
+        book.undo(undo, UndoMode::Whole).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(seen(&book), deleted);
+}
+
+#[test]
+fn delete_chapter_refuses_active_jobs_and_reused_ids() {
+    let Fixture { mut book, .. } = new_book();
+    let chapter = add_chapter(&mut book, 1, &["Source"]);
+    let job = book
+        .enqueue(JobSpec {
+            kind: JobKind::Translate,
+            parent: None,
+            chapter: Some(chapter),
+            suggestion: None,
+            input: None,
+        })
+        .unwrap();
+    for state in [
+        JobState::Queued,
+        JobState::Running,
+        JobState::Checking,
+        JobState::Paused,
+    ] {
+        let mut row = book.job(job).unwrap();
+        row.state = state;
+        book.save_job(&row).unwrap();
+        let before = seen(&book);
+        assert!(
+            book.apply(Change::DeleteChapter { chapter })
+                .unwrap_err()
+                .to_string()
+                .contains("active job")
+        );
+        assert_eq!(seen(&book), before);
+    }
+    let mut row = book.job(job).unwrap();
+    row.state = JobState::Failed;
+    book.save_job(&row).unwrap();
+    let revision = book
+        .apply(Change::DeleteChapter { chapter })
+        .unwrap()
+        .revision;
+    assert!(book.jobs(false).unwrap().is_empty());
+    let replacement = add_chapter(&mut book, 2, &["Replacement"]);
+    assert_eq!(replacement, chapter);
+    let before = seen(&book);
+    assert!(matches!(
+        book.undo(revision, UndoMode::Whole).unwrap(),
+        UndoOutcome::Conflict { .. }
+    ));
+    assert_eq!(seen(&book), before);
+}
+
+#[test]
+fn delete_empty_chapter_and_missing_chapter() {
+    let Fixture { mut book, .. } = new_book();
+    assert!(
+        book.apply(Change::DeleteChapter {
+            chapter: ChapterId(99)
+        })
+        .is_err()
+    );
+    assert!(book.revisions(200).unwrap().is_empty());
+    let chapter = add_chapter(&mut book, 1, &[]);
+    let before = seen(&book);
+    let revision = book
+        .apply(Change::DeleteChapter { chapter })
+        .unwrap()
+        .revision;
+    assert!(book.chapters().unwrap().is_empty());
+    assert!(matches!(
+        book.undo(revision, UndoMode::Whole).unwrap(),
+        UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(seen(&book), before);
+}
+
+#[test]
+fn delete_chapter_refuses_suggestion_only_job() {
+    let Fixture { mut book, .. } = new_book();
+    let (chapter, suggestion, _) = with_suggestion(&mut book);
+    book.enqueue(JobSpec {
+        kind: JobKind::Translate,
+        parent: None,
+        chapter: None,
+        suggestion: Some(suggestion),
+        input: None,
+    })
+    .unwrap();
+    let before = seen(&book);
+    assert!(
+        book.apply(Change::DeleteChapter { chapter })
+            .unwrap_err()
+            .to_string()
+            .contains("active job")
+    );
+    assert_eq!(seen(&book), before);
+}
+
+#[test]
 fn undo_preview_is_read_only_and_reports_conflicts_and_undone() {
     let mut f = new_book();
     let book = &mut f.book;

@@ -137,6 +137,7 @@ pub struct State {
     pub model_menu: Option<(Vec<cipher_llm::Endpoint>, Option<String>)>,
     /// A Chapter's right-click menu: the Chapter and where the pointer was.
     pub chapter_menu: Option<(usize, f32, f32)>,
+    pub chapter_delete_confirm: bool,
     /// Files are being dragged over the window.
     pub drop_hover: bool,
     /// The Library load whose scan is running (`Library::generation`).
@@ -205,6 +206,7 @@ impl State {
             shortcuts_open: false,
             type_open: false,
             chapter_menu: None,
+            chapter_delete_confirm: false,
             model_menu: None,
             drop_hover: false,
             scanning: 0,
@@ -706,6 +708,7 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.chapter_menu.is_some() && k.key == Key::Escape {
         s.chapter_menu = None;
+        s.chapter_delete_confirm = false;
         return true;
     }
     if s.type_open && k.key == Key::Escape {

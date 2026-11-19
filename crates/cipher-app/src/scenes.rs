@@ -573,6 +573,23 @@ pub const SCENES: &[Scene] = &[
         let i = s.lib.current() + 2;
         s.chapter_menu = Some((i, 160.0, 470.0));
     }),
+    ("chapter-delete-confirm", |s| {
+        s.chapter_menu = Some((s.lib.current() + 2, 160.0, 470.0));
+        s.chapter_delete_confirm = true;
+    }),
+    ("chapter-deleted", |s| {
+        let i = s.lib.current() + 2;
+        let number = s.lib.chapters[i].number;
+        s.lib.delete_chapter(i).unwrap();
+        s.load_strip(s.lib.current());
+        s.toast = Some(format!(
+            "Deleted Chapter {number}. Undo from History (Ctrl+H)."
+        ));
+    }),
+    ("chapter-delete-history", |s| {
+        s.lib.delete_chapter(s.lib.current() + 2).unwrap();
+        s.open_history();
+    }),
     ("model-menu", |s| {
         s.bg.status = crate::fix::work::Status::Running("api.example.com · model-medium".into());
         let _ = s.lib.set_model_choice(Some(&cipher_book::ModelChoice {
