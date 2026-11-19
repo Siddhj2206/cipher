@@ -146,7 +146,7 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
 - [ ] "Fetch models" from an API-key Endpoint's `/models`; several chapters at once (a multi-file pick, or a paste holding several numbered chapters).
 - [x] Sidebars that give way on narrow windows (2026-11-16).
-- [ ] Resizable, remembered sidebar widths.
+- [x] Resizable, remembered sidebar widths.
 - [x] A History panel: persistent Revisions with dry-run previews, chapter conflicts and Undo, including re-translations and re-pairs (Ctrl+H).
   - Metadata Review accepts also preview and undo after reopening; later Term edits are skipped, and restored proposals follow the normal pending/stale rules.
 - [ ] Notifications when a long translation finishes while the window is unfocused.

@@ -46,6 +46,7 @@ impl Library {
                     .map(|(i, c)| super::ChapterRow {
                         id: c.id,
                         number: c.number.unwrap_or(i as i64 + 1),
+                        title: c.title,
                         state: c.state,
                         outdated: c.outdated,
                         opening: String::new(),
