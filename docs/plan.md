@@ -146,6 +146,7 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Sidebars that give way on narrow windows (2026-11-16).
 - [ ] Resizable, remembered sidebar widths.
 - [x] A History panel: persistent Revisions with dry-run previews, chapter conflicts and Undo, including re-translations and re-pairs (Ctrl+H).
+  - Metadata Review accepts also preview and undo after reopening; later Term edits are skipped, and restored proposals follow the normal pending/stale rules.
 - [ ] Notifications when a long translation finishes while the window is unfocused.
 
 Checked headless: `sh crates/cipher-app/scripts/check-desktop.sh <book>` (Ctrl+, → text size → Esc → Alt+→ → Ctrl+/ → Aa → Ctrl+-), plus the earlier checks; scenes `settings-*`, `shortcuts`, `type-popover`, `chapter-menu`, `model-menu`, `reading-sans`. Not checked on a real desktop yet: live theme following, window size restore, single-instance hand-off, drag and drop, install.sh.

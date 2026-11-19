@@ -350,6 +350,38 @@ fn history(s: &mut State, conflict: bool, undone: bool) {
 }
 
 pub const SCENES: &[Scene] = &[
+    ("history-metadata", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        let term = s.lib.book().glossary().expect("glossary").terms[0].clone();
+        s.lib
+            .book_mut()
+            .apply(Change::AddStoryNote {
+                chapter: None,
+                text: format!("{} watches the tower.", term.fields.rendering),
+            })
+            .expect("story note");
+        let at = s
+            .lib
+            .terms
+            .iter()
+            .position(|t| t.id == term.id)
+            .expect("term");
+        let sid = s
+            .lib
+            .use_wording(at, "Tower Keeper", &[])
+            .expect("keep")
+            .expect("suggestion");
+        let decisions = s
+            .lib
+            .suggestion(sid)
+            .expect("suggestion")
+            .metadata
+            .iter()
+            .map(|e| (e.id, true))
+            .collect();
+        s.review_metadata(sid, decisions);
+        s.open_history();
+    }),
     ("history", |s| {
         s.prefs.appearance = crate::prefs::Appearance::Light;
         history(s, false, false);

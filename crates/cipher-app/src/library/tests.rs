@@ -306,6 +306,115 @@ fn history_repair_import_and_added_chapter_undo() {
 }
 
 #[test]
+fn history_metadata_review_survives_reopening_and_skips_later_term_edits() {
+    for conflict in [false, true] {
+        let (_dir, mut lib) = history_fixture();
+        let original = lib.book().glossary().unwrap().terms[0].clone();
+        lib.book_mut()
+            .apply(Change::AddStoryNote {
+                chapter: None,
+                text: format!("{} watches the tower.", original.fields.rendering),
+            })
+            .unwrap();
+        let glossary = lib.book().glossary().unwrap();
+        let notes = lib.book().story_notes().unwrap();
+        let at = lib.terms.iter().position(|t| t.id == original.id).unwrap();
+        let sid = lib.use_wording(at, "Tower Keeper", &[]).unwrap().unwrap();
+        let decisions = lib
+            .suggestion(sid)
+            .unwrap()
+            .metadata
+            .iter()
+            .map(|e| (e.id, true))
+            .collect::<Vec<_>>();
+        assert_eq!(decisions.len(), 2);
+        let revision = lib.decide_metadata(decisions).unwrap().revision;
+        let path = lib.path().to_owned();
+        drop(lib);
+        let mut lib = Library::open(&path).unwrap();
+        assert_ne!(lib.book().glossary().unwrap(), glossary);
+        assert_ne!(lib.book().story_notes().unwrap(), notes);
+        if conflict {
+            let mut fields = original.fields.clone();
+            fields.rendering = "Later choice".into();
+            lib.book_mut()
+                .apply(Change::UpsertTerm {
+                    id: Some(original.id),
+                    fields,
+                    status: original.status,
+                    first_chapter: original.first_chapter,
+                })
+                .unwrap();
+        }
+        assert!(lib.revisions().unwrap().iter().any(|r| r.id == revision));
+        let preview = lib.preview_undo(revision).unwrap();
+        assert!(
+            preview
+                .revision
+                .label
+                .contains("Accepted glossary change for")
+        );
+        assert!(preview.changes.contains(&("proposed_metadata", 2)));
+        assert!(!preview.chapters.is_empty());
+        assert_eq!(
+            super::undo_mode(&preview.revision),
+            cipher_book::UndoMode::SkipConflicts
+        );
+        assert_eq!(
+            preview.conflicts.iter().any(|c| c.entity == "term"),
+            conflict
+        );
+        if conflict {
+            assert!(
+                preview
+                    .conflict_chapters
+                    .iter()
+                    .any(|(c, _)| c.entity == "term")
+            );
+        }
+        let cipher_book::UndoOutcome::Undone { skipped, .. } = lib.undo_revision(revision).unwrap()
+        else {
+            panic!("metadata undo refused");
+        };
+        assert_eq!(skipped.iter().any(|c| c.entity == "term"), conflict);
+        assert_eq!(lib.book().story_notes().unwrap(), notes);
+        if conflict {
+            assert_eq!(
+                lib.terms
+                    .iter()
+                    .find(|t| t.id == original.id)
+                    .unwrap()
+                    .rendering,
+                "Later choice"
+            );
+        } else {
+            assert_eq!(lib.book().glossary().unwrap(), glossary);
+            assert_eq!(
+                lib.terms
+                    .iter()
+                    .find(|t| t.id == original.id)
+                    .unwrap()
+                    .rendering,
+                original.fields.rendering
+            );
+        }
+        for edit in &lib.suggestion(sid).unwrap().metadata {
+            let expected =
+                if conflict && matches!(edit.change, cipher_book::MetadataChange::Term { .. }) {
+                    EditState::Stale
+                } else {
+                    EditState::Pending
+                };
+            assert_eq!(edit.state, expected);
+        }
+        assert!(!lib.scanned());
+        let scan = lib.scan()().unwrap();
+        lib.apply_scan(scan);
+        assert!(lib.scanned());
+    }
+}
+
+#[test]
 fn successive_review_accepts_keep_every_revision_for_undo() {
     for accept_prose in [false, true] {
         let dir = tempfile::tempdir().unwrap();

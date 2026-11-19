@@ -89,7 +89,7 @@ fn unsupported_revision_changes_remain_listable_and_preview_writes_nothing() {
         .revision;
     let conn = rusqlite::Connection::open(f.book.path()).unwrap();
     conn.execute(
-        "INSERT INTO revision_change (revision_id, seq, entity, entity_id, before, after) VALUES (?1, 0, 'proposed_metadata', 1, NULL, '{}')",
+        "INSERT INTO revision_change (revision_id, seq, entity, entity_id, before, after) VALUES (?1, 0, 'future_unknown_entity', 1, NULL, '{}')",
         [id.0],
     ).unwrap();
     let revisions = f.book.revisions(200).unwrap();
