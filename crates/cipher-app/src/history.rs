@@ -52,8 +52,23 @@ impl State {
 
     pub fn undo_history(&mut self) {
         let Some(p) = &self.history.preview else {
+            self.toast = self.history.preview_error.clone();
             return;
         };
+        if p.already_undone_by.is_some() {
+            self.toast = Some("Already undone. Select its Undo revision to redo.".into());
+            return;
+        }
+        if crate::library::undo_mode(&p.revision) == cipher_book::UndoMode::Whole
+            && !p.conflicts.is_empty()
+        {
+            self.toast = Some(if p.conflicts.iter().any(|c| c.entity == "job") {
+                "Not undone: this chapter has started work or dependent jobs. Finish that work first.".into()
+            } else {
+                "Not undone: later work changed these chapters. Structural changes must be undone as a whole.".into()
+            });
+            return;
+        }
         let id = p.revision.id;
         let style_changed = p.changes.iter().any(|(entity, _)| *entity == "style_rule");
         match self.lib.undo_revision(id) {
@@ -133,6 +148,7 @@ pub fn entity_words(entity: &str, count: usize) -> String {
 
 pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     match k.key {
+        Key::Enter => s.undo_history(),
         Key::Escape => s.screen = Screen::Reading,
         Key::Up | Key::Down if !s.history.revisions.is_empty() => {
             let at = s.history.selected;
@@ -152,6 +168,68 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enter_undoes_the_selected_revision_and_explains_disabled_actions() {
+        for blocked in [false, true] {
+            let mut lib = crate::library::Library::blank();
+            if blocked {
+                let intake = lib.intake("# Chapter 1\n\nSource").unwrap();
+                lib.add_chapter(&intake).unwrap();
+                lib.book_mut().claim_next_job().unwrap().unwrap();
+            } else {
+                lib.book_mut()
+                    .apply(cipher_book::Change::AddStoryNote {
+                        chapter: None,
+                        text: "Undo me".into(),
+                    })
+                    .unwrap();
+            }
+            let mut s = State::new(lib);
+            s.open_history();
+            let revisions = s.lib.revisions().unwrap().len();
+            let mut runtime = rune::Runtime::new(
+                s,
+                |_, _| rune::col(),
+                (800.0, 600.0),
+                rune::Env::new(false, 1.0),
+            );
+            runtime.on_key = Some(crate::state::on_key);
+            runtime.key(KeyEvent {
+                key: Key::Enter,
+                mods: Default::default(),
+            });
+            runtime.frame(1.0 / 60.0);
+            if blocked {
+                assert_eq!(runtime.state.lib.revisions().unwrap().len(), revisions);
+                assert!(
+                    runtime
+                        .state
+                        .toast
+                        .as_ref()
+                        .unwrap()
+                        .contains("started work")
+                );
+            } else {
+                assert_eq!(runtime.state.lib.revisions().unwrap().len(), revisions + 1);
+                assert!(runtime.state.lib.book().story_notes().unwrap().is_empty());
+                runtime.key(KeyEvent {
+                    key: Key::Enter,
+                    mods: Default::default(),
+                });
+                runtime.frame(1.0 / 60.0);
+                assert_eq!(runtime.state.lib.revisions().unwrap().len(), revisions + 1);
+                assert!(
+                    runtime
+                        .state
+                        .toast
+                        .as_ref()
+                        .unwrap()
+                        .contains("Already undone")
+                );
+            }
+        }
+    }
 
     #[test]
     fn history_undo_reloads_neighbor_pages_in_the_reading_strip() {
