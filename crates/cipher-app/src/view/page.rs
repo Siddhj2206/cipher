@@ -13,7 +13,7 @@ use super::widgets::{btn, dot, plural};
 use crate::fix::edit_in_review;
 use crate::fix::work::Status;
 use crate::library::{Library, Page, PageBlock, PairFlag};
-use crate::state::{State, Tab, TermCard};
+use crate::state::{ReadingRow, State, Tab, TermCard};
 use crate::theme::{
     GUTTER_W, I_LANG, INTERLINEAR, LABEL, Pal, SERIF, SMALL, UI_MED, body, heading, src_body,
 };
@@ -313,13 +313,19 @@ fn paragraph(s: &State, page: &Page, side: Side, index: usize, p: &Pal) -> El {
         );
     }
 
+    let padding = if side == Side::Source { 20.0 } else { 18.0 };
     let mut r = row()
         .key(format!("row{}", id.0))
         .w_full()
-        .pb(if side == Side::Source { 20.0 } else { 18.0 })
+        .pb(padding)
         .hover_group()
         .child(gutter)
         .child(text_col);
+    if s.sidebar_reflow_row() == Some(id) {
+        r = r.on_layout_tx(move |s: &mut State, [_, _, _, height], tx| {
+            s.finish_sidebar_reflow(id, height, padding, tx);
+        });
+    }
     // With the context sidebar closed, notes and a Term's card live in the page margin beside
     // their paragraph.
     if !s.context_shown() && s.margin_room() {
@@ -621,8 +627,11 @@ pub fn reading(s: &State, cx: &mut Cx<State>, p: &Pal) -> El {
         .blocks(section_side(s, current))
         .iter()
         .filter_map(|b| {
-            cx.layout(&format!("row{}", b.id.0))
-                .map(|r| (b.id, r[1] - origin))
+            cx.layout(&format!("row{}", b.id.0)).map(|r| ReadingRow {
+                id: b.id,
+                top: r[1] - origin,
+                height: r[3],
+            })
         })
         .collect();
 

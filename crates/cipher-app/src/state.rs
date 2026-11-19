@@ -21,6 +21,13 @@ use crate::welcome::Welcome;
 /// Paragraphs of a translating Chapter as they arrive: (first, last, text), 1-based.
 pub type Streamed = Vec<(u32, u32, String)>;
 
+#[derive(Clone, Copy)]
+pub struct ReadingRow {
+    pub id: BlockId,
+    pub top: f32,
+    pub height: f32,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Screen {
     Reading,
@@ -141,6 +148,7 @@ pub struct State {
     context_first: bool,
     /// Live width during a drag; the preference changes only on release.
     sidebar_drag: Option<SidebarDrag>,
+    sidebar_reflow: Option<(ReadingRow, f32)>,
     /// The Book whose old import Pairs were last checked for re-pairing.
     realigning: Option<std::path::PathBuf>,
     /// The running translation, from the worker's Events.
@@ -160,8 +168,8 @@ pub struct State {
     pub pending_title: Option<String>,
     /// When the page, having moved, counts as still (on the window clock).
     pub settle_at: Option<f64>,
-    /// Top of each row of the current page, relative to the page, recorded each frame.
-    pub tops: Rc<RefCell<Vec<(BlockId, f32)>>>,
+    /// Rows of the current chapter, relative to the page, recorded each frame.
+    pub tops: Rc<RefCell<Vec<ReadingRow>>>,
     /// A headless run works on a copy of the Book in here, so it never changes the real one.
     /// Last, so the Book closes before the folder goes.
     pub scratch: Option<tempfile::TempDir>,
@@ -207,6 +215,7 @@ impl State {
             scanning: 0,
             context_first: false,
             sidebar_drag: None,
+            sidebar_reflow: None,
             realigning: None,
             progress: None,
             streamed: None,
@@ -385,17 +394,17 @@ impl State {
         let tops = self.tops.borrow().clone();
         let top = tops
             .iter()
-            .rfind(|(_, t)| *t <= y + 4.0)
+            .rfind(|row| row.top <= y + 4.0)
             .or(tops.first())
             .copied();
         let from = self.side();
-        let pair = top.and_then(|(id, _)| self.lib.page().pair_of(from, id));
+        let pair = top.and_then(|row| self.lib.page().pair_of(from, row.id));
         self.source = !self.source;
         let to = self.side();
-        if let (Some(pair), Some((_, t))) = (pair, top)
+        if let (Some(pair), Some(row)) = (pair, top)
             && let Some(id) = self.lib.page().first_block(to, pair)
         {
-            tx.scroll_key_to(format!("row{}", id.0), t - y);
+            tx.scroll_key_to(format!("row{}", id.0), row.top - y);
         }
     }
 
@@ -564,11 +573,30 @@ impl State {
         }
     }
 
-    fn hold_reading_position(&self, tx: &mut Tx) {
+    fn hold_reading_position(&mut self, tx: &mut Tx) {
         if self.screen == Screen::Reading
-            && let Some(block) = self.reading_position().and_then(|pos| pos.block)
+            && let Some(row) = self.top_reading_row()
         {
-            tx.keep_on_screen(format!("row{block}"));
+            tx.keep_on_screen(format!("row{}", row.id.0));
+            self.sidebar_reflow = Some((row, row.top - self.scroll_y.get()));
+        }
+    }
+
+    pub fn sidebar_reflow_row(&self) -> Option<BlockId> {
+        self.sidebar_reflow.map(|(row, _)| row.id)
+    }
+
+    pub fn finish_sidebar_reflow(&mut self, id: BlockId, height: f32, padding: f32, tx: &mut Tx) {
+        let reflow = self.sidebar_reflow.take_if(|(row, _)| row.id == id);
+        if let Some((row, offset)) = reflow
+            && row.height + offset > padding
+            && height + offset <= padding
+        {
+            // An unchanged pixel offset would put every line of the shortened Block above us.
+            let progress = -offset / (row.height - padding);
+            tx.scroll_key_to(format!("row{}", id.0), -progress * (height - padding));
+        } else {
+            tx.live_only();
         }
     }
 
@@ -659,18 +687,21 @@ impl State {
     /// Where reading is: the current Chapter and the row at the top of the window.
     pub fn reading_position(&self) -> Option<Position> {
         let chapter = self.lib.chapters.get(self.lib.current())?.number;
-        let y = self.scroll_y.get();
-        let top = self
-            .tops
-            .borrow()
-            .iter()
-            .rfind(|(_, t)| *t <= y + 4.0)
-            .copied();
+        let top = self.top_reading_row();
         Some(Position {
             chapter,
-            block: top.map(|(id, _)| id.0),
-            offset: top.map_or(0.0, |(_, t)| t - y),
+            block: top.map(|row| row.id.0),
+            offset: top.map_or(0.0, |row| row.top - self.scroll_y.get()),
         })
+    }
+
+    fn top_reading_row(&self) -> Option<ReadingRow> {
+        let y = self.scroll_y.get();
+        self.tops
+            .borrow()
+            .iter()
+            .rfind(|row| row.top <= y + 4.0)
+            .copied()
     }
 
     /// Notes where reading is in `shelf.json`, so the Book opens there next time.
