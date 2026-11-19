@@ -127,6 +127,7 @@ pub struct State {
     pub history: crate::history::History,
     /// The Settings window, open at this section.
     pub settings_page: Option<Section>,
+    pub settings_books_notice: Option<&'static str>,
     /// The Endpoint form in Settings › Translation, once it has shown.
     pub settings: Option<Settings>,
     /// The keyboard shortcuts sheet (Ctrl+/).
@@ -201,6 +202,7 @@ impl State {
             history: Default::default(),
             welcome: None,
             settings_page: None,
+            settings_books_notice: None,
             settings: None,
             shortcuts_open: false,
             type_open: false,

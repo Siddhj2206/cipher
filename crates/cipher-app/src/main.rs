@@ -7,6 +7,7 @@
 
 mod draft;
 mod drift;
+mod files;
 mod fix;
 mod history;
 mod home;

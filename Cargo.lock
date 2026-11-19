@@ -633,7 +633,9 @@ dependencies = [
  "serde_json",
  "tempfile",
  "trash",
+ "url",
  "winresource",
+ "zbus 5.19.0",
 ]
 
 [[package]]
