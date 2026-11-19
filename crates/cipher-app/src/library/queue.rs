@@ -34,10 +34,15 @@ impl Library {
     }
 
     pub fn notification_chapter(&self, id: ChapterId) -> Option<String> {
+        let number = self
+            .chapters
+            .iter()
+            .find(|chapter| chapter.id == id)?
+            .number;
         let chapter = self.book.chapter(id).ok()?;
         Some(match chapter.title.filter(|t| !t.trim().is_empty()) {
-            Some(title) => format!("Chapter {}: {}", chapter.number.unwrap_or(id.0), title),
-            None => format!("Chapter {}", chapter.number.unwrap_or(id.0)),
+            Some(title) => format!("Chapter {number}: {title}"),
+            None => format!("Chapter {number}"),
         })
     }
 

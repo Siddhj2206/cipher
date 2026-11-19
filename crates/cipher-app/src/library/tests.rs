@@ -19,6 +19,39 @@ fn book(dir: &tempfile::TempDir) -> Book {
 }
 
 #[test]
+fn notification_chapter_uses_reading_position_not_database_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut book = book(&dir);
+    chapter(&mut book, 40, &["First"]);
+    for title in [None, Some("Unnumbered title".to_string())] {
+        book.apply(Change::AddChapter {
+            number: None,
+            title,
+            source: vec!["An unnumbered chapter".into()],
+        })
+        .unwrap();
+    }
+    chapter(&mut book, 10, &["Inserted before the others"]);
+    let lib = Library::from_book(book).unwrap();
+    assert_eq!(
+        lib.notification_chapter(lib.chapters[1].id).as_deref(),
+        Some("Chapter 40")
+    );
+    for chapter in &lib.chapters[2..] {
+        assert_ne!(chapter.id.0, chapter.number);
+        let expected = if chapter.number == 3 {
+            "Chapter 3"
+        } else {
+            "Chapter 4: Unnumbered title"
+        };
+        assert_eq!(
+            lib.notification_chapter(chapter.id).as_deref(),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
 fn notification_queue_uses_persisted_translation_states() {
     use cipher_book::JobState;
 
