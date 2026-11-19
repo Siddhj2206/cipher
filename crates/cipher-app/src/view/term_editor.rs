@@ -48,7 +48,7 @@ pub fn panel(s: &State, index: usize, p: &Pal) -> El {
     }
     panel = panel.child(
         text(if t.provisional {
-            "Pending: future chapters send it to the model as a provisional name.".into()
+            "Pending: future chapters send it to the model as a new name, not yet confirmed.".into()
         } else {
             format!(
                 "Accepted: future chapters are told to render 「{}」 as “{}” exactly.",

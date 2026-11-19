@@ -41,7 +41,7 @@ pub fn term_card(s: &State, tc: TermCard, p: &Pal) -> El {
     let usage = s.lib.usage(tc.term);
     let mut label = String::from("TERM");
     if t.provisional {
-        label.push_str(" · PROVISIONAL");
+        label.push_str(" · PENDING");
     }
     let mut c = col()
         .w_full()
@@ -255,7 +255,7 @@ pub fn context(s: &State, p: &Pal, width: f32) -> El {
                 }
                 if t.provisional {
                     second = second.child(
-                        text("provisional")
+                        text("pending")
                             .font(SMALL.italic())
                             .color(p.ink3)
                             .help("Proposed by the translation step; not yet accepted"),
