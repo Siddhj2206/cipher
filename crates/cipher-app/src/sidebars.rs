@@ -34,6 +34,10 @@ pub struct SidebarLayout {
 }
 
 impl SidebarLayout {
+    fn room(window: f32) -> f32 {
+        window - MIN_TEXT - PAGE_CHROME
+    }
+
     /// Open preferences survive auto-collapse. The last-opened pane gets first claim on
     /// the space, and may fit at less than its preferred width when alone.
     pub fn fit(
@@ -44,7 +48,7 @@ impl SidebarLayout {
     ) -> Self {
         let contents = contents.map(|w| w.clamp(Sidebar::Contents.min_width(), Sidebar::MAX_WIDTH));
         let context = context.map(|w| w.clamp(Sidebar::Context.min_width(), Sidebar::MAX_WIDTH));
-        let room = window - MIN_TEXT - PAGE_CHROME;
+        let room = Self::room(window);
         match (contents, context) {
             (Some(l), Some(r)) if l + r <= room => Self { contents, context },
             (Some(l), _) if context.is_none() || !context_first => Self {
@@ -83,7 +87,13 @@ impl SidebarLayout {
             Sidebar::Contents => right,
             Sidebar::Context => left,
         };
-        (window - opposite - MIN_TEXT - PAGE_CHROME).clamp(side.min_width(), Sidebar::MAX_WIDTH)
+        let room = Self::room(window);
+        let max = (room - opposite).clamp(side.min_width(), Sidebar::MAX_WIDTH);
+        if max > side.min_width() && max + opposite > room {
+            max.next_down()
+        } else {
+            max
+        }
     }
 }
 
@@ -117,6 +127,21 @@ mod tests {
         let solo = SidebarLayout::fit(930.0, None, Some(320.0), true);
         assert_eq!(solo.context, Some(262.0));
         assert_eq!(solo.max_width(Sidebar::Context, 930.0), 262.0);
+    }
+
+    #[test]
+    fn fractional_width_at_max_keeps_both_sidebars() {
+        let window = 1428.87;
+        let contents = Some(283.737_5);
+        let layout = SidebarLayout::fit(window, contents, Some(320.0), false);
+        let max = layout.max_width(Sidebar::Context, window);
+        assert_eq!(
+            SidebarLayout::fit(window, contents, Some(max), false),
+            SidebarLayout {
+                contents,
+                context: Some(max)
+            },
+        );
     }
 
     #[test]
