@@ -41,16 +41,16 @@ pub fn list_models(
             .map_err(|e| LlmError::Network(e.to_string()))?,
         Err(ureq::Error::Status(code, resp)) => {
             let retry_after = resp.header("Retry-After").map(str::to_owned);
-            let body = resp.into_string().unwrap_or_default();
+            let body = hide(resp.into_string().unwrap_or_default(), key);
             return Err(redact(map_status(code, retry_after.as_deref(), &body)));
         }
         Err(ureq::Error::Transport(t)) => return Err(redact(LlmError::Network(t.to_string()))),
     };
     let json: Value = serde_json::from_str(&body).map_err(|_| {
-        redact(LlmError::Rejected(format!(
+        LlmError::Rejected(format!(
             "the model list is not JSON: {}",
-            excerpt(&body)
-        )))
+            excerpt(&hide(body.clone(), key))
+        ))
     })?;
     Ok(parse(&json))
 }
@@ -76,13 +76,25 @@ fn parse(body: &Value) -> Vec<String> {
         .filter(|id| !id.is_empty())
         .map(String::from)
         .collect();
-    ids.sort_by_key(|id| id.to_lowercase());
+    ids.sort_by(|a, b| {
+        a.to_lowercase()
+            .cmp(&b.to_lowercase())
+            .then_with(|| a.cmp(b))
+    });
     ids.dedup();
     ids
 }
 
+/// The text with the key taken out, done before any excerpt so a cut can't leave part of it.
+fn hide(text: String, key: Option<&str>) -> String {
+    match key {
+        Some(k) => text.replace(k, "•••"),
+        None => text,
+    }
+}
+
 fn scrub(e: LlmError, key: &str) -> LlmError {
-    let s = |m: String| m.replace(key, "•••");
+    let s = |m: String| hide(m, Some(key));
     match e {
         LlmError::Network(m) => LlmError::Network(s(m)),
         LlmError::Server(m) => LlmError::Server(s(m)),
@@ -171,6 +183,24 @@ mod tests {
         let (base, _) = stub(200, &format!("<html>{KEY}</html>"));
         let e = list_models(Protocol::ChatCompletions, &base, Some(KEY), T).unwrap_err();
         assert!(!format!("{e} {e:?}").contains(KEY), "{e}");
+    }
+
+    #[test]
+    fn a_key_at_the_excerpt_cut_is_still_hidden() {
+        let pad = "x".repeat(495);
+        let (base, _) = stub(500, &format!("{pad}{KEY}"));
+        let e = list_models(Protocol::Responses, &base, Some(KEY), T).unwrap_err();
+        assert!(!e.to_string().contains("sk-te"), "{e}");
+        let (base, _) = stub(200, &format!("{pad}{KEY}"));
+        let e = list_models(Protocol::Responses, &base, Some(KEY), T).unwrap_err();
+        assert!(!e.to_string().contains("sk-te"), "{e}");
+    }
+
+    #[test]
+    fn case_variants_stay_and_exact_repeats_go() {
+        let (base, _) = stub(200, r#"["model-a","MODEL-A","model-a","b"]"#);
+        let ids = list_models(Protocol::ChatCompletions, &base, None, T).unwrap();
+        assert_eq!(ids, ["b", "MODEL-A", "model-a"]);
     }
 
     #[test]
