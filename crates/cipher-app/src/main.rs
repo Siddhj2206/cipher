@@ -17,6 +17,7 @@ mod scenes;
 mod settings;
 mod shelf;
 mod state;
+mod style;
 mod theme;
 mod view;
 mod welcome;

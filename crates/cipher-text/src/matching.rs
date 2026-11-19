@@ -240,18 +240,39 @@ fn particles_then_boundary(rest: &str, depth: u8) -> bool {
 ///   (and not the second half of `O'Brien`); the character after must not be
 ///   a letter or digit. A following possessive (`'s`, `’s`, `s'`) is therefore
 ///   allowed, and the returned range **excludes** it.
-/// - **First letter is case-insensitive**: `Argent` finds `argent`, but the
-///   rest must match exactly (`ARGENT` does not match). Apostrophes `'` and
-///   `’` are interchangeable.
+/// - **Plurals count**: a rendering whose last word has three or more letters and ends in a
+///   lowercase letter also finds its plural (`Magic Scribes`, `Witches`); the range
+///   excludes the `s` or `es`. Short names (`Ai`) don't, so `Ais` is not `Ai`.
+/// - **Any case**: `Operating Room` finds `operating room` and `OPERATING ROOM`.
+///   Apostrophes `'` and `’` are interchangeable.
+/// - **A leading "The" is optional**: `The Legion` also finds `Legion` (`the 7th Legion`).
 /// - Occurrences do not overlap. An empty rendering finds nothing.
 ///
 /// ```
 /// use cipher_text::matching::find_rendering;
-/// let t = "Argent's sword; the argent coin; Argental.";
+/// let t = "Argent's sword; the ARGENT coin; Argental.";
 /// let r: Vec<_> = find_rendering(t, "Argent").into_iter().map(|r| &t[r]).collect();
-/// assert_eq!(r, ["Argent", "argent"]);
+/// assert_eq!(r, ["Argent", "ARGENT"]);
 /// ```
 pub fn find_rendering(text: &str, rendering: &str) -> Vec<Range<usize>> {
+    let mut out = find_wording(text, rendering);
+    let bare = rendering
+        .get(..4)
+        .filter(|t| t.eq_ignore_ascii_case("the "))
+        .map(|_| rendering[4..].trim_start())
+        .filter(|r| !r.is_empty());
+    if let Some(bare) = bare {
+        for r in find_wording(text, bare) {
+            if !out.iter().any(|o| o.start < r.end && r.start < o.end) {
+                out.push(r);
+            }
+        }
+        out.sort_by_key(|r| r.start);
+    }
+    out
+}
+
+fn find_wording(text: &str, rendering: &str) -> Vec<Range<usize>> {
     let Some(first) = rendering.chars().next() else {
         return Vec::new();
     };
@@ -263,11 +284,16 @@ pub fn find_rendering(text: &str, rendering: &str) -> Vec<Range<usize>> {
             continue;
         }
         let after_first = i + c.len_utf8();
-        let Some(rest_len) = prefix_len_exact(&text[after_first..], rest) else {
+        let Some(rest_len) = prefix_len_ci(&text[after_first..], rest) else {
             continue;
         };
         let end = after_first + rest_len;
-        if word_boundary_before(text, i) && word_boundary_after(text, end) {
+        let ends = word_boundary_after(text, end)
+            || (pluralizes(rendering)
+                && ["s", "es"].iter().any(|suffix| {
+                    text[end..].starts_with(suffix) && word_boundary_after(text, end + suffix.len())
+                }));
+        if word_boundary_before(text, i) && ends {
             out.push(i..end);
             skip_until = end;
         }
@@ -275,14 +301,20 @@ pub fn find_rendering(text: &str, rendering: &str) -> Vec<Range<usize>> {
     out
 }
 
-/// Length in bytes of the prefix of `hay` that equals `pat` (apostrophe
+/// The rendering's last word is long enough, and ends in a lowercase letter, to have a plural.
+pub(crate) fn pluralizes(rendering: &str) -> bool {
+    let last = rendering.rsplit(char::is_whitespace).next().unwrap_or("");
+    last.chars().count() >= 3 && last.chars().last().is_some_and(char::is_lowercase)
+}
+
+/// Length in bytes of the prefix of `hay` that equals `pat` in any case (apostrophe
 /// variants treated as equal), or `None`.
-fn prefix_len_exact(hay: &str, pat: &str) -> Option<usize> {
+fn prefix_len_ci(hay: &str, pat: &str) -> Option<usize> {
     let mut h = hay.char_indices();
     let mut consumed = 0;
     for pc in pat.chars() {
         let (i, hc) = h.next()?;
-        if hc != pc && !(is_apostrophe(hc) && is_apostrophe(pc)) {
+        if !chars_eq_ci(hc, pc) {
             return None;
         }
         consumed = i + hc.len_utf8();

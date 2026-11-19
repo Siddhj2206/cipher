@@ -28,6 +28,16 @@ pub struct RenameSpec {
     /// Argent` renamed to `Reed Argent` should also turn a lone `Tesselid`
     /// into `Reed`. Use [`RenameSpec::with_derived_partials`] or add your own.
     pub partials: Vec<(String, String)>,
+    /// Match the old wordings in any case (`mana threads` for `Mana Threads`) and write the
+    /// new one as given, capitalised at the start of a sentence. For a Term's rendering,
+    /// whose spelling is the Glossary's, not the text's.
+    pub any_case: bool,
+    /// Also match plurals (`Mana Threads` for `Mana Thread`) and write the new wording's
+    /// plural ([`plural`]).
+    pub plurals: bool,
+    /// Wordings never touched: a match inside one of these is left alone (another Term's
+    /// rendering, `Branching Point of Corruption`, when renaming `Branching Point`).
+    pub protect: Vec<String>,
 }
 
 impl RenameSpec {
@@ -37,7 +47,20 @@ impl RenameSpec {
             old: old.into(),
             new: new.into(),
             partials: Vec::new(),
+            any_case: false,
+            plurals: false,
+            protect: Vec::new(),
         }
+    }
+
+    /// A Term's rename: the old wordings in any case and number, the new one as the Glossary
+    /// spells it, and `protect`'s wordings left alone.
+    #[must_use]
+    pub fn for_term(mut self, protect: Vec<String>) -> Self {
+        self.any_case = true;
+        self.plurals = true;
+        self.protect = protect;
+        self
     }
 
     /// Add an extra `(old, new)` pair.
@@ -160,19 +183,43 @@ pub fn rename(text: &str, spec: &RenameSpec) -> Option<Renamed> {
         return None;
     }
 
-    // Candidates: (range, pair index, case kind).
-    let mut candidates: Vec<(Range<usize>, usize, CaseKind)> = Vec::new();
+    let protected = protected_ranges(text, &spec.protect);
+    // Candidates: (range including any plural ending, pair index, case kind, plural).
+    let mut candidates: Vec<(Range<usize>, usize, CaseKind, bool)> = Vec::new();
     for (pi, (old, _)) in pairs.iter().enumerate() {
         for (i, _) in text.char_indices() {
             let Some(len) = ci_prefix_len(&text[i..], old) else {
                 continue;
             };
             let end = i + len;
-            if !word_boundary_before(text, i) || !word_boundary_after(text, end) {
+            if !word_boundary_before(text, i) {
                 continue;
             }
-            if let Some(kind) = classify(&text[i..end], old) {
-                candidates.push((i..end, pi, kind));
+            let plural_end = if word_boundary_after(text, end) {
+                Some((end, false))
+            } else if spec.plurals && crate::matching::pluralizes(old) {
+                ["es", "s"]
+                    .iter()
+                    .find(|x| {
+                        text[end..].starts_with(**x) && word_boundary_after(text, end + x.len())
+                    })
+                    .map(|x| (end + x.len(), true))
+            } else {
+                None
+            };
+            let Some((end, plural)) = plural_end else {
+                continue;
+            };
+            if protected.iter().any(|p| p.start < end && i < p.end) {
+                continue;
+            }
+            let kind = if spec.any_case {
+                Some(any_case_kind(&text[i..end], spec.new.as_str()))
+            } else {
+                classify(&text[i..end], old)
+            };
+            if let Some(kind) = kind {
+                candidates.push((i..end, pi, kind, plural));
             }
         }
     }
@@ -184,7 +231,7 @@ pub fn rename(text: &str, spec: &RenameSpec) -> Option<Renamed> {
             .then(a.1.cmp(&b.1))
     });
     let mut taken = vec![false; text.len()];
-    let mut chosen: Vec<(Range<usize>, usize, CaseKind)> = Vec::new();
+    let mut chosen: Vec<(Range<usize>, usize, CaseKind, bool)> = Vec::new();
     for c in candidates {
         if taken[c.0.clone()].iter().any(|&t| t) {
             continue;
@@ -198,8 +245,14 @@ pub fn rename(text: &str, spec: &RenameSpec) -> Option<Renamed> {
     }
 
     let mut edits: Vec<Edit> = Vec::new();
-    for (range, pi, kind) in chosen {
+    for (range, pi, kind, is_plural) in chosen {
         let (old, new) = pairs[pi];
+        let new = if is_plural {
+            plural(new)
+        } else {
+            new.to_string()
+        };
+        let new = new.as_str();
         let core = match kind {
             CaseKind::Exact => new.to_string(),
             CaseKind::Upper => new.to_uppercase(),
@@ -284,6 +337,103 @@ fn classify(found: &str, old: &str) -> Option<CaseKind> {
     } else {
         None
     }
+}
+
+/// How to write `new` over a match found in any case: as given, in capitals over an all-caps
+/// match, or capitalised over a capitalised match when `new` starts lowercase.
+fn any_case_kind(found: &str, new: &str) -> CaseKind {
+    let letters: Vec<char> = found.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.len() >= 2 && letters.iter().all(|c| c.is_uppercase()) {
+        CaseKind::Upper
+    } else if letters.first().is_some_and(|c| c.is_uppercase())
+        && new.chars().next().is_some_and(char::is_lowercase)
+    {
+        CaseKind::CapFirst
+    } else {
+        CaseKind::Exact
+    }
+}
+
+/// Byte ranges of `protect`'s wordings in `text`, in any case, as whole words.
+fn protected_ranges(text: &str, protect: &[String]) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    for p in protect.iter().filter(|p| !p.trim().is_empty()) {
+        for (i, _) in text.char_indices() {
+            if let Some(len) = ci_prefix_len(&text[i..], p)
+                && word_boundary_before(text, i)
+                && word_boundary_after(text, i + len)
+            {
+                out.push(i..i + len);
+            }
+        }
+    }
+    out
+}
+
+/// The plural of a wording: `X of Y` pluralises X (`Knight of Rectitude` → `Knights of
+/// Rectitude`), anything else its last word. A word already ending in `s` is kept, as
+/// already plural (`Outskirts`, `Knights of Rectitude`).
+///
+/// ```
+/// use cipher_text::rename::plural;
+/// assert_eq!(plural("Magic Scribe"), "Magic Scribes");
+/// assert_eq!(plural("Knight of Rectitude"), "Knights of Rectitude");
+/// assert_eq!(plural("Witch"), "Witches");
+/// assert_eq!(plural("Deity"), "Deities");
+/// assert_eq!(plural("Mana Threads"), "Mana Threads");
+/// ```
+pub fn plural(wording: &str) -> String {
+    let (head, tail) = match wording.find(" of ") {
+        Some(i) => (&wording[..i], &wording[i..]),
+        None => (wording, ""),
+    };
+    let word_start = head.rfind(char::is_whitespace).map_or(0, |i| i + 1);
+    let (lead, word) = head.split_at(word_start);
+    let lower = word.to_lowercase();
+    let pl = if lower.ends_with('s') {
+        word.to_string()
+    } else if ["x", "z", "ch", "sh"].iter().any(|e| lower.ends_with(e)) {
+        format!("{word}es")
+    } else if lower.ends_with('y') && !lower[..lower.len() - 1].ends_with(['a', 'e', 'i', 'o', 'u'])
+    {
+        format!("{}ies", &word[..word.len() - 1])
+    } else {
+        format!("{word}s")
+    };
+    format!("{lead}{pl}{tail}")
+}
+
+/// The singular of a wording whose last word looks plural (`Mana Threads` → `Mana Thread`),
+/// or `None`. Words ending in `ss`, `us` or `is` are not plurals.
+///
+/// ```
+/// use cipher_text::rename::singular;
+/// assert_eq!(singular("mana threads").as_deref(), Some("mana thread"));
+/// assert_eq!(singular("Deities").as_deref(), Some("Deity"));
+/// assert_eq!(singular("Witches").as_deref(), Some("Witch"));
+/// assert_eq!(singular("Pandemonium"), None);
+/// assert_eq!(singular("Genius"), None);
+/// ```
+pub fn singular(wording: &str) -> Option<String> {
+    let start = wording.rfind(char::is_whitespace).map_or(0, |i| i + 1);
+    let (lead, word) = wording.split_at(start);
+    let lower = word.to_lowercase();
+    let one = if lower.len() > 4 && lower.ends_with("ies") {
+        format!("{}y", &word[..word.len() - 3])
+    } else if ["sses", "xes", "ches", "shes", "zes"]
+        .iter()
+        .any(|e| lower.ends_with(e))
+    {
+        word[..word.len() - 2].to_string()
+    } else if lower.len() > 3
+        && lower.ends_with('s')
+        && !["ss", "us", "is"].iter().any(|e| lower.ends_with(e))
+    {
+        word[..word.len() - 1].to_string()
+    } else {
+        return None;
+    };
+    Some(format!("{lead}{one}"))
 }
 
 fn capitalize_first(s: &str) -> String {

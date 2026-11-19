@@ -67,6 +67,42 @@ pub fn shown(before: &str, after: &str, p: &Pal) -> Shown {
     }
 }
 
+/// The paragraph as it is and as proposed, each in full: deleted words marked on the first,
+/// inserted words on the second.
+pub fn sides(before: &str, after: &str, p: &Pal) -> ((String, Vec<Span>), (String, Vec<Span>)) {
+    let (before, after) = (blocks::render(before).text, blocks::render(after).text);
+    let (mut old, mut new) = (String::new(), String::new());
+    let (mut old_spans, mut new_spans) = (Vec::new(), Vec::new());
+    for op in diff(&before, &after) {
+        match op {
+            DiffOp::Equal(t) => {
+                old.push_str(&t);
+                new.push_str(&t);
+            }
+            DiffOp::Delete(t) => {
+                let at = old.len();
+                old.push_str(&t);
+                old_spans.push(
+                    Span::new(at, old.len())
+                        .color(p.red)
+                        .bg(p.red_tint, 1.5)
+                        .underline(p.red),
+                );
+            }
+            DiffOp::Insert(t) => {
+                let at = new.len();
+                new.push_str(&t);
+                new_spans.push(
+                    Span::new(at, new.len())
+                        .color(p.green)
+                        .bg(p.green_tint, 1.5),
+                );
+            }
+        }
+    }
+    ((old, old_spans), (new, new_spans))
+}
+
 /// The change with about 40 characters either side, for a note.
 pub fn sample(before: &str, after: &str, p: &Pal) -> El {
     let Shown {

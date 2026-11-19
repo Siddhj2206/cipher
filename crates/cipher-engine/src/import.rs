@@ -24,8 +24,9 @@ pub struct ImportReport {
 
 /// Creates a Book at `out` from a folder laid out like `Test-Books/<name>`: `raw/<n>.md`,
 /// optional `tl/<n>.md`, optional `glossary.json` (`[{term, og_term, definition, notes}]`)
-/// and `style.md` (`- rule` lines). The title is the folder's name; the languages are Korean
-/// to English. Fails if `out` exists or the folder has no `raw/<n>.md`.
+/// and `style.md` (a rule per paragraph or list item, [`crate::style_rules`]). The title is
+/// the folder's name; the languages are Korean to English. Fails if `out` exists or the
+/// folder has no `raw/<n>.md`.
 ///
 /// Existing translations come with no Pairs, so they are aligned locally
 /// ([`cipher_text::align`], anchored on the glossary's names) and every Pair is flagged
@@ -143,12 +144,9 @@ pub fn import(folder: &Path, out: &Path) -> Result<ImportReport> {
     }
 
     if let Ok(style) = std::fs::read_to_string(folder.join("style.md")) {
-        let changes: Vec<Change> = style
-            .lines()
-            .filter_map(|l| l.trim().strip_prefix("- "))
-            .map(|rule| Change::AddStyleRule {
-                text: rule.trim().to_string(),
-            })
+        let changes: Vec<Change> = crate::style_rules(&style)
+            .into_iter()
+            .map(|text| Change::AddStyleRule { text })
             .collect();
         report.rules = changes.len();
         if !changes.is_empty() {

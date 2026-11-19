@@ -7,6 +7,7 @@ use crate::state::{Screen, State};
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Action {
     Cast,
+    Style,
     Source,
     Interlinear,
     Theme,
@@ -29,6 +30,7 @@ pub const MAX_HITS: usize = 9;
 pub fn action_name(a: Action, s: &State) -> String {
     match a {
         Action::Cast => "Cast & terms".into(),
+        Action::Style => "Style".into(),
         Action::Source if s.source => "Show translation".into(),
         Action::Source => "Show source".into(),
         Action::Interlinear => "Interlinear".into(),
@@ -49,6 +51,7 @@ pub fn action_detail(a: Action, s: &State) -> String {
             s.lib.terms.len(),
             s.lib.drifting_terms()
         ),
+        Action::Style => "How this book should read".into(),
         Action::Source => "Read the chapter in its own language (Ctrl+T)".into(),
         Action::Interlinear => "Source under every paragraph (Ctrl+I)".into(),
         Action::Theme => "Ctrl+D".into(),
@@ -68,6 +71,7 @@ pub fn hits(s: &State, query: &str) -> Vec<Hit> {
     let mut out = Vec::new();
     for a in [
         Action::Cast,
+        Action::Style,
         Action::Source,
         Action::Interlinear,
         Action::Theme,
@@ -99,6 +103,7 @@ pub fn run(s: &mut State, tx: &mut Tx, hit: &Hit) {
         }
         Hit::Action(a) => match a {
             Action::Cast => s.screen = Screen::Cast,
+            Action::Style => s.open_style(),
             Action::Source => s.toggle_source(tx),
             Action::Interlinear => s.interlinear = !s.interlinear,
             Action::Theme => s.flip_dark(),

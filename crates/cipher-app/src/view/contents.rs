@@ -8,8 +8,8 @@ use super::widgets::{dot, icon_btn, plural, ring, scrolling, section};
 use crate::library::ChapterRow;
 use crate::state::{Screen, State};
 use crate::theme::{
-    CJK, HEADER_H, I_BOOK, I_LEFT_PANEL, I_PLUS, I_SHELF, I_USERS, LEFT_W, Pal, SCRUBBER_W, SERIF,
-    SMALL, UI,
+    CJK, HEADER_H, I_BOOK, I_LEFT_PANEL, I_PEN, I_PLUS, I_SHELF, I_USERS, LEFT_W, Pal, SCRUBBER_W,
+    SERIF, SMALL, UI,
 };
 
 /// The state badge at the right of a Chapter row.
@@ -249,6 +249,17 @@ pub fn contents(s: &State, p: &Pal) -> El {
                 s.screen == Screen::Cast,
             )
             .on_press(|s: &mut State| s.screen = Screen::Cast),
+        )
+        .child(
+            nav(
+                &I_PEN,
+                "Style",
+                String::new(),
+                "nav-style",
+                s.screen == Screen::Style,
+            )
+            .help("How this book should read: sent with every chapter")
+            .on_press(|s: &mut State| s.open_style()),
         )
         .child(
             nav(

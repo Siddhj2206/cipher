@@ -102,8 +102,15 @@ fn english_finder_table() {
             &["Argent", "Argent"],
         ),
         ("the argent coin", "Argent", &["argent"]), // first letter case-insensitive
-        ("ARGENT shouted", "Argent", &[]),          // the rest is exact
-        ("Argental and Reargent", "Argent", &[]),   // whole words only
+        ("ARGENT shouted", "Argent", &["ARGENT"]),  // any case
+        ("the operating room", "Operating Room", &["operating room"]),
+        ("the 7th Legion marched", "The Legion", &["Legion"]),
+        (
+            "The Legion, the legion",
+            "The Legion",
+            &["The Legion", "the legion"],
+        ),
+        ("Argental and Reargent", "Argent", &[]), // whole words only
         ("Argent-like", "Argent", &["Argent"]),
         ("“Argent!” she said", "Argent", &["Argent"]),
         ("O'Argent", "Argent", &[]), // glued to a letter by an apostrophe
@@ -128,4 +135,13 @@ fn english_finder_table() {
             "{rendering:?} in {text:?}"
         );
     }
+}
+
+#[test]
+fn renderings_find_their_plurals_but_short_names_do_not() {
+    let t = "Two Magic Scribes and a witches' brew; Ais and Ai.";
+    assert_eq!(rendered(t, "Magic Scribe"), ["Magic Scribe"]);
+    assert_eq!(rendered(t, "Witch"), ["witch"]);
+    assert_eq!(rendered(t, "Ai"), ["Ai"]);
+    assert!(rendered("Magic Scribesque", "Magic Scribe").is_empty());
 }

@@ -74,6 +74,41 @@ pub fn diff(before: &str, after: &str) -> Vec<DiffOp> {
     normalize(raw)
 }
 
+/// How many words a change keeps, deletes and inserts. Punctuation is not counted.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WordChange {
+    pub kept: usize,
+    pub deleted: usize,
+    pub inserted: usize,
+}
+
+/// Counts the words of a [`diff`].
+///
+/// ```
+/// use cipher_text::diff::{word_change, WordChange};
+/// assert_eq!(
+///     word_change("near the tower.", "near the Magic Tower."),
+///     WordChange { kept: 2, deleted: 1, inserted: 2 },
+/// );
+/// ```
+pub fn word_change(before: &str, after: &str) -> WordChange {
+    let words = |t: &str| {
+        tokenize(t)
+            .iter()
+            .filter(|t| t.word.chars().next().is_some_and(is_word_char))
+            .count()
+    };
+    let mut c = WordChange::default();
+    for op in diff(before, after) {
+        match op {
+            DiffOp::Equal(t) => c.kept += words(&t),
+            DiffOp::Delete(t) => c.deleted += words(&t),
+            DiffOp::Insert(t) => c.inserted += words(&t),
+        }
+    }
+    c
+}
+
 #[derive(Debug)]
 struct Token<'a> {
     /// The word or punctuation mark, without whitespace.

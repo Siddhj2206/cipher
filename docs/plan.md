@@ -135,7 +135,9 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Packaging and CI (asked 2026-11-15): AppImage, tar.gz, .deb, .rpm, Windows installer and portable zip, macOS universal .dmg; CI on every push; tag-driven draft releases (`docs/releasing.md`); new icon. Cross-platform paths, trash and bundled fonts. Linux packages built and run locally; Windows and macOS builds not yet run (they first run in CI).
 - [x] Onboarding and adding (asked 2026-11-15: "proper onboarding and a much more integrated new chapter flow, not a random popup with a text box"): first-run Welcome, new Book typed onto its cover on the Shelf, new chapter as a page in the Book (`desktop-ux.md` › Welcome, Shelf, Adding chapters). The paste sheet and the new-book sheet are gone.
 - [ ] Find in Book (Ctrl+F).
-- [ ] Term editing (accept or dismiss pending Terms, notes, forms) and a Book notes page (Style Rules, Story Notes, Forms of Address).
+- [x] A Style page: the Book's Style Rules as one text, sent with every Chapter (asked 2026-11-16: "a base prompt for a book"); import takes `style.md` whole.
+- [x] Drift redone (asked 2026-11-16, "fine with redoing our whole suggestions and drift workflow"; method simulated on Genius Wizard first): evidence of what the Book calls a Term, the user marks same-name wordings and keeps one (an exact Rename), the model only on request; answers checked locally; Review steps only through real changes and shows the paragraph in full, now and proposed (`translation-pipeline.md` › What the Book calls a Term).
+- [ ] Term editing (accept or dismiss pending Terms, notes, forms, merging duplicate Terms such as 포혈공 / 포혈공(怖血公)) and a Book notes page (Story Notes, Forms of Address).
 - [x] Chapter actions: Translate again, and Translate all N from here (2026-11-16).
 - [ ] Delete a Chapter.
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
@@ -147,7 +149,7 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 
 Checked headless: `sh crates/cipher-app/scripts/check-desktop.sh <book>` (Ctrl+, → text size → Esc → Alt+→ → Ctrl+/ → Aa → Ctrl+-), plus the earlier checks; scenes `settings-*`, `shortcuts`, `type-popover`, `chapter-menu`, `model-menu`, `reading-sans`. Not checked on a real desktop yet: live theme following, window size restore, single-instance hand-off, drag and drop, install.sh.
 
-Drift (2026-11-15): Cast rows open to show a Term's drift, with "Fix in N chapters" (`cipher_engine::fix_drift`, one Suggestion) and "It can go unnamed" (`term.may_omit`, schema V3). One-character sources no longer count as left unnamed. Run against a real model 2026-11-16 (see milestone 6); Drift Suggestions now carry their own request and labels (schema V4).
+Drift (2026-11-15, redone 2026-11-16): Cast rows open to show a Term's drift and how the Book names it; "Fix in N chapters" (`fix_drift`) is gone, replaced by Keep a wording (`use_wording`) and Ask the model (`ask_model`). Checked headless on a copy of Genius Wizard: Magic Scribe's evidence, marking, Keep (998 exact replacements), and the Review's now/proposed view; the Style page saves. Not yet run: Ask the model against a real Endpoint since the rewrite.
 
 Big Books (2026-11-15): a 1,285-Chapter Book froze the app for 49 s on open. Now it opens in 0.2 s. The fixes were schema V2's indexes; `Library::open_quick`, which counts only the open Chapter, plus a background `Library::scan` (2.8 s on 8 threads, Aho-Corasick prefilter) for the rest; and a virtualized contents list with a thinned scrubber. Time it with `CIPHER_BIG_BOOK=<book> cargo test --release -p cipher-app big_book -- --ignored --nocapture`.
 
@@ -184,6 +186,8 @@ Deferred by the user (2026-11-11): desktop only for now. To be designed in detai
 - **Wayland IME redraw bug (rune#225):** check that Korean input works in the fix box.
 
 ## Notes
+- 2026-11-16: The user's real Genius Wizard Book holds damage from the old position-paired drift fixes (accepted 2026-11-15): chapter 246 has a duplicated paragraph and lost "Contrary to Evelyn's concerns…" (blocks 10416/10417, Suggestion #2), and that Suggestion also turned "Blaiver Tower" into "Blaiver Magic Tower" in 9 accepted edits. Only these were checked. Undo needs a History panel or a by-hand restore from the tl/ files; the user hasn't been asked yet. Its open Suggestions #3–#5 are old drift fixes with 170 queued batches; dismissing them is the user's call.
+- 2026-11-16: Open on Drift: source words longer than a Term (흑마법사 is 61% of 흑마법's Pairs), Terms that aren't names (세 번째 = "The Third"), sibling Terms ("Magic Tower" family) and duplicate Terms. Glossary editing, not Drift, should handle them.
 
 - 2026-11-16: Drove the app headless against the user's ChatGPT Endpoint (`CIPHER_LIVE`, see `architecture.md` › cipher-dev) on scratch copies and fixed what showed up. Biggest: imported Books were paired by position and drifted apart within a few paragraphs, so Interlinear, Drift and Suggestions were wrong and a Drift fix proposed overwriting unrelated sentences; now aligned locally, old Books re-paired once. Also: `SetTranslation` failed with a foreign-key error on any Chapter with a Suggestion (re-translate, re-pair); drift Suggestions showed the model's instruction as the reader's words; no feedback after Fix or Translate again; toasts never went away; narrow windows clipped the page; Terms sidebar empty before translating; Cast had no search. Measured live: a Chapter of 143 paragraphs took ~50 s on gpt-6-luna (Free plan) for 4,619 tokens in and 2,910 out. Still open from that pass: no History panel, so a re-translation or a re-pair can only be undone from code; settings sheet keeps its fixed height; Copy translation needs a Rune clipboard call.
 

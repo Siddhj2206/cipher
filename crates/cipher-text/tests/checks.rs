@@ -84,7 +84,9 @@ fn forbidden_rendering_needs_the_source_to_name_the_term() {
     assert!(forbidden_in_pair(&pair("테셀리드가 웃었다.", "Reed smiled."), &terms).is_empty());
     assert!(forbidden_in_pair(&pair("테셀리드가 웃었다.", "He smiled."), &terms).is_empty());
     // Whole words only.
-    assert!(forbidden_in_pair(&pair("테셀리드가 웃었다.", "Tesselids smiled."), &terms).is_empty());
+    assert!(
+        forbidden_in_pair(&pair("테셀리드가 웃었다.", "Tesselidan smiled."), &terms).is_empty()
+    );
 }
 
 #[test]

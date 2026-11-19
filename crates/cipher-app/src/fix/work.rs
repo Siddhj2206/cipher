@@ -44,6 +44,13 @@ pub enum Msg {
     ModelsListed(String, Result<Vec<String>, String>),
     /// How many Chapters an old import's Pairs were re-paired in.
     Realigned(Result<usize, String>),
+    /// How the Book names a Term (`Library::evidence`), for the Library generation it was
+    /// asked in.
+    Evidence(
+        cipher_book::TermId,
+        u64,
+        Result<cipher_engine::Evidence, String>,
+    ),
     /// A folder import finished: the new Book and what it holds, or why it failed.
     Imported(Result<(std::path::PathBuf, cipher_engine::ImportReport), String>),
 }
@@ -242,6 +249,9 @@ impl crate::state::State {
                 Msg::Realigned(Ok(n)) => self.on_realigned(n),
                 Msg::Realigned(Err(e)) => {
                     self.toast = Some(format!("Could not re-pair imported chapters: {e}"))
+                }
+                Msg::Evidence(term, generation, result) => {
+                    self.on_evidence(term, generation, result)
                 }
                 Msg::Scanned(Ok(scan)) => self.lib.apply_scan(scan),
                 Msg::Scanned(Err(e)) => self.toast = Some(format!("Could not count Terms: {e}")),

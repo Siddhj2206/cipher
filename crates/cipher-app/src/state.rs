@@ -29,6 +29,8 @@ pub enum Screen {
     Cast,
     /// The new-Chapter page (`draft.rs`).
     Draft,
+    /// The Book's style, as one text (`style.rs`).
+    Style,
 }
 
 /// The sections of the Settings window.
@@ -102,6 +104,8 @@ pub struct State {
     pub cast_search: TextEdit,
     /// The Cast page shows only drifting Terms.
     pub cast_drifting: bool,
+    /// How the Book names the Term whose drift panel is open (`drift.rs`).
+    pub look: Option<crate::drift::Look>,
     pub palette: Option<TextEdit>,
     pub palette_pick: usize,
     pub toast: Option<String>,
@@ -117,6 +121,8 @@ pub struct State {
     pub welcome: Option<Welcome>,
     /// A new Chapter being pasted or typed onto its page.
     pub draft: Option<Draft>,
+    /// The Style page's text, and what is saved, while it is open.
+    pub style: Option<crate::style::StyleEdit>,
     /// The Settings window, open at this section.
     pub settings_page: Option<Section>,
     /// The Endpoint form in Settings › Translation, once it has shown.
@@ -179,6 +185,7 @@ impl State {
             cast_open: None,
             cast_search: TextEdit::new(""),
             cast_drifting: false,
+            look: None,
             palette: None,
             palette_pick: 0,
             toast: None,
@@ -188,6 +195,7 @@ impl State {
             bg: Background::new(),
             home: None,
             draft: None,
+            style: None,
             welcome: None,
             settings_page: None,
             settings: None,
@@ -361,6 +369,7 @@ impl State {
         self.term_card = Some(TermCard { block, term });
         self.tab = Tab::Terms;
         self.screen = Screen::Reading;
+        self.look_at(term);
         if let Some(tx) = tx {
             tx.scroll_key_to(format!("row{}", block.0), 160.0);
         }
@@ -510,7 +519,7 @@ impl State {
 
     /// The new-Chapter page has no Terms or Suggestions yet: it gets the room.
     fn screen_has_context(&self) -> bool {
-        self.screen != Screen::Draft
+        !matches!(self.screen, Screen::Draft | Screen::Style)
     }
 
     /// The reading column: the chosen width, narrowed to what the window leaves.
@@ -706,6 +715,14 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
             return true;
         }
         return false;
+    }
+    if s.screen == Screen::Style {
+        match &k.key {
+            Key::Command('s') => s.save_style(),
+            Key::Escape => s.leave_style(),
+            _ => return false,
+        }
+        return true;
     }
     if s.screen == Screen::Draft && s.draft.is_some() {
         match &k.key {

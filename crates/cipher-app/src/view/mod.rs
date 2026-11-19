@@ -16,6 +16,7 @@ mod preferences;
 mod review;
 mod sheets;
 mod shelf;
+mod style;
 mod welcome;
 mod widgets;
 
@@ -93,6 +94,7 @@ fn screen(s: &State, cx: &mut Cx<State>) -> El {
     let content = match s.screen {
         Screen::Cast => cast::cast(s, &p),
         Screen::Draft => draft::draft_page(s, &p),
+        Screen::Style => style::style_page(s, &p),
         Screen::Reading => page::reading(s, cx, &p),
     };
     let mut middle = row().w_full().grow(1.0).min_h(0.0);

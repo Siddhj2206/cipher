@@ -40,10 +40,11 @@ Everything Cipher can do to text without a model or a database.
 - **Markers:** write numbered Blocks as `[n]` lines; parse a model response leniently into Pairs (`[n]`, `[n-m]`, and stray formats such as `12.` or `【12】`), plus the `NEW_TERMS:` and `NOTES:` trailer. Report missing and duplicate numbers.
 - **Matching:** a recall matcher (selecting Terms for a prompt) and a precision matcher (checks: longest match first, with Hangul boundary rules for short source forms).
 - **Checks:** coverage, leftover source script, Forbidden Renderings present, missing names at Chapter level, length ratio on long Blocks. These return findings, never fixes.
-- **Renames:** an exact replace with word boundaries, case, possessives, "a"/"an" agreement and partial names. It returns the new text and the spans changed.
+- **Renames:** an exact replace with word boundaries, case, possessives, "a"/"an" agreement and partial names; for a Term's rename also any case, plurals and protected wordings. It returns the new text and the spans changed.
 - **Drift:** per Term, per Chapter, from counts.
+- **Wordings:** over a Book's Pairs, what the translation calls a Term where it doesn't use its rendering (evidence only; `translation-pipeline.md` › What the Book calls a Term).
 - **Source resolution:** given Pairs that contain a Selection, find the source n-gram frequent in them and rare elsewhere.
-- **Diff:** a word-level diff of two strings, for Review display.
+- **Diff:** a word-level diff of two strings, for Review display, and its word counts (kept, deleted, inserted) for checking model answers.
 
 **Tests:** table tests through these functions, with synthetic fixtures checked in. `Test-Books/` is gitignored, so tests never depend on it.
 
@@ -155,6 +156,20 @@ pub fn reach(book: &Book, selection: &Selection, scope: Scope) -> Result<Reach>;
 /// A Rename's exact replacements become Proposed Edits at once; the rest become Jobs.
 pub fn suggest(book: &mut Book, request: SuggestionRequest) -> Result<SuggestionId>;
 
+/// How the Book names a Term: the Pairs naming it, those rendering it, up to five other
+/// wordings with chapters and examples, and those naming it neither way. Reads every
+/// Chapter (~2 s on 1,278), so off the UI thread.
+pub fn evidence(book: &Book, term: TermId) -> Result<Evidence>;
+/// Keeps `winner` as the Term's rendering and renames the wordings the user marked as the
+/// same name: one Revision with a From now on Rename Suggestion.
+pub fn use_wording(book: &mut Book, term: TermId, winner: &str, same: &[String]) -> Result<Option<SuggestionId>>;
+/// The opt-in model step for Pairs that name a Term neither way.
+pub fn ask_model(book: &mut Book, term: TermId) -> Result<Option<SuggestionId>>;
+
+/// The Style Rules as one text, and back (a rule per paragraph or list item).
+pub fn style_text(book: &Book) -> Result<String>;
+pub fn set_style(book: &mut Book, text: &str) -> Result<bool>;
+
 /// Queues Chapters for translation.
 pub fn translate(book: &mut Book, chapters: &[ChapterId]) -> Result<()>;
 
@@ -189,6 +204,8 @@ For developers only: users never need it. The UI does not depend on it.
 - `cipher-dev jobs <book>`: Jobs with tokens and the model that did them.
 - `cipher-dev suggestions <book>`: every Suggestion with its Proposed Edits, before/after or the skip reason.
 - `cipher-dev realign <book>`: re-pair Chapters an old import paired by position, timed.
+- `cipher-dev drift <book>`: Terms that drift, by Chapters.
+- `cipher-dev wordings <book> <rendering>`: a Term's evidence; `use-wording <book> <rendering> <winner> [same]...` keeps a wording; `ask-model <book> <rendering>` queues the opt-in model step; `work <book>` runs queued Jobs with the `translate` Endpoint variables.
 
 Driving the real app headless (`--script`, `--snap`, `--tree`, `--out` from Rune's tooling) always works on a scratch copy of the Book. Two variables help a session check real behaviour:
 - `CIPHER_LIVE=1` reads the real `endpoints.json` and keychain and runs the worker, so a headless run translates with the user's Endpoint (use `--realtime`). Nothing is written to `endpoints.json`; a ChatGPT session may refresh its tokens in the keychain, as the app does.

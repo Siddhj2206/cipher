@@ -99,6 +99,11 @@ impl Library {
         self.book.path()
     }
 
+    /// The Book, for reads the Library doesn't keep (the Style Rules).
+    pub fn book(&self) -> &cipher_book::Book {
+        &self.book
+    }
+
     /// The Book handle for the app's own writes, such as seeding a scene.
     pub fn book_mut(&mut self) -> &mut cipher_book::Book {
         &mut self.book
@@ -123,17 +128,40 @@ impl Library {
         Ok(id)
     }
 
-    /// Fixes Term `term`'s Drift in every Chapter it drifts in, as one Suggestion
-    /// (`cipher_engine::fix_drift`). `None` when there was nothing it could change.
-    pub fn fix_drift(&mut self, term: usize) -> Result<Option<SuggestionId>> {
+    /// How the Book names Term `term`, as a job for another thread: it reads the whole Book
+    /// (`cipher_engine::evidence`).
+    pub fn evidence(
+        &self,
+        term: usize,
+    ) -> impl FnOnce() -> Result<cipher_engine::Evidence> + Send + 'static {
+        let (path, id) = (self.book.path().to_path_buf(), self.terms[term].id);
+        move || {
+            cipher_engine::evidence(&cipher_book::Book::open(&path)?, id)
+                .map_err(super::engine_error)
+        }
+    }
+
+    /// Makes `winner` Term `term`'s rendering and renames the wordings in `same` to it, as one
+    /// Suggestion to review (`cipher_engine::use_wording`). The Glossary changes, so the
+    /// Library reloads.
+    pub fn use_wording(
+        &mut self,
+        term: usize,
+        winner: &str,
+        same: &[String],
+    ) -> Result<Option<SuggestionId>> {
         let id = self.terms[term].id;
-        let chapters: Vec<ChapterId> = self.usage[term]
-            .drift_chapters
-            .iter()
-            .map(|&i| self.chapters[i].id)
-            .collect();
-        let made =
-            cipher_engine::fix_drift(&mut self.book, id, &chapters).map_err(super::engine_error)?;
+        let made = cipher_engine::use_wording(&mut self.book, id, winner, same)
+            .map_err(super::engine_error)?;
+        self.reload()?;
+        Ok(made)
+    }
+
+    /// Sends the Pairs that name Term `term` neither way to the model
+    /// (`cipher_engine::ask_model`).
+    pub fn ask_model(&mut self, term: usize) -> Result<Option<SuggestionId>> {
+        let id = self.terms[term].id;
+        let made = cipher_engine::ask_model(&mut self.book, id).map_err(super::engine_error)?;
         self.refresh_queue()?;
         Ok(made)
     }

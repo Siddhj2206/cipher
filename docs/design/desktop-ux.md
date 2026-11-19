@@ -53,7 +53,7 @@ Three columns, each with a 52px header row so the headers line up.
 **Contents (left, 272px, Ctrl+\\)**
 - **Header:** the Book title (serif italic) and a hide button.
 - **Progress:** one hairline bar (translated in ink3, waiting in amber) and the line "92 translated · 2 waiting · 94 chapters".
-- **Pages:** Reading, Cast & terms (with its drifting count) and Add chapters (Ctrl V).
+- **Pages:** Reading, Cast & terms (with its drifting count), Style and New chapter (Ctrl N).
 - **Chapter list:**
   - each row shows the number in tabular figures, the Chapter's opening line (two lines, serif) and badges;
   - badges: a red count of pending Proposed Edits, an amber dot for waiting to translate;
@@ -121,9 +121,10 @@ Three columns, each with a 52px header row so the headers line up.
 5. **Review, two ways:**
    - **Rename:** "143 exact replacements in 48 chapters", two diff samples, then **Accept all 143** and "One by one".
    - **Model-written edits:** **Review** and "Accept all".
+   - Paragraphs the model left as they were (a SKIP, or an answer the local checks turned down) are one status line with the first reason, "12 left as they are · “already names it”". They are never stepped through, and are dismissed with the last decision; a note holding only those offers **Dismiss**.
 6. **One by one, inline:**
    - the current paragraph gets a tinted block with its source line above;
-   - the diff is shown in place: deleted text red with an underline, a thin space, inserted text green;
+   - the paragraph shows in full twice, like source above translation: NOW, with deleted words red and underlined, then PROPOSED, with inserted words green. Other paragraphs of the Suggestion in view show the compact inline diff;
    - a dark bar at the bottom reads "“Holy Scripture” → “Divine Scripture” · 3 of 143 · Chapter 231", with buttons for previous, next, skip (X), accept rest (Shift+A) and accept (A, red);
    - J and K move;
    - Esc returns to where you were reading;
@@ -151,9 +152,19 @@ The Glossary as a page the Book fills in itself.
   - total uses ("–" when the translation never uses the rendering);
   - a sparkline of use across the Book (block characters, DejaVu Sans Mono 7.5px; at most 48, so a long Book sums runs of Chapters into each);
   - a red "drift · N ch" chip, or "may go unnamed".
-- **Opening a row** (click) shows what the drift is ("“Tower Master” appears 12 times in 5 chapters…", "Left unnamed in 3 chapters…"), the drifting Chapters as number chips that open them, and two buttons: **Fix in N chapters** (one Suggestion, reviewed under Suggestions; see `translation-pipeline.md` › Fixing Drift; a line above it says what fixing does) and **It can go unnamed** (or **Check it again**). Once a fix is sent the panel reports it and the button becomes **Review the fix**. Rows have no tooltip: Rune keeps a tooltip up through a press, and it would cover the panel that opens. The Term card in the reading sidebar has the same panel.
+- **Opening a row** (click) shows what the drift is ("A forbidden wording appears 12 times in 5 chapters", "Left unnamed in 3 chapters…") and the drifting Chapters as number chips that open them. Below, **How the book names it** ("1,334 paragraphs name 마력사"; "Reading the Book…" for the second it takes), one entry per wording (`translation-pipeline.md` › What the Book calls a Term):
+  - the glossary's rendering first, then up to five other wordings, each with its paragraph count, chapter range ("ch 245–1494"), "forbidden" or "also 판데모니엄 = Pandemonium" where it applies, and **Examples**: two Pairs, source above translation, the wording highlighted;
+  - a **Same name?** chip on each other wording (Forbidden Renderings start marked) and **Keep · N changes** on the rendering and on each marked wording, N being the paragraphs that choice rewrites ("Keep · 895 changes" against "Keep · 272 changes" says which half of the Book to rewrite). Keep sends one From now on Rename, reviewed under Suggestions;
+  - "N paragraphs name it neither way, often with a pronoun" with **Ask the model** (opt-in);
+  - **It can go unnamed** (or **Check it again**).
+
+  While a rename or a model request is open, the panel says what it holds and offers **Review**. Rows have no tooltip: Rune keeps a tooltip up through a press, and it would cover the panel that opens. The Term card in the reading sidebar has the same panel.
 
 ![Cast & terms](img/cast.png)
+
+## Style
+
+The Book's Style Rules as one page (nav row "Style", the palette, `view/style.rs`): "How this book should read", a line on what it is for, and one serif text field holding every rule, a paragraph or list item each (`cipher_engine::style_rules`). The rules go with every Chapter's translation, before the glossary; From now on fixes add theirs here. Save (Ctrl+S) writes them as one Revision and says chapters translated from now on follow it; Revert puts back what is saved; Esc returns to reading, keeping unsaved text for the next visit. Importing a folder brings `style.md` in whole, a paragraph or list item per rule, headings dropped.
 
 ## Adding chapters
 
@@ -173,7 +184,7 @@ Adding inserts the chapter in number order, queues it and opens it where it land
 ## Palette (Ctrl+K)
 
 A 600px sheet over a scrim, 110px from the top. It finds:
-- actions: Cast & terms, Suggestions, Show source, Interlinear, Dark/Light mode, Publish to Reader, Add chapters;
+- actions: Cast & terms, Style, Suggestions, Show source, Interlinear, Dark/Light mode, Publish to Reader, Add chapters;
 - Chapters by number, shown with their opening line;
 - Terms by rendering or source form.
 

@@ -249,3 +249,44 @@ fn rename_is_idempotent_on_its_own_output() {
         .text;
     assert_eq!(rename(&once, &spec), None);
 }
+
+#[test]
+fn a_terms_rename_takes_any_case_and_number_and_spares_other_names() {
+    let spec = |old: &str, new: &str, protect: &[&str]| {
+        RenameSpec::new(old, new).for_term(protect.iter().map(|p| p.to_string()).collect())
+    };
+    let r = |text: &str, s: &RenameSpec| rename(text, s).map(|r| r.text);
+    let scribe = spec("Mana Thread", "Magic Scribe", &[]);
+    assert_eq!(
+        r(
+            "His mana threads caught a mana thread. Mana Threads' ends.",
+            &scribe
+        )
+        .unwrap(),
+        "His Magic Scribes caught a Magic Scribe. Magic Scribes' ends."
+    );
+    let barrier = spec("barrier magic", "Barrier Spellcraft", &[]);
+    assert_eq!(
+        r("his barrier magic held", &barrier).unwrap(),
+        "his Barrier Spellcraft held"
+    );
+    let point = spec(
+        "turning point",
+        "Branching Point",
+        &["Turning Point of Corruption"],
+    );
+    assert_eq!(
+        r("A turning point, the Turning Point of Corruption.", &point).unwrap(),
+        "A Branching Point, the Turning Point of Corruption."
+    );
+    let knights = spec("Correction Knight", "Knights of Rectitude", &[]);
+    assert_eq!(
+        r("the Correction Knights came", &knights).unwrap(),
+        "the Knights of Rectitude came"
+    );
+    let lower = spec("Pandemonium", "the demonic conflux", &[]);
+    assert_eq!(
+        r("Pandemonium fell.", &lower).unwrap(),
+        "The demonic conflux fell."
+    );
+}

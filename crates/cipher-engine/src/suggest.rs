@@ -13,7 +13,7 @@ use cipher_book::{
 };
 use cipher_llm::{Request, Usage};
 use cipher_text::rename::{self, RenameSpec};
-use cipher_text::{markers, matching, resolve};
+use cipher_text::{diff, markers, matching, resolve};
 use serde::{Deserialize, Serialize};
 
 use crate::prompt;
@@ -101,6 +101,25 @@ fn term_for<'a>(terms: &'a [Term], selection: &str) -> Option<&'a Term> {
         })
 }
 
+/// `expr` first, then every longer Term source that contains it. Matching against all of
+/// them lets the longest name win, so 마탑 inside 블레이버 마탑 (its own Term) is not 마탑.
+fn rivals<'a>(expr: &'a str, terms: &'a [Term]) -> Vec<&'a str> {
+    let mut out = vec![expr];
+    out.extend(
+        terms
+            .iter()
+            .filter(|t| t.status != TermStatus::Dismissed)
+            .map(|t| t.fields.source.as_str())
+            .filter(|s| s.len() > expr.len() && s.contains(expr)),
+    );
+    out
+}
+
+/// The source names `rivals[0]` itself, outside a longer name.
+fn names(source: &str, rivals: &[&str]) -> bool {
+    !rivals[0].is_empty() && matching::find(source, rivals).iter().any(|m| m.index == 0)
+}
+
 struct Plan {
     source_expr: Option<String>,
     term: Option<TermId>,
@@ -145,13 +164,15 @@ fn plan(book: &Book, selection: &Selection, scope: Scope) -> Result<Plan> {
         }
     };
     let unresolved = source_expr.is_none();
+    let rivals = source_expr
+        .as_deref()
+        .map(|e| rivals(e, &glossary.terms))
+        .unwrap_or_default();
     let candidates = corpus
         .into_iter()
         .filter_map(|(chapter, b, source)| {
             let exact = contains(&b.text);
-            let by_source = source_expr
-                .as_deref()
-                .is_some_and(|e| !matching::find(&source, &[e]).is_empty());
+            let by_source = !rivals.is_empty() && names(&source, &rivals);
             (exact || by_source).then_some(Candidate {
                 chapter,
                 block: b.id,
@@ -257,106 +278,6 @@ pub fn suggest(book: &mut Book, req: SuggestionRequest) -> Result<SuggestionId> 
     Ok(id)
 }
 
-/// Fixes a Term's Drift in `chapters` as one Suggestion, reviewed like any other
-/// (`docs/design/translation-pipeline.md` › Fixing Drift).
-///
-/// Only Pairs whose source names the Term are touched. A Forbidden Rendering there becomes
-/// an exact replacement, with no model call. In a Chapter that never renders the Term, its
-/// Blocks that leave the Term out go to the model, which may keep a pronoun where English
-/// wants one. `Ok(None)` when there is nothing to fix.
-pub fn fix_drift(
-    book: &mut Book,
-    term: TermId,
-    chapters: &[ChapterId],
-) -> Result<Option<SuggestionId>> {
-    let glossary = book.glossary()?;
-    let Some(t) = glossary.terms.iter().find(|t| t.id == term) else {
-        return Err(cipher_book::Error::NotFound("term", term.0).into());
-    };
-    let source = t.fields.source.trim().to_string();
-    let rendering = t.fields.rendering.trim().to_string();
-    let low = rendering.to_lowercase();
-    // A Forbidden Rendering inside the rendering itself ("Tower Lord" in "Magic Tower Lord")
-    // can't be replaced word for word; those Blocks go to the model.
-    let (local, judged): (Vec<&String>, Vec<&String>) = t
-        .forbidden
-        .iter()
-        .filter(|f| !f.trim().is_empty() && f.to_lowercase() != low)
-        .partition(|f| !low.contains(&f.to_lowercase()));
-
-    let mut edits = Vec::new();
-    let mut for_model = Vec::new();
-    let mut anchor: Option<(ChapterId, BlockId)> = None;
-    for &cid in chapters {
-        let chapter = book.chapter(cid)?;
-        let renders = |text: &str| !matching::find_rendering(text, &rendering).is_empty();
-        let named_somewhere = chapter.translation.iter().any(|b| renders(&b.text));
-        for pair in &chapter.pairs {
-            let src: String = chapter
-                .blocks_in(pair.id, Side::Source)
-                .map(|b| b.text.as_str())
-                .collect::<Vec<_>>()
-                .join("\n");
-            if matching::find(&src, &[source.as_str()]).is_empty() {
-                continue;
-            }
-            for b in chapter.blocks_in(pair.id, Side::Translation) {
-                let mut text = b.text.clone();
-                for f in &local {
-                    if let Some(r) = rename::rename(&text, &RenameSpec::new(f.as_str(), &rendering))
-                    {
-                        text = r.text;
-                    }
-                }
-                let has = |f: &&String| !matching::find_rendering(&b.text, f).is_empty();
-                if text != b.text {
-                    edits.push(NewProposedEdit {
-                        block: b.id,
-                        before: b.text.clone(),
-                        after: Some(text),
-                        origin: EditOrigin::Rename,
-                        skip_reason: None,
-                    });
-                } else if judged.iter().any(has)
-                    || (!t.fields.may_omit && !named_somewhere && !renders(&b.text))
-                {
-                    for_model.push(b.id);
-                } else {
-                    continue;
-                }
-                anchor.get_or_insert((cid, b.id));
-            }
-        }
-    }
-    let Some((chapter, block)) = anchor else {
-        return Ok(None);
-    };
-    let said = format!("Name \u{201c}{rendering}\u{201d} wherever the source names {source}.");
-    let applied = book.apply(Change::Group {
-        kind: RevisionKind::Suggestion,
-        label: format!("Fixed drift of \u{201c}{rendering}\u{201d}"),
-        changes: vec![Change::AddSuggestion(NewSuggestion {
-            chapter,
-            block,
-            quote: rendering.clone(),
-            said,
-            scope: Scope::Everywhere,
-            is_rename: false,
-            source_expr: Some(source),
-            state: if for_model.is_empty() {
-                SuggestionState::Ready
-            } else {
-                SuggestionState::Working
-            },
-            kind: SuggestionKind::Drift,
-            edits,
-        })],
-    })?;
-    let id = SuggestionId(applied.created[0]);
-    enqueue_batches(book, id, &for_model)?;
-    Ok(Some(id))
-}
-
 /// The Term or Style Rule a From now on Suggestion writes, and the Story Notes it renames.
 fn from_now_on(
     book: &Book,
@@ -412,7 +333,11 @@ fn from_now_on(
     Ok(out)
 }
 
-fn enqueue_batches(book: &mut Book, suggestion: SuggestionId, blocks: &[BlockId]) -> Result<()> {
+pub(crate) fn enqueue_batches(
+    book: &mut Book,
+    suggestion: SuggestionId,
+    blocks: &[BlockId],
+) -> Result<()> {
     for chunk in blocks.chunks(BATCH) {
         let input = BatchInput {
             blocks: chunk.iter().map(|b| b.0).collect(),
@@ -543,14 +468,37 @@ pub(crate) fn run_batch(
         .collect();
 
     let mut text = match (suggestion.kind, &suggestion.source_expr) {
-        (SuggestionKind::Drift, Some(expr)) => format!(
-            "REQUEST: The glossary renders {expr} as \u{201c}{q}\u{201d}. In each paragraph, \
-             where the source names {expr} and the translation calls it something else or \
-             leaves it out, name \u{201c}{q}\u{201d}. Keep a pronoun only where English reads \
-             better with one. Reply SKIP when the paragraph already names it, or when {expr} \
-             there is not this name (an ordinary word, another person).\n",
-            q = suggestion.quote
-        ),
+        (SuggestionKind::Drift, Some(expr)) => {
+            let mut t = format!(
+                "REQUEST: The glossary renders {expr} as \u{201c}{q}\u{201d}. In each paragraph, \
+                 where the source names {expr} and the translation calls it something else or \
+                 leaves it out, name \u{201c}{q}\u{201d}. Change only the words for that name; \
+                 keep every other word. Keep a pronoun only where English reads better with \
+                 one. Reply SKIP when the paragraph already names it, or when {expr} there is \
+                 not this name (an ordinary word, another person).\n",
+                q = suggestion.quote
+            );
+            let longer: Vec<String> = glossary
+                .terms
+                .iter()
+                .filter(|t| {
+                    let s = t.fields.source.as_str();
+                    t.status != TermStatus::Dismissed
+                        && s.len() > expr.len()
+                        && s.contains(expr.as_str())
+                        && all_source.contains(s)
+                })
+                .map(|t| format!("{} = {}", t.fields.source, t.fields.rendering))
+                .collect();
+            if !longer.is_empty() {
+                t.push_str(&format!(
+                    "These longer names contain {expr} but are other names; keep their own \
+                     renderings: {}.\n",
+                    longer.join("; ")
+                ));
+            }
+            t
+        }
         _ => {
             let mut t = format!(
                 "REQUEST: The reader selected \u{201c}{}\u{201d} and said: {}\n",
@@ -617,7 +565,10 @@ pub(crate) fn run_batch(
                     )
                 }
                 Some(a) if a == before.trim() => (None, Some("already fine".into())),
-                Some(a) => (Some(a.to_string()), None),
+                Some(a) => match doubt(&suggestion, before, a) {
+                    Some(why) => (None, Some(why)),
+                    None => (Some(a.to_string()), None),
+                },
             };
             NewProposedEdit {
                 block: *block,
@@ -637,6 +588,37 @@ pub(crate) fn run_batch(
     });
     finish_if_last(w, job, emit)?;
     Ok(Outcome::Done(completion.usage))
+}
+
+/// Why a model answer can't be proposed, judged locally. A drift fix must name the Term and
+/// change little else; any answer that rewrites most of the paragraph, or adds more than the
+/// paragraph had, is a model that answered for the wrong paragraph.
+fn doubt(suggestion: &Suggestion, before: &str, after: &str) -> Option<String> {
+    let c = diff::word_change(before, after);
+    let had = c.kept + c.deleted;
+    if suggestion.kind == SuggestionKind::Drift {
+        let name = suggestion.quote.trim();
+        if matching::find_rendering(after, name).is_empty() {
+            return Some(format!(
+                "the model's version doesn't name \u{201c}{name}\u{201d}"
+            ));
+        }
+        let room = name.split_whitespace().count() + 3;
+        if c.deleted > 5 || c.inserted > room + c.deleted {
+            return Some(format!(
+                "the model rewrote more than the name ({} words out, {} in)",
+                c.deleted, c.inserted
+            ));
+        }
+        return None;
+    }
+    if had >= 6 && c.kept * 10 < had * 3 {
+        return Some("the model rewrote the whole paragraph".into());
+    }
+    if c.inserted > had + 12 {
+        return Some("the model added text the paragraph doesn't have".into());
+    }
+    None
 }
 
 /// The tiny call for a one-off Selection: which source words does it translate? The answer
@@ -683,11 +665,11 @@ pub(crate) fn run_resolve(
         .to_string();
     if !answer.is_empty() && answer != "NONE" && source.contains(&answer) {
         let covered = planned_blocks(&w.book, &suggestion)?;
+        let glossary = w.book.glossary()?;
+        let rivals = rivals(&answer, &glossary.terms);
         let more: Vec<BlockId> = corpus
             .iter()
-            .filter(|(_, b, s)| {
-                !covered.contains(&b.id) && !matching::find(s, &[answer.as_str()]).is_empty()
-            })
+            .filter(|(_, b, s)| !covered.contains(&b.id) && names(s, &rivals))
             .map(|(_, b, _)| b.id)
             .collect();
         let applied = w.book.apply(Change::SetSuggestionState {

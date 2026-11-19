@@ -9,15 +9,19 @@ use crate::state::State;
 /// The edits still to decide: the ones with new text first, then the Blocks the model chose to
 /// leave as they are (accepting one of those only dismisses it).
 pub fn queue(s: &Suggestion) -> Vec<&ProposedEdit> {
-    let pending = |e: &&ProposedEdit| e.state == cipher_book::EditState::Pending;
-    let mut q: Vec<&ProposedEdit> = s
-        .edits
+    s.edits
         .iter()
-        .filter(pending)
-        .filter(|e| e.after.is_some())
-        .collect();
-    q.extend(s.edits.iter().filter(pending).filter(|e| e.after.is_none()));
-    q
+        .filter(|e| e.state == cipher_book::EditState::Pending && e.after.is_some())
+        .collect()
+}
+
+/// Pending edits the model left as they were: never stepped through, dismissed with the last
+/// decision on the Suggestion.
+fn left_alone(s: &Suggestion) -> impl Iterator<Item = (ProposedEditId, bool)> + '_ {
+    s.edits
+        .iter()
+        .filter(|e| e.state == cipher_book::EditState::Pending && e.after.is_none())
+        .map(|e| (e.id, false))
 }
 
 /// The pending edit on `block` in the Suggestion under Review, and whether it is the current one.
@@ -79,9 +83,12 @@ impl State {
         let mut acc = finished_for(sug);
         let decisions = queue(sug)
             .into_iter()
-            .map(|e| (e.id, e.after.is_some()))
+            .map(|e| (e.id, true))
+            .chain(left_alone(sug))
             .collect();
+        let left = left_alone(sug).count();
         if self.decide_into(&mut acc, decisions) {
+            acc.skipped -= left;
             self.record(acc);
         }
     }
@@ -212,9 +219,18 @@ impl State {
         };
         let successor = self.neighbour(1);
         let mut acc = review.acc.clone();
-        if !self.decide_into(&mut acc, vec![(review.edit, accept)]) {
+        let mut decisions = vec![(review.edit, accept)];
+        if successor.is_none()
+            && let Some(sug) = self.lib.suggestion(review.suggestion)
+        {
+            decisions.extend(left_alone(sug));
+        }
+        let left = decisions.len() - 1;
+        if !self.decide_into(&mut acc, decisions) {
             return;
         }
+        // What the model left alone isn't counted as skipped by the user.
+        acc.skipped -= left;
         if let Some(r) = &mut self.fix.review {
             r.acc = acc;
         }
@@ -232,12 +248,15 @@ impl State {
         let Some(sug) = self.lib.suggestion(review.suggestion) else {
             return;
         };
-        let decisions = queue(sug)
+        let decisions: Vec<(ProposedEditId, bool)> = queue(sug)
             .into_iter()
-            .map(|e| (e.id, e.after.is_some()))
+            .map(|e| (e.id, true))
+            .chain(left_alone(sug))
             .collect();
+        let left = left_alone(sug).count();
         let mut acc = review.acc.clone();
         if self.decide_into(&mut acc, decisions) {
+            acc.skipped -= left;
             if let Some(r) = &mut self.fix.review {
                 r.acc = acc;
             }

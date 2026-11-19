@@ -142,7 +142,7 @@ One call: the Pair (source and current translation) plus the user's words return
    - If the Selection is a Term's rendering, the source form is known.
    - Otherwise, take every Pair whose translation contains the Selection. Pick the source n-gram that is frequent in those Pairs and rare elsewhere. This works when the phrase occurs three or more times.
    - Only one-offs need a tiny call (a `resolve_source` Job, small model). Its answer must be a literal substring of the source Block, given without particles, or it is ignored and the Suggestion keeps only its translation-side candidates.
-2. **Find candidates (local).** Candidates are Pairs whose source contains the expression plus Pairs whose translation contains the Selection. The second set is free and catches requests like "stop writing 'let out a breath'", which have many source forms.
+2. **Find candidates (local).** Candidates are Pairs whose source names the expression (longest match: inside a longer Term's source it doesn't count) plus Pairs whose translation contains the Selection. The second set is free and catches requests like "stop writing 'let out a breath'", which have many source forms.
 3. **Show the reach before spending.** The fix box already shows "212 Blocks in 80 chapters", so the user can spot a bad resolution at zero cost.
 4. **Renames are deterministic.** The user marks a request as a rename in the fix box; no classifier call. Cipher replaces the old rendering locally with care for:
    - word boundaries and case;
@@ -164,20 +164,35 @@ A Proposed Edit whose Block changed after it was proposed is stale. It is never 
 
 ## Drift (local, free)
 
-Drift is shown on the Cast & terms page:
+Drift is shown on the Cast & terms page, counted with the rendering finder below:
 - a Forbidden Rendering is still present;
 - or a Term is named three or more times in a Chapter's source but never rendered. Skipped for one-character sources and for Terms marked `may_omit` (term column, schema V3).
 
-### Fixing Drift
+### What the Book calls a Term
 
-"Fix in N chapters" (`cipher_engine::fix_drift`) makes one Everywhere Suggestion of kind `drift` over the Term's drifting Chapters, touching only Pairs whose source names the Term:
-- **A Forbidden Rendering:** replaced word for word, as a Rename edit, with no model call. When the forbidden wording sits inside the rendering itself ("Tower Lord" in "Magic Tower Lord"), the Block goes to the model instead.
-- **A Chapter that never renders the Term:** each of its Blocks that leaves the Term out goes to the model in the usual batches.
-- **The model's request** is its own, not the reader's words: the glossary renders X as "Y"; name "Y" where the source names X and the translation calls it something else or leaves it out; keep a pronoun where English reads better; SKIP where the paragraph already names it or where X there is not this name (an ordinary word, another person). The last clause matters for short sources that are also common words: 아이 is both the name Ai and "child", and on the test Book the model now skips "treating a child" with that reason.
-- **For the reader** the Suggestion says "Name “Y” wherever the source names X", is labelled FIXING DRIFT, and the Review bar reads "Naming “Y”". A skipped edit shows the model's reason in the bar.
-- The user reviews it like any Suggestion. When nothing qualifies (the source no longer names the Term there), nothing is recorded. While a fix is open, the Term's panel says what it holds ("A fix is ready: 2 changes to review, 2 the model left as they were") and its button opens it instead of sending another.
+Measured on Genius Wizard (1,278 Chapters, 30 worst drifting Terms, 2026-11-16), most Drift is not a wrong translation. The translation consistently uses another wording ("Paradise Lost" for 실낙원 = Lost Paradise in 705 of 712 Pairs, "Pandemonium" for 복마전), often from one chapter on, or the source word has a second meaning (수인 is Beastkin and also 手印, "hand seals"). Sending such Terms to the model cost 4,503 paragraphs and changed little. So Cipher shows the evidence and the user decides; the user always decides which wording is right and whether a wording is the same name.
 
-"It can go unnamed" sets `may_omit`: absence stops counting, and Forbidden Renderings are still checked.
+**Evidence** (`cipher_engine::evidence`, `cipher_text::wordings`, local, about 2 s on Genius Wizard). For one Term:
+- the Pairs naming it, by longest match among all Term sources (마탑 inside 블레이버 마탑 is not 마탑);
+- of those, the Pairs rendering it, and up to five other wordings: 1–4 word runs that appear in at least 3 and 5% of the Pairs not rendering it, at least 10× as often there as elsewhere, and in Pairs naming the Term at least 15% of the time. Case, plural and possessive variants are one wording; a wording mostly inside a longer kept one, or only extending a shorter one, is dropped; one that is another Term's rendering is dropped where that Term is named, else labelled with it;
+- the Term's Forbidden Renderings still in use, whatever their count;
+- the Pairs naming it neither way.
+
+Each comes with its Pair count, chapter range and two example Pairs. The simulation found about 63% of shown wordings are real alternatives (85% of real ones shown), so wordings are evidence, never a fix by themselves.
+
+**Keeping a wording** (`cipher_engine::use_wording`). The user marks wordings "Same name" (Forbidden Renderings start marked) and keeps one, seeing how many Pairs each choice changes. One Revision makes the winner the rendering, forbids the losers and records a From now on Rename Suggestion: exact replacements in Pairs naming the Term, reviewed as a group. The Rename takes the losers in any case and number (a plural wording is renamed by its singular unless the singular never appears, as for "Outskirts"), writes the winner as the Glossary spells it, and leaves alone another Term's rendering that contains a loser. On Genius Wizard 64 sampled replacements had no errors after those rules, against 33% bad with first-letter case and no number handling.
+
+**Asking the model** (`cipher_engine::ask_model`) is opt-in, for the Pairs naming the Term neither way: one Suggestion of kind `drift`, 12 Pairs per call. Its request: the glossary renders X as "Y"; name "Y" where the source names X and the translation calls it something else or leaves it out; change only the words for that name; keep a pronoun where English reads better; SKIP where X there is not this name (아이 is both Ai and "child"). Longer Terms containing X are listed as other names. A careful model still skips about half of these.
+
+"It can go unnamed" sets `may_omit`: absence stops counting, and Forbidden Renderings are still checked. It is also the answer for a source word with another meaning.
+
+### Checking model answers
+
+Every model answer is checked locally before it becomes a Proposed Edit (`suggest::doubt`); one that fails is recorded as left alone, with the reason:
+- for `drift`: it must render the Term, delete at most 5 words and insert at most the name's words plus 3 more than it deletes;
+- for any Suggestion: it must keep at least 30% of a paragraph of six words or more, and add no more than the paragraph's own length plus 12 words.
+
+Answers for the wrong paragraph were what made early fixes on imported Books pull in text from elsewhere (alongside position pairing; see Importing). Edits the model left alone are summarised on the note and dismissed with the last decision; the Review steps only through real changes.
 
 ## Importing existing translations
 
@@ -209,7 +224,8 @@ The exact rules live in the doc comments of `crates/cipher-text`. The ones that 
 - **Precision matcher:** a short Hangul form must end at a non-Hangul character or a chain of particles that does (`한에게는` matches, `한의사` doesn't).
 - **Forbidden check:** an occurrence inside another named Term's approved rendering is not a hit.
 - **Length check:** flags below 0.9 or above 4.0 translation/source characters for sources over 80 characters. Measured median 2.02 (p5–p95 about 1.4–2.6) on the 82 cleanly aligned long Blocks of the test Book; thresholds are untested against real omissions.
-- **Rename:** a capitalised old rendering (a name) matches only its exact spelling and ALL CAPS; a lowercase phrase also matches sentence case and Title Case. Partial names are derived only when exactly one capitalised word of three or more letters differs.
+- **Rename:** a capitalised old rendering (a name) matches only its exact spelling and ALL CAPS; a lowercase phrase also matches sentence case and Title Case. Partial names are derived only when exactly one capitalised word of three or more letters differs. A Term's rename (`RenameSpec::for_term`) matches any case and plurals, writes the plural as `X of Y` → `Xs of Y`, and skips protected wordings.
+- **Rendering finder:** any case; a leading "The" is optional; possessives and, for a last word of three or more letters ending lowercase, plurals count (`Magic Scribes` renders Magic Scribe, `Ais` doesn't render Ai). Case-insensitivity alone removed 11% of the Pairs counted as not rendering a Term on Genius Wizard.
 - **Source resolution:** character n-grams (2–14) scored by F1 of recall and precision; the winner needs recall ≥ 0.6 and precision ≥ 0.5 and a 0.1 lead. On the test Book it found `마도 공화국` from 22 hits in 2.5 ms.
 
 ## Not doing

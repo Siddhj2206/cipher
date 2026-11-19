@@ -33,3 +33,4 @@ pub mod matching;
 pub mod rename;
 pub mod resolve;
 pub mod script;
+pub mod wordings;

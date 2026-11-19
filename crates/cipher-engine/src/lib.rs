@@ -12,8 +12,10 @@
 
 mod import;
 mod prompt;
+mod style;
 mod suggest;
 mod translate;
+mod wording;
 mod worker;
 
 use std::sync::Arc;
@@ -23,7 +25,9 @@ use cipher_book::{Book, ChapterId, JobId, JobKind, JobSpec, RevisionId};
 use cipher_llm::{Effort, Model, Usage};
 
 pub use import::{ALIGNED, ImportReport, import, realign_imported};
-pub use suggest::{Reach, Selection, SuggestionRequest, fix_drift, reach, suggest};
+pub use style::{set_style, style_rules, style_text};
+pub use suggest::{Reach, Selection, SuggestionRequest, reach, suggest};
+pub use wording::{Evidence, Example, Seen, Wording, ask_model, evidence, use_wording};
 pub use worker::{Worker, run};
 
 #[derive(Debug, thiserror::Error)]

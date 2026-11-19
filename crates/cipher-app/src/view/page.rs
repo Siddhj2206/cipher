@@ -66,16 +66,42 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
     let id = b.id;
     // Under Review the Proposed Edit shows in place: deleted words red, inserted words green.
     if side == Side::Translation
-        && let Some((e, _)) = edit_in_review(s, id)
+        && let Some((e, current)) = edit_in_review(s, id)
         && let Some(after) = &e.after
     {
-        let shown = diff::shown(&e.before, after, p);
-        return rich(shown.text, shown.spans)
-            .font(style)
-            .color(p.ink)
-            .wrap()
-            .key(format!("b{}", id.0))
-            .w_full();
+        if !current {
+            let shown = diff::shown(&e.before, after, p);
+            return rich(shown.text, shown.spans)
+                .font(style)
+                .color(p.ink)
+                .wrap()
+                .key(format!("b{}", id.0))
+                .w_full();
+        }
+        // The one under review, in full twice, like source above translation: as it is, then as proposed.
+        let ((old, old_spans), (new, new_spans)) = diff::sides(&e.before, after, p);
+        let label = |t: &str| text(t.to_string()).font(LABEL).color(p.ink4);
+        return col()
+            .w_full()
+            .gap(4.0)
+            .child(label("NOW"))
+            .child(
+                rich(old, old_spans)
+                    .font(style)
+                    .color(p.ink3)
+                    .wrap()
+                    .key(format!("b{}-now", id.0))
+                    .w_full(),
+            )
+            .child(label("PROPOSED").pt(8.0))
+            .child(
+                rich(new, new_spans)
+                    .font(style)
+                    .color(p.ink)
+                    .wrap()
+                    .key(format!("b{}", id.0))
+                    .w_full(),
+            );
     }
 
     let mut spans: Vec<Span> = b
@@ -150,6 +176,7 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
             s.term_card = Some(TermCard { block: id, term });
             s.tab = Tab::Terms;
             s.fix.picked = None;
+            s.look_at(term);
         }
     })
 }
