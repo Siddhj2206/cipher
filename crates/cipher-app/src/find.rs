@@ -32,6 +32,7 @@ impl Search {
     }
 }
 
+#[derive(Clone)]
 pub struct Hit {
     pub chapter: ChapterId,
     pub block: BlockId,
@@ -45,6 +46,32 @@ pub struct Results {
     pub more: bool,
 }
 
+pub struct Refresh {
+    index: usize,
+    hit: Option<Hit>,
+}
+
+impl Refresh {
+    fn current(&self, results: &Results) -> usize {
+        self.hit
+            .as_ref()
+            .and_then(|anchor| {
+                results
+                    .hits
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, hit)| {
+                        hit.chapter == anchor.chapter
+                            && hit.block == anchor.block
+                            && hit.side == anchor.side
+                    })
+                    .min_by_key(|(_, hit)| hit.range.start.abs_diff(anchor.range.start))
+                    .map(|(i, _)| i)
+            })
+            .unwrap_or_else(|| self.index.min(results.hits.len().saturating_sub(1)))
+    }
+}
+
 pub struct Find {
     pub query: TextEdit,
     pub scope: Side,
@@ -56,6 +83,7 @@ pub struct Find {
     pub search: Search,
     pub due: Option<f64>,
     pub book_generation: (u64, u64),
+    pub refresh: Option<Refresh>,
 }
 
 impl Find {
@@ -67,14 +95,23 @@ impl Find {
         self.current = 0;
         self.searched = self.query.text.clone();
         self.due = self.searching.then_some(f64::INFINITY);
+        self.refresh = None;
     }
 
     fn schedule(&mut self, now: f64, book_generation: (u64, u64)) -> bool {
-        let changed = self.searched != self.query.text
+        let query_changed = self.searched != self.query.text;
+        let changed = query_changed
             || (self.book_generation != book_generation && !self.query.text.trim().is_empty());
         self.book_generation = book_generation;
         if changed {
+            let refresh = (!query_changed).then(|| {
+                self.refresh.take().unwrap_or_else(|| Refresh {
+                    index: self.current,
+                    hit: self.results.hits.get(self.current).cloned(),
+                })
+            });
             self.restart();
+            self.refresh = refresh;
         }
         if self.due.is_some_and(f64::is_infinite) {
             self.due = Some(now + 0.15);
@@ -179,6 +216,7 @@ impl State {
             search: Search::default(),
             due: None,
             book_generation: (0, 0),
+            refresh: None,
         });
         f.query.focused = true;
         f.query.anchor = 0;
@@ -191,6 +229,7 @@ impl State {
             return;
         };
         f.restart();
+        f.book_generation = self.lib.text_generation();
     }
 
     pub fn poll_find(&mut self, tx: &mut Tx) -> bool {
@@ -226,8 +265,12 @@ impl State {
         f.searching = false;
         match result {
             Ok(results) => {
+                let refresh = f.refresh.take();
+                f.current = refresh.as_ref().map_or(0, |r| r.current(&results));
                 f.results = results;
-                self.jump_find(tx);
+                if refresh.is_none() {
+                    self.jump_find(tx);
+                }
             }
             Err(e) => self.toast = Some(format!("Could not search: {e}")),
         }
@@ -315,6 +358,7 @@ mod tests {
             search: Search::default(),
             due: None,
             book_generation: (0, 0),
+            refresh: None,
         };
         assert!(!f.schedule(1.0, (0, 0)));
         assert_eq!(f.due, None);
@@ -401,6 +445,108 @@ mod tests {
             s.found(generation, Ok(results), &mut tx);
             assert!(!s.find.as_ref().unwrap().searching);
         }
+    }
+
+    #[test]
+    fn find_refresh_keeps_location_and_selected_hit() {
+        for screen in [crate::state::Screen::History, crate::state::Screen::Reading] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("find.cipher");
+            cipher_engine::import(
+                &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/the-quiet-tower"),
+                &path,
+            )
+            .unwrap();
+            let mut s = State::new(Library::open(&path).unwrap());
+            let mut tx = Tx::default();
+            s.open_find(&mut tx);
+            s.find.as_mut().unwrap().query.text = "tower".into();
+            s.poll_find(&mut tx);
+            let f = s.find.as_mut().unwrap();
+            f.due = None;
+            let generation = f.generation;
+            let results = s.lib.find_job("tower".into(), f.scope, f.search.clone())().unwrap();
+            let removed = results.hits[0].block;
+            s.found(generation, Ok(results), &mut tx);
+            let f = s.find.as_mut().unwrap();
+            f.current = f.results.hits.len() - 1;
+            let old_index = f.current;
+            let selected = f.results.hits[f.current].clone();
+            assert_ne!(removed, selected.block);
+            s.lib.open_chapter(1).unwrap();
+            s.screen = screen;
+            s.source = true;
+            s.lib
+                .book_mut()
+                .apply(cipher_book::Change::EditBlock {
+                    block: removed,
+                    text: "A quiet place.".into(),
+                    hand: true,
+                })
+                .unwrap();
+            for _ in 0..2 {
+                s.lib.refresh_chapters(&[0]).unwrap();
+                s.poll_find(&mut tx);
+            }
+            let f = s.find.as_mut().unwrap();
+            f.due = None;
+            let generation = f.generation;
+            let results = s.lib.find_job("tower".into(), f.scope, f.search.clone())().unwrap();
+            let mut tx = Tx::default();
+            let before = format!("{tx:?}");
+            s.found(generation, Ok(results), &mut tx);
+            assert_eq!(format!("{tx:?}"), before);
+            assert!(s.screen == screen);
+            assert_eq!(s.lib.current(), 1);
+            assert!(s.source);
+            let f = s.find.as_ref().unwrap();
+            assert!(f.current < old_index);
+            let hit = &f.results.hits[f.current];
+            assert_eq!(hit.chapter, selected.chapter);
+            assert_eq!(hit.block, selected.block);
+            assert_eq!(hit.range, selected.range);
+
+            s.lib.refresh_chapters(&[0]).unwrap();
+            s.poll_find(&mut tx);
+            let f = s.find.as_mut().unwrap();
+            f.due = None;
+            let generation = f.generation;
+            let mut tx = Tx::default();
+            s.found(generation, Err("search failed".into()), &mut tx);
+            assert!(s.screen == screen);
+            assert_eq!(s.lib.current(), 1);
+            assert_eq!(format!("{tx:?}"), before);
+            assert_eq!(s.toast.as_deref(), Some("Could not search: search failed"));
+
+            s.toggle_find_scope(&mut tx);
+            assert!(s.find.as_ref().unwrap().refresh.is_none());
+        }
+    }
+
+    #[test]
+    fn find_refresh_selects_nearest_remaining_hit() {
+        let hit = |block, start| Hit {
+            chapter: ChapterId(1),
+            block: BlockId(block),
+            side: Side::Translation,
+            range: start..start + 5,
+        };
+        let refresh = Refresh {
+            index: 2,
+            hit: Some(hit(2, 30)),
+        };
+        let results = Results {
+            hits: vec![hit(1, 0), hit(2, 25), hit(2, 50)],
+            more: false,
+        };
+        assert_eq!(refresh.current(&results), 1);
+        let results = Results {
+            hits: vec![hit(1, 0), hit(3, 0)],
+            more: false,
+        };
+        assert_eq!(refresh.current(&results), 1);
+        assert_eq!(refresh.current(&Results::default()), 0);
     }
 
     #[test]

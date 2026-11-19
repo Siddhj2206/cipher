@@ -334,6 +334,7 @@ fn find_scene(s: &mut State, source: bool) {
         search: crate::find::Search::default(),
         due: None,
         book_generation: (0, 0),
+        refresh: None,
     });
     s.search_find();
 }
