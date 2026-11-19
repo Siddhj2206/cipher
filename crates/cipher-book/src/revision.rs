@@ -28,6 +28,7 @@ pub(crate) enum Table {
     StoryNote,
     Suggestion,
     ProposedEdit,
+    ProposedMetadata,
 }
 
 impl Table {
@@ -43,11 +44,12 @@ impl Table {
             Table::StoryNote => "story_note",
             Table::Suggestion => "suggestion",
             Table::ProposedEdit => "proposed_edit",
+            Table::ProposedMetadata => "proposed_metadata",
         }
     }
 
     fn from_name(name: &str) -> Result<Table> {
-        const ALL: [Table; 10] = [
+        const ALL: [Table; 11] = [
             Table::Chapter,
             Table::Pair,
             Table::Block,
@@ -58,6 +60,7 @@ impl Table {
             Table::StoryNote,
             Table::Suggestion,
             Table::ProposedEdit,
+            Table::ProposedMetadata,
         ];
         ALL.into_iter()
             .find(|t| t.name() == name)
@@ -281,7 +284,7 @@ fn set_columns<'c>(
     Ok(())
 }
 
-fn snapshot(tx: &Transaction<'_>, table: Table, id: i64) -> Result<Option<Row>> {
+pub(crate) fn snapshot(tx: &rusqlite::Connection, table: Table, id: i64) -> Result<Option<Row>> {
     let mut stmt = tx.prepare_cached(&format!("SELECT * FROM {} WHERE id = ?1", table.name()))?;
     let names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
     let row = stmt

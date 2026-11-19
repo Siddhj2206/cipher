@@ -173,7 +173,7 @@ impl State {
                 self.show_context();
                 self.term_card = None;
                 self.toast = Some(format!(
-                    "\u{201c}{name}\u{201d} it is: review the renames under Suggestions."
+                    "Review \u{201c}{name}\u{201d} under Suggestions. Nothing has changed yet."
                 ));
             }
             Ok(None) => {

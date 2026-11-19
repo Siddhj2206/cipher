@@ -139,6 +139,7 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [ ] Find in Book (Ctrl+F).
 - [x] A Style page: the Book's Style Rules as one text, sent with every Chapter (asked 2026-11-16: "a base prompt for a book"); import takes `style.md` whole.
 - [x] Drift redone (asked 2026-11-16, "fine with redoing our whole suggestions and drift workflow"; method simulated on Genius Wizard first): evidence of what the Book calls a Term, the user marks same-name wordings and keeps one (an exact Rename), the model only on request; answers checked locally; Review steps only through real changes and shows the paragraph in full, now and proposed (`translation-pipeline.md` › What the Book calls a Term).
+- [x] Piece Q: Drift Keep stages persistent Glossary, Story Note and prose proposals, with explicit independent Review decisions, conflict checks and Revision-based Undo. Cast says "No drift flagged" rather than claiming uniformity. From now on Suggestions outside Drift Keep are unchanged.
 - [ ] Term editing (accept or dismiss pending Terms, notes, forms, merging duplicate Terms such as 포혈공 / 포혈공(怖血公)) and a Book notes page (Story Notes, Forms of Address).
 - [x] Chapter actions: Translate again, and Translate all N from here (2026-11-16).
 - [ ] Delete a Chapter.

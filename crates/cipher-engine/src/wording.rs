@@ -7,9 +7,9 @@
 use std::collections::BTreeSet;
 
 use cipher_book::{
-    BlockId, Book, Change, ChapterId, EditOrigin, NewProposedEdit, NewSuggestion, RevisionKind,
-    Scope, Side, SuggestionId, SuggestionKind, SuggestionState, Term, TermFields, TermId,
-    TermStatus,
+    BlockId, Book, Change, ChapterId, EditOrigin, MetadataChange, NewProposedEdit, NewSuggestion,
+    RevisionKind, Scope, Side, SuggestionId, SuggestionKind, SuggestionState, Term, TermFields,
+    TermId, TermStatus,
 };
 use cipher_text::checks::PairText;
 use cipher_text::rename::{self, RenameSpec};
@@ -287,8 +287,8 @@ pub fn ask_model(book: &mut Book, term: TermId) -> Result<Option<SuggestionId>> 
 /// Makes `winner` the Term's rendering and renames `same` (wordings the user marked as this
 /// name, and the old rendering if it lost) to it, in Pairs whose source names the Term.
 ///
-/// One Revision: the Term (its losing wordings become Forbidden Renderings) and a From now on
-/// Rename Suggestion whose exact replacements wait for review. Another Term's rendering that
+/// One Suggestion: the Term, Forbidden Renderings, Story Notes and exact replacements all
+/// wait for explicit review. Another Term's rendering that
 /// contains a losing wording is left alone. `Ok(None)` when nothing would change.
 pub fn use_wording(
     book: &mut Book,
@@ -377,60 +377,73 @@ pub fn use_wording(
         }
     }
 
-    let mut changes = Vec::new();
+    let mut metadata = Vec::new();
     let quote = losers
         .iter()
         .map(|l| format!("\u{201c}{l}\u{201d}"))
         .collect::<Vec<_>>()
         .join(", ");
-    if let Some((chapter, block)) = anchor {
-        changes.push(Change::AddSuggestion(NewSuggestion {
-            chapter,
-            block,
-            quote: losers.join(" / "),
-            said: winner.clone(),
-            scope: Scope::FromNowOn,
-            is_rename: true,
-            source_expr: Some(source.clone()),
-            state: SuggestionState::Ready,
-            kind: SuggestionKind::Reader,
-            edits,
-        }));
+    let anchor = anchor.or_else(|| blocks.first().map(|(ch, b)| (*ch, b.id)));
+    let anchor = match anchor {
+        Some(anchor) => Some(anchor),
+        None => {
+            let mut found = None;
+            for summary in book.chapters()? {
+                if let Some(b) = book.chapter(summary.id)?.source.first() {
+                    found = Some((summary.id, b.id));
+                    break;
+                }
+            }
+            found
+        }
+    };
+    let Some((chapter, block)) = anchor else {
+        return Err(
+            cipher_book::Error::Invalid("A Chapter is needed to review a wording".into()).into(),
+        );
+    };
+    let mut forbidden = losers.clone();
+    if rendering != winner && !forbidden.iter().any(|l| l.eq_ignore_ascii_case(&rendering)) {
+        forbidden.push(rendering.clone());
     }
-    if rendering != winner {
-        changes.push(Change::UpsertTerm {
-            id: Some(term),
+    if rendering != winner || !forbidden.is_empty() {
+        metadata.push(MetadataChange::Term {
+            term,
             fields: TermFields {
                 rendering: winner.clone(),
                 ..t.fields.clone()
             },
-            status: t.status,
-            first_chapter: None,
+            forbidden,
         });
-    }
-    for l in &losers {
-        if !l.eq_ignore_ascii_case(&rendering) {
-            changes.push(Change::AddForbidden {
-                term,
-                rendering: l.clone(),
-            });
-        }
     }
     for note in book.story_notes()? {
         if let Some(r) = rename::rename(&note.text, &spec) {
-            changes.push(Change::EditStoryNote {
-                id: note.id,
-                text: Some(r.text),
+            metadata.push(MetadataChange::StoryNote {
+                note: note.id,
+                text: r.text,
             });
         }
     }
-    let made_suggestion = anchor.is_some();
     let applied = book.apply(Change::Group {
         kind: RevisionKind::Suggestion,
-        label: format!("{quote} \u{2192} \u{201c}{winner}\u{201d}"),
-        changes,
+        label: format!("Review {quote} \u{2192} \u{201c}{winner}\u{201d}"),
+        changes: vec![Change::AddSuggestionWithMetadata {
+            suggestion: NewSuggestion {
+                chapter,
+                block,
+                quote: losers.join(" / "),
+                said: winner.clone(),
+                scope: Scope::FromNowOn,
+                is_rename: true,
+                source_expr: Some(source.clone()),
+                state: SuggestionState::Ready,
+                kind: SuggestionKind::Reader,
+                edits,
+            },
+            changes: metadata,
+        }],
     })?;
-    Ok(made_suggestion.then(|| SuggestionId(applied.created[0])))
+    Ok(Some(SuggestionId(applied.created[0])))
 }
 
 /// `word` appears in `text` as whole words in any case, not followed by more letters (so not
