@@ -15,13 +15,102 @@ use crate::library::Library;
 use crate::prefs::{Appearance, Prefs};
 use crate::settings::Settings;
 use crate::shelf::{Position, Shelf};
+use crate::sidebars::{PAGE_CHROME, Sidebar, SidebarDrag, SidebarLayout};
 use crate::welcome::Welcome;
 
 /// Paragraphs of a translating Chapter as they arrive: (first, last, text), 1-based.
 pub type Streamed = Vec<(u32, u32, String)>;
 
-/// The narrowest reading column before a sidebar gives way to it.
-const MIN_TEXT: f32 = 520.0;
+#[derive(Clone, Copy)]
+pub struct ReadingRow {
+    pub id: BlockId,
+    pub top: f32,
+    text: [Option<[f32; 2]>; ReadingPart::TEXT.len()],
+}
+
+impl ReadingRow {
+    pub fn measure(
+        id: BlockId,
+        origin: f32,
+        layout: impl Fn(&str) -> Option<[f32; 4]>,
+    ) -> Option<Self> {
+        let top = layout(&ReadingPart::Row.key(id))?[1] - origin;
+        Some(Self {
+            id,
+            top,
+            text: ReadingPart::TEXT
+                .map(|part| layout(&part.key(id)).map(|[_, y, _, height]| [y - origin, height])),
+        })
+    }
+
+    fn anchor(self, scroll: f32) -> ReadingAnchor {
+        let (part, top, height) = ReadingPart::TEXT
+            .into_iter()
+            .zip(self.text)
+            .filter_map(|(part, rect)| {
+                let [top, height] = rect?;
+                (top <= scroll).then_some((part, top, height))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap_or((ReadingPart::Row, self.top, 0.0));
+        ReadingAnchor {
+            id: self.id,
+            part,
+            offset: top - scroll,
+            height,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ReadingPart {
+    Row,
+    Body,
+    Source,
+    Original,
+    Flag,
+}
+
+impl ReadingPart {
+    const TEXT: [Self; 4] = [Self::Body, Self::Source, Self::Original, Self::Flag];
+
+    pub fn key(self, id: BlockId) -> String {
+        match self {
+            Self::Row => format!("row{}", id.0),
+            Self::Body => format!("b{}", id.0),
+            Self::Source => format!("s{}", id.0),
+            Self::Original => format!("b{}-now", id.0),
+            Self::Flag => format!("flag{}", id.0),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ReadingAnchor {
+    id: BlockId,
+    part: ReadingPart,
+    offset: f32,
+    height: f32,
+}
+
+impl ReadingAnchor {
+    fn reflowed_offset(self, height: f32) -> f32 {
+        if self.height == 0.0 || height == self.height {
+            self.offset
+        } else {
+            let into_text = -self.offset;
+            let progress = (into_text / self.height).min(1.0);
+            let gap = (into_text - self.height).max(0.0);
+            -(progress * height + gap)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ActiveSidebarDrag {
+    sizing: SidebarDrag,
+    reading: Option<ReadingAnchor>,
+}
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Screen {
@@ -127,6 +216,7 @@ pub struct State {
     pub history: crate::history::History,
     /// The Settings window, open at this section.
     pub settings_page: Option<Section>,
+    pub settings_books_notice: Option<&'static str>,
     /// The Endpoint form in Settings › Translation, once it has shown.
     pub settings: Option<Settings>,
     /// The keyboard shortcuts sheet (Ctrl+/).
@@ -144,6 +234,9 @@ pub struct State {
     scanning: u64,
     /// In a window too narrow for both sidebars, the context sidebar was opened last.
     context_first: bool,
+    /// Live width during a drag; the preference changes only on release.
+    sidebar_drag: Option<ActiveSidebarDrag>,
+    sidebar_reflow: Option<ReadingAnchor>,
     /// The Book whose old import Pairs were last checked for re-pairing.
     realigning: Option<std::path::PathBuf>,
     /// The running translation, from the worker's Events.
@@ -163,8 +256,8 @@ pub struct State {
     pub pending_title: Option<String>,
     /// When the page, having moved, counts as still (on the window clock).
     pub settle_at: Option<f64>,
-    /// Top of each row of the current page, relative to the page, recorded each frame.
-    pub tops: Rc<RefCell<Vec<(BlockId, f32)>>>,
+    /// Rows of the current chapter, relative to the page, recorded each frame.
+    pub tops: Rc<RefCell<Vec<ReadingRow>>>,
     /// A headless run works on a copy of the Book in here, so it never changes the real one.
     /// Last, so the Book closes before the folder goes.
     pub scratch: Option<tempfile::TempDir>,
@@ -202,6 +295,7 @@ impl State {
             history: Default::default(),
             welcome: None,
             settings_page: None,
+            settings_books_notice: None,
             settings: None,
             shortcuts_open: false,
             type_open: false,
@@ -211,6 +305,8 @@ impl State {
             drop_hover: false,
             scanning: 0,
             context_first: false,
+            sidebar_drag: None,
+            sidebar_reflow: None,
             realigning: None,
             progress: None,
             streamed: None,
@@ -411,17 +507,17 @@ impl State {
         let tops = self.tops.borrow().clone();
         let top = tops
             .iter()
-            .rfind(|(_, t)| *t <= y + 4.0)
+            .rfind(|row| row.top <= y + 4.0)
             .or(tops.first())
             .copied();
         let from = self.side();
-        let pair = top.and_then(|(id, _)| self.lib.page().pair_of(from, id));
+        let pair = top.and_then(|row| self.lib.page().pair_of(from, row.id));
         self.source = !self.source;
         let to = self.side();
-        if let (Some(pair), Some((_, t))) = (pair, top)
+        if let (Some(pair), Some(row)) = (pair, top)
             && let Some(id) = self.lib.page().first_block(to, pair)
         {
-            tx.scroll_key_to(format!("row{}", id.0), t - y);
+            tx.scroll_key_to(format!("row{}", id.0), row.top - y);
         }
     }
 
@@ -509,39 +605,125 @@ impl State {
         }
     }
 
-    /// Room the page needs beside the sidebars before one of them gives way.
-    fn fits(&self, contents: bool, context: bool) -> bool {
-        use crate::theme::{GUTTER_W, LEFT_W, RIGHT_W, SCRUBBER_W};
-        let left = if contents { LEFT_W } else { SCRUBBER_W };
-        let right = if context { RIGHT_W } else { 0.0 };
-        self.avail_w() - left - right >= MIN_TEXT + GUTTER_W + 48.0
+    pub fn sidebar_layout(&self) -> SidebarLayout {
+        let preferred = |side, saved| match self.sidebar_drag {
+            Some(drag) if drag.sizing.side == side => drag.sizing.width,
+            _ => saved,
+        };
+        SidebarLayout::fit(
+            self.avail_w(),
+            self.prefs
+                .contents_open
+                .then(|| preferred(Sidebar::Contents, self.prefs.contents_width)),
+            (self.prefs.context_open && self.screen_has_context())
+                .then(|| preferred(Sidebar::Context, self.prefs.context_width)),
+            self.context_first,
+        )
     }
 
-    /// Whether the contents sidebar shows: open, and the window wide enough beside what else
-    /// shows. In a narrow window the sidebar opened last wins.
     pub fn contents_shown(&self) -> bool {
-        let (a, b) = (
-            self.prefs.contents_open,
-            self.prefs.context_open && self.screen_has_context(),
-        );
-        match (a, b) {
-            (false, _) => false,
-            (true, false) => true,
-            (true, true) => {
-                self.fits(true, true) || (!self.context_first && self.fits(true, false))
+        self.sidebar_layout().contents.is_some()
+    }
+
+    pub fn context_shown(&self) -> bool {
+        self.sidebar_layout().context.is_some()
+    }
+
+    pub fn sidebar_max_width(&self, side: Sidebar) -> f32 {
+        self.sidebar_layout().max_width(side, self.avail_w())
+    }
+
+    pub fn resize_sidebar(&mut self, side: Sidebar, width: f32, tx: &mut Tx) {
+        let Some(current) = self.sidebar_layout().width(side) else {
+            return;
+        };
+        let width = width.clamp(side.min_width(), self.sidebar_max_width(side));
+        if current != width {
+            self.hold_reading_position(self.reading_anchor(), tx);
+            self.remember_sidebar_width(side, width);
+        }
+    }
+
+    pub fn start_sidebar_drag(&mut self, side: Sidebar) {
+        self.sidebar_drag =
+            SidebarDrag::new(side, self.sidebar_layout()).map(|sizing| ActiveSidebarDrag {
+                sizing,
+                reading: self.reading_anchor(),
+            });
+    }
+
+    pub fn sidebar_dragging(&self, side: Sidebar) -> bool {
+        self.sidebar_drag
+            .is_some_and(|drag| drag.sizing.side == side)
+    }
+
+    pub fn preview_sidebar_drag(&mut self, side: Sidebar, delta: f32, tx: &mut Tx) {
+        if let Some(mut drag) = self.sidebar_drag.filter(|drag| drag.sizing.side == side) {
+            let width = drag.sizing.target(delta, self.avail_w());
+            if drag.sizing.width != width {
+                self.hold_reading_position(drag.reading, tx);
+                drag.sizing.width = width;
+                self.sidebar_drag = Some(drag);
             }
         }
     }
 
-    /// Whether the context sidebar shows; see [`State::contents_shown`].
-    pub fn context_shown(&self) -> bool {
-        if !self.prefs.context_open || !self.screen_has_context() {
-            return false;
+    pub fn finish_sidebar_drag(&mut self, side: Sidebar, delta: f32, cancelled: bool, tx: &mut Tx) {
+        if !self.sidebar_dragging(side) {
+            return;
         }
-        if !self.prefs.contents_open {
-            return true;
+        if !cancelled {
+            self.preview_sidebar_drag(side, delta, tx);
         }
-        self.fits(true, true) || (self.context_first && self.fits(false, true))
+        let shown = self.sidebar_layout().width(side).is_some();
+        let ActiveSidebarDrag { sizing, reading } = self.sidebar_drag.take().unwrap();
+        if !cancelled && shown && delta != 0.0 && sizing.width != sizing.start {
+            self.remember_sidebar_width(side, sizing.width);
+        } else if sizing.width != sizing.start {
+            self.hold_reading_position(reading, tx);
+        }
+    }
+
+    fn remember_sidebar_width(&mut self, side: Sidebar, width: f32) {
+        match side {
+            Sidebar::Contents => self.prefs.contents_width = width,
+            Sidebar::Context => self.prefs.context_width = width,
+        }
+    }
+
+    fn reading_anchor(&self) -> Option<ReadingAnchor> {
+        if self.screen != Screen::Reading {
+            return None;
+        }
+        Some(self.top_reading_row()?.anchor(self.scroll_y.get()))
+    }
+
+    fn hold_reading_position(&mut self, anchor: Option<ReadingAnchor>, tx: &mut Tx) {
+        self.sidebar_reflow = anchor;
+        if let Some(anchor) = anchor {
+            tx.keep_on_screen(anchor.part.key(anchor.id));
+        }
+    }
+
+    pub fn sidebar_reflow_target(&self) -> Option<(BlockId, ReadingPart)> {
+        self.sidebar_reflow.map(|anchor| (anchor.id, anchor.part))
+    }
+
+    pub fn finish_sidebar_reflow(
+        &mut self,
+        id: BlockId,
+        part: ReadingPart,
+        height: f32,
+        tx: &mut Tx,
+    ) {
+        if let Some(anchor) = self
+            .sidebar_reflow
+            .take_if(|anchor| (anchor.id, anchor.part) == (id, part))
+        {
+            tx.scroll_key_to(part.key(id), anchor.reflowed_offset(height));
+        } else {
+            tx.live_only();
+        }
     }
 
     /// The new-Chapter page has no Terms or Suggestions yet: it gets the room.
@@ -551,28 +733,15 @@ impl State {
 
     /// The reading column: the chosen width, narrowed to what the window leaves.
     pub fn text_width(&self) -> f32 {
-        use crate::theme::{GUTTER_W, LEFT_W, RIGHT_W, SCRUBBER_W};
-        let left = if self.contents_shown() {
-            LEFT_W
-        } else {
-            SCRUBBER_W
-        };
-        let right = if self.context_shown() { RIGHT_W } else { 0.0 };
-        let room = self.avail_w() - left - right - GUTTER_W - 48.0;
-        self.prefs
-            .reading
-            .width
-            .min(room.max(MIN_TEXT.min(self.prefs.reading.width)))
+        let (left, right) = self.sidebar_layout().insets();
+        let room = self.avail_w() - left - right - PAGE_CHROME;
+        self.prefs.reading.width.min(room.max(0.0))
     }
 
     /// Whether the page margin has room for notes beside the column.
     pub fn margin_room(&self) -> bool {
-        use crate::theme::{GUTTER_W, LEFT_W, SCRUBBER_W};
-        let left = if self.contents_shown() {
-            LEFT_W
-        } else {
-            SCRUBBER_W
-        };
+        use crate::theme::GUTTER_W;
+        let (left, _) = self.sidebar_layout().insets();
         self.avail_w() - left - GUTTER_W - self.text_width() >= 316.0
     }
 
@@ -644,18 +813,21 @@ impl State {
     /// Where reading is: the current Chapter and the row at the top of the window.
     pub fn reading_position(&self) -> Option<Position> {
         let chapter = self.lib.chapters.get(self.lib.current())?.number;
-        let y = self.scroll_y.get();
-        let top = self
-            .tops
-            .borrow()
-            .iter()
-            .rfind(|(_, t)| *t <= y + 4.0)
-            .copied();
+        let top = self.top_reading_row();
         Some(Position {
             chapter,
-            block: top.map(|(id, _)| id.0),
-            offset: top.map_or(0.0, |(_, t)| t - y),
+            block: top.map(|row| row.id.0),
+            offset: top.map_or(0.0, |row| row.top - self.scroll_y.get()),
         })
+    }
+
+    fn top_reading_row(&self) -> Option<ReadingRow> {
+        let y = self.scroll_y.get();
+        self.tops
+            .borrow()
+            .iter()
+            .rfind(|row| row.top <= y + 4.0)
+            .copied()
     }
 
     /// Notes where reading is in `shelf.json`, so the Book opens there next time.
@@ -849,4 +1021,47 @@ fn fix_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
         _ => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reflow_keeps_the_same_paragraph_progress_on_either_side_of_the_old_offset() {
+        let anchor = ReadingAnchor {
+            id: BlockId(1),
+            part: ReadingPart::Body,
+            offset: -758.0,
+            height: 806.0,
+        };
+        let progress = -anchor.offset / anchor.height;
+        for text in [620.0, 750.0, 765.0, 806.0, 837.0] {
+            let offset = anchor.reflowed_offset(text);
+            assert!(
+                (-offset / text - progress).abs() < 0.001,
+                "{text}: {offset}"
+            );
+        }
+        assert_eq!(anchor.reflowed_offset(anchor.height), anchor.offset);
+    }
+
+    #[test]
+    fn reflow_anchors_translation_and_interlinear_source_independently() {
+        let row = ReadingRow::measure(BlockId(1), 20.0, |key| match key {
+            "row1" => Some([0.0, 30.0, 420.0, 184.0]),
+            "b1" => Some([0.0, 30.0, 420.0, 100.0]),
+            "s1" => Some([0.0, 136.0, 420.0, 60.0]),
+            _ => None,
+        })
+        .unwrap();
+        // Source wrapping does not advance the viewport past the last translated line.
+        let translation = row.anchor(104.0);
+        assert!(translation.part == ReadingPart::Body);
+        assert_eq!(translation.reflowed_offset(100.0), -94.0);
+        let source = row.anchor(146.0);
+        assert!(source.part == ReadingPart::Source);
+        assert_eq!(source.reflowed_offset(100.0), -50.0);
+        assert_eq!(row.anchor(112.0).reflowed_offset(80.0), -82.0);
+    }
 }

@@ -1,0 +1,134 @@
+#!/bin/sh
+# Asserts drag and keyboard resizing, reading stability, and responsive fit through --tree.
+set -eu
+book=$1
+bin=${2:-target/debug/cipher}
+dev=${3:-target/debug/cipher-dev}
+here=$(dirname "$0")
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+for m in start positioned dragged stepped canceled narrow priority restored minimum; do
+  "$bin" "$book" --size 1480x920 --scale 1 --fps 15 --script "$here/sidebars.json" \
+    --at "mark:$m" --tree "$tmp/$m.json" 2>"$tmp/log" || { cat "$tmp/log"; exit 1; }
+done
+python3 -I - "$tmp" <<'PY'
+import json, math, pathlib, sys
+
+def elements(mark):
+    tree = json.loads((pathlib.Path(sys.argv[1]) / f"{mark}.json").read_text())
+    return {e["key"]: e for e in tree["elements"] if e.get("key") and not e.get("exiting")}
+
+def widths(mark, expected):
+    els = elements(mark)
+    actual = [els[key]["rect"][2] if key in els else None for key in ("contents", "context")]
+    assert all(a == b or (a is not None and b is not None and math.isclose(a, b, abs_tol=1))
+               for a, b in zip(actual, expected)), (mark, actual, expected)
+    return els
+
+widths("start", (272, 320))
+before = elements("positioned")
+after = widths("dragged", (392, 432))
+assert before["resize-contents"].get("focused") and after["resize-contents"].get("focused"), "drag stole focus"
+top = before["doc"]["rect"][1]
+anchor = next(key for key, e in before.items()
+              if key.startswith("row") and e["rect"][1] <= top < e["rect"][1] + e["rect"][3])
+assert math.isclose(before[anchor]["rect"][1], after[anchor]["rect"][1], abs_tol=1), "reading position moved"
+assert widths("stepped", (408, 448))["resize-context"].get("focused"), "keyboard focus was lost on resize"
+widths("canceled", (408, 448))
+widths("narrow", (408, None))
+widths("priority", (None, 372))
+widths("restored", (408, 448))
+minimum = widths("minimum", (None, None))
+assert minimum["app-root"]["rect"][2] < 500, "interface was not at maximum zoom"
+assert minimum["page"]["rect"][2] <= minimum["doc"]["rect"][2], "reading column clips at minimum size"
+PY
+
+# Make the first source paragraph reflow without changing its one-line translation.
+cp -R "$here/../tests/fixtures/the-quiet-tower" "$tmp/long"
+python3 -I - "$tmp/long/raw/1.md" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+source = text.split("\n\n")[1]
+path.write_text(text.replace(source, " ".join([source] * 33), 1), encoding="utf-8")
+PY
+"$dev" import "$tmp/long" "$tmp/source.cipher" >/dev/null
+cat >"$tmp/interlinear.json" <<'JSON'
+{"events": [
+ {"t": 0.2, "type": "click", "key": "g9"},
+ {"t": 0.6, "type": "scroll", "key": "doc", "dy": -260, "dur": 0.4},
+ {"t": 1.6, "type": "mark", "name": "source-before"},
+ {"t": 1.75, "type": "drag", "key": "resize-contents", "dx": 500, "dur": 0.25},
+ {"t": 2.3, "type": "mark", "name": "source-after"}
+]}
+JSON
+for m in source-before source-after; do
+  "$bin" "$tmp/source.cipher" --size 1480x920 --scale .5 --fps 15 --script "$tmp/interlinear.json" \
+    --at "mark:$m" --tree "$tmp/$m.json" 2>"$tmp/log" || { cat "$tmp/log"; exit 1; }
+done
+
+# Now make the first translation tall enough to straddle the reading viewport before reflow.
+python3 -I - "$tmp/long/tl/1.md" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+phrase = "Erian arrived at the Quiet Tower through the dawn fog."
+assert phrase in text
+path.write_text(text.replace(phrase, " ".join([phrase] * 26), 1), encoding="utf-8")
+PY
+"$dev" import "$tmp/long" "$tmp/long.cipher" >/dev/null
+cat >"$tmp/reflow.json" <<'JSON'
+{"events": [
+ {"t": 0.2, "type": "drag", "key": "resize-contents", "dx": 500, "dur": 0.2},
+ {"t": 0.6, "type": "scroll", "key": "doc", "dy": -955, "dur": 0.4},
+ {"t": 1.6, "type": "mark", "name": "before"},
+ {"t": 1.75, "type": "down", "key": "resize-contents"},
+ {"t": 1.85, "type": "move", "x": 240, "y": 450},
+ {"t": 2.05, "type": "mark", "name": "widened"},
+ {"t": 2.15, "type": "key", "name": "Escape"},
+ {"t": 2.25, "type": "up"},
+ {"t": 2.45, "type": "mark", "name": "cancel"},
+ {"t": 2.55, "type": "down", "key": "resize-contents"},
+ {"t": 2.65, "type": "move", "x": 240, "y": 450},
+ {"t": 2.85, "type": "move"},
+ {"t": 2.95, "type": "up"},
+ {"t": 3.15, "type": "mark", "name": "reverse"}
+]}
+JSON
+for m in before widened cancel reverse; do
+  "$bin" "$tmp/long.cipher" --size 1480x920 --scale .5 --fps 15 --script "$tmp/reflow.json" \
+    --at "mark:$m" --tree "$tmp/$m.json" 2>"$tmp/log" || { cat "$tmp/log"; exit 1; }
+done
+python3 -I - "$tmp" <<'PY'
+import json, math, pathlib, sys
+
+def rects(mark):
+    tree = json.loads((pathlib.Path(sys.argv[1]) / f"{mark}.json").read_text())
+    return {e["key"]: e["rect"] for e in tree["elements"] if e.get("key") and not e.get("exiting")}
+
+before, after = rects("source-before"), rects("source-after")
+assert after["s9"][3] > before["s9"][3], "interlinear source did not gain lines"
+_, y, _, height = before["b9"]
+assert y < before["doc"][1] < y + height, "viewport did not start inside the translation"
+assert after["b9"][3] == height, "translation gained lines too"
+assert math.isclose(after["b9"][1] - after["doc"][1], y - before["doc"][1], abs_tol=1), (
+    "source wrapping advanced the reader through the unchanged translation")
+
+before, after = rects("before"), rects("widened")
+top = before["doc"][1]
+anchor = next(key for key, (_, y, _, h) in before.items()
+              if key.startswith("b") and key[1:].isdigit() and y < top < y + h)
+_, y, _, height = after[anchor]
+assert top - before[anchor][1] > height, "reflow did not shorten the text past the old offset"
+assert y < after["doc"][1] < y + height, "widening skipped the paragraph at the top of the reader"
+for mark in ("cancel", "reverse"):
+    restored = rects(mark)
+    assert math.isclose(restored["contents"][2], before["contents"][2], abs_tol=1), mark
+    assert math.isclose(restored[anchor][1], before[anchor][1], abs_tol=1), (
+        mark, "original reading offset was not restored", restored[anchor], before[anchor])
+PY
+echo "ok: drag, keyboard, focus, reading anchor, clamp, auto-collapse and restore"

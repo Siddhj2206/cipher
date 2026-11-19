@@ -397,7 +397,7 @@ fn label(h: &Home, b: &ShelfBook, i: usize, p: &Pal) -> El {
                 )
                 .child(
                     item("Show in Files", format!("reveal{i}"))
-                        .on_press_tx(move |s: &mut State, tx| s.reveal_book(tx, &fp)),
+                        .on_press(move |s: &mut State| s.reveal_book(&fp)),
                 )
                 .child(
                     item("Rename…", format!("rename{i}"))
@@ -755,20 +755,32 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                 .pb(24.0),
         );
     }
-    if let Some(e) = &h.error {
+    if let Some((message, color)) = h
+        .error
+        .as_deref()
+        .map(|error| (error, p.red))
+        .or_else(|| h.files_notice.map(|notice| (notice, p.ink2)))
+    {
         column = column.child(
             row()
                 .key("shelf-error")
+                .max_w(440.0)
                 .gap(8.0)
                 .pb(24.0)
                 .center_y()
-                .child(text(e.clone()).font(UI).color(p.red).wrap())
+                .child(
+                    text(message.to_owned())
+                        .font(UI)
+                        .color(color)
+                        .shrink()
+                        .wrap_anywhere(),
+                )
                 .child(
                     el().size(22.0, 22.0)
                         .center()
                         .cursor(Cursor::Pointer)
                         .child(icon(&I_X, 12.0).color(p.ink3))
-                        .on_press(|s: &mut State| home(s).error = None),
+                        .on_press(|s: &mut State| home(s).clear_message()),
                 ),
         );
     }
@@ -853,7 +865,7 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                     .color(p.ink3)
                     .key("show-folder")
                     .cursor(Cursor::Pointer)
-                    .on_press_tx(|s: &mut State, tx| s.show_folder(tx)),
+                    .on_press(|s: &mut State| s.show_folder()),
             ),
     );
 

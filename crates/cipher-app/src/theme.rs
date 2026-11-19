@@ -53,8 +53,6 @@ pub const SPARK: TextStyle = TextStyle::new(7.5, 400.0)
     .lh(14.0)
     .family(Family::Named("DejaVu Sans Mono"));
 
-pub const LEFT_W: f32 = 272.0;
-pub const RIGHT_W: f32 = 320.0;
 pub const HEADER_H: f32 = 52.0;
 pub const SCRUBBER_W: f32 = 44.0;
 pub const GUTTER_W: f32 = 56.0;

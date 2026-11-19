@@ -7,6 +7,7 @@
 
 mod draft;
 mod drift;
+mod files;
 mod fix;
 mod history;
 mod home;
@@ -17,6 +18,7 @@ mod prefs;
 mod scenes;
 mod settings;
 mod shelf;
+mod sidebars;
 mod state;
 mod style;
 mod theme;

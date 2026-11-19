@@ -8,8 +8,8 @@ use super::widgets::{dot, icon_btn, plural, ring, scrolling, section};
 use crate::library::ChapterRow;
 use crate::state::{Screen, State};
 use crate::theme::{
-    CJK, HEADER_H, I_BOOK, I_LEFT_PANEL, I_PEN, I_PLUS, I_SHELF, I_USERS, LEFT_W, Pal, SCRUBBER_W,
-    SERIF, SMALL, UI,
+    CJK, HEADER_H, I_BOOK, I_LEFT_PANEL, I_PEN, I_PLUS, I_SHELF, I_USERS, Pal, SCRUBBER_W, SERIF,
+    SMALL, UI,
 };
 
 /// The state badge at the right of a Chapter row.
@@ -120,7 +120,7 @@ fn chapter_row(s: &State, i: usize, p: &Pal) -> El {
         })
 }
 
-pub fn contents(s: &State, p: &Pal) -> El {
+pub fn contents(s: &State, p: &Pal, width: f32) -> El {
     let lib = &s.lib;
     let total = lib.chapters.len();
     let done = lib.translated();
@@ -169,7 +169,7 @@ pub fn contents(s: &State, p: &Pal) -> El {
                 .fill(p.rule)
                 .child(
                     el().h_full()
-                        .w(frac * (LEFT_W - 36.0))
+                        .w(frac * (width - 36.0))
                         .radius(2.0)
                         .fill(p.ink3),
                 )
@@ -339,7 +339,7 @@ pub fn contents(s: &State, p: &Pal) -> El {
 
     col()
         .key("contents")
-        .w(LEFT_W)
+        .w(width)
         .h_full()
         .fill(p.side)
         .border_sides([0.0, 1.0, 0.0, 0.0], p.rule)
