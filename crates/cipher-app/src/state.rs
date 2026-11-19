@@ -337,9 +337,6 @@ impl State {
             self.fail(e);
         }
         self.pending_scroll = (!self.strip.is_empty()).then(|| (format!("sec{at}"), 0.0));
-        if self.lib.chapters.is_empty() && self.screen == Screen::Reading {
-            self.open_draft("");
-        }
     }
 
     pub fn delete_chapter(&mut self, index: usize) {
@@ -355,6 +352,9 @@ impl State {
                 self.term_card = None;
                 self.fix.picked = None;
                 self.load_strip(self.lib.current());
+                if self.lib.chapters.is_empty() {
+                    self.open_draft("");
+                }
                 format!("Deleted Chapter {number}. Undo from History (Ctrl+H).")
             }
             Err(e) => format!("Could not delete chapter: {e}"),
@@ -933,6 +933,7 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.screen == Screen::Draft && s.draft.is_some() {
         match &k.key {
+            Key::Command('h') if s.lib.chapters.is_empty() => s.open_history(),
             Key::Enter if k.mods.cmd => s.add_draft(tx),
             Key::Escape => s.leave_draft(tx, false),
             _ => return false,

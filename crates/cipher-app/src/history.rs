@@ -194,10 +194,12 @@ mod tests {
             (1280.0, 900.0),
             rune::Env::new(false, 1.0),
         );
+        runtime.on_key = Some(crate::state::on_key);
         while !runtime.state.lib.chapters.is_empty() {
             runtime
                 .state
                 .delete_chapter(runtime.state.lib.chapters.len() - 1);
+            runtime.invalidate();
             runtime.frame(1.0 / 60.0);
         }
         assert_eq!(runtime.state.screen, Screen::Draft);
@@ -211,15 +213,23 @@ mod tests {
         );
         // Reading can also be reached from History or Contents in an empty Book.
         runtime.state.screen = Screen::Reading;
+        runtime.invalidate();
         runtime.frame(1.0 / 60.0);
-        runtime.state.open_history();
+        runtime.state.screen = Screen::Draft;
+        runtime.key(KeyEvent {
+            key: Key::Command('h'),
+            mods: Default::default(),
+        });
+        runtime.invalidate();
         runtime.frame(1.0 / 60.0);
         assert_eq!(runtime.state.screen, Screen::History);
         runtime.state.undo_history();
+        runtime.invalidate();
         runtime.frame(1.0 / 60.0);
         assert_eq!(runtime.state.lib.chapters.len(), 1);
         assert_eq!(runtime.state.strip, vec![0]);
         runtime.state.screen = Screen::Reading;
+        runtime.invalidate();
         runtime.frame(1.0 / 60.0);
         assert!(!runtime.state.lib.page().translation.is_empty());
     }
