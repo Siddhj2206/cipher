@@ -43,8 +43,33 @@ assert minimum["app-root"]["rect"][2] < 500, "interface was not at maximum zoom"
 assert minimum["page"]["rect"][2] <= minimum["doc"]["rect"][2], "reading column clips at minimum size"
 PY
 
-# Make the first paragraph tall enough to straddle the reading viewport before reflow.
+# Make the first source paragraph reflow without changing its one-line translation.
 cp -R "$here/../tests/fixtures/the-quiet-tower" "$tmp/long"
+python3 -I - "$tmp/long/raw/1.md" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+source = text.split("\n\n")[1]
+path.write_text(text.replace(source, " ".join([source] * 33), 1), encoding="utf-8")
+PY
+"$dev" import "$tmp/long" "$tmp/source.cipher" >/dev/null
+cat >"$tmp/interlinear.json" <<'JSON'
+{"events": [
+ {"t": 0.2, "type": "click", "key": "g9"},
+ {"t": 0.6, "type": "scroll", "key": "doc", "dy": -260, "dur": 0.4},
+ {"t": 1.6, "type": "mark", "name": "source-before"},
+ {"t": 1.75, "type": "drag", "key": "resize-contents", "dx": 500, "dur": 0.25},
+ {"t": 2.3, "type": "mark", "name": "source-after"}
+]}
+JSON
+for m in source-before source-after; do
+  "$bin" "$tmp/source.cipher" --size 1480x920 --scale .5 --fps 15 --script "$tmp/interlinear.json" \
+    --at "mark:$m" --tree "$tmp/$m.json" 2>"$tmp/log" || { cat "$tmp/log"; exit 1; }
+done
+
+# Now make the first translation tall enough to straddle the reading viewport before reflow.
 python3 -I - "$tmp/long/tl/1.md" <<'PY'
 from pathlib import Path
 import sys
@@ -84,6 +109,14 @@ import json, math, pathlib, sys
 def rects(mark):
     tree = json.loads((pathlib.Path(sys.argv[1]) / f"{mark}.json").read_text())
     return {e["key"]: e["rect"] for e in tree["elements"] if e.get("key") and not e.get("exiting")}
+
+before, after = rects("source-before"), rects("source-after")
+assert after["s9"][3] > before["s9"][3], "interlinear source did not gain lines"
+_, y, _, height = before["b9"]
+assert y < before["doc"][1] < y + height, "viewport did not start inside the translation"
+assert after["b9"][3] == height, "translation gained lines too"
+assert math.isclose(after["b9"][1] - after["doc"][1], y - before["doc"][1], abs_tol=1), (
+    "source wrapping advanced the reader through the unchanged translation")
 
 before, after = rects("before"), rects("widened")
 top = before["doc"][1]

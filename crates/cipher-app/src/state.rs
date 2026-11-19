@@ -25,24 +25,83 @@ pub type Streamed = Vec<(u32, u32, String)>;
 pub struct ReadingRow {
     pub id: BlockId,
     pub top: f32,
-    pub height: f32,
+    text: [Option<[f32; 2]>; ReadingPart::TEXT.len()],
+}
+
+impl ReadingRow {
+    pub fn measure(
+        id: BlockId,
+        origin: f32,
+        layout: impl Fn(&str) -> Option<[f32; 4]>,
+    ) -> Option<Self> {
+        let top = layout(&ReadingPart::Row.key(id))?[1] - origin;
+        Some(Self {
+            id,
+            top,
+            text: ReadingPart::TEXT
+                .map(|part| layout(&part.key(id)).map(|[_, y, _, height]| [y - origin, height])),
+        })
+    }
+
+    fn anchor(self, scroll: f32) -> ReadingAnchor {
+        let (part, top, height) = ReadingPart::TEXT
+            .into_iter()
+            .zip(self.text)
+            .filter_map(|(part, rect)| {
+                let [top, height] = rect?;
+                (top <= scroll).then_some((part, top, height))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1))
+            .unwrap_or((ReadingPart::Row, self.top, 0.0));
+        ReadingAnchor {
+            id: self.id,
+            part,
+            offset: top - scroll,
+            height,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+pub enum ReadingPart {
+    Row,
+    Body,
+    Source,
+    Original,
+    Flag,
+}
+
+impl ReadingPart {
+    const TEXT: [Self; 4] = [Self::Body, Self::Source, Self::Original, Self::Flag];
+
+    pub fn key(self, id: BlockId) -> String {
+        match self {
+            Self::Row => format!("row{}", id.0),
+            Self::Body => format!("b{}", id.0),
+            Self::Source => format!("s{}", id.0),
+            Self::Original => format!("b{}-now", id.0),
+            Self::Flag => format!("flag{}", id.0),
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
 struct ReadingAnchor {
-    row: ReadingRow,
+    id: BlockId,
+    part: ReadingPart,
     offset: f32,
+    height: f32,
 }
 
 impl ReadingAnchor {
-    fn reflowed_offset(self, height: f32, padding: f32) -> f32 {
-        let old_text = self.row.height - padding;
-        let text = height - padding;
-        let into_row = -self.offset;
-        if text > 0.0 && text != old_text && (0.0..old_text).contains(&into_row) {
-            -into_row / old_text * text
-        } else {
+    fn reflowed_offset(self, height: f32) -> f32 {
+        if self.height == 0.0 || height == self.height {
             self.offset
+        } else {
+            let into_text = -self.offset;
+            let progress = (into_text / self.height).min(1.0);
+            let gap = (into_text - self.height).max(0.0);
+            -(progress * height + gap)
         }
     }
 }
@@ -610,30 +669,32 @@ impl State {
         if self.screen != Screen::Reading {
             return None;
         }
-        let row = self.top_reading_row()?;
-        Some(ReadingAnchor {
-            row,
-            offset: row.top - self.scroll_y.get(),
-        })
+        Some(self.top_reading_row()?.anchor(self.scroll_y.get()))
     }
 
     fn hold_reading_position(&mut self, anchor: Option<ReadingAnchor>, tx: &mut Tx) {
         self.sidebar_reflow = anchor;
         if let Some(anchor) = anchor {
-            tx.keep_on_screen(format!("row{}", anchor.row.id.0));
+            tx.keep_on_screen(anchor.part.key(anchor.id));
         }
     }
 
-    pub fn sidebar_reflow_row(&self) -> Option<BlockId> {
-        self.sidebar_reflow.map(|anchor| anchor.row.id)
+    pub fn sidebar_reflow_target(&self) -> Option<(BlockId, ReadingPart)> {
+        self.sidebar_reflow.map(|anchor| (anchor.id, anchor.part))
     }
 
-    pub fn finish_sidebar_reflow(&mut self, id: BlockId, height: f32, padding: f32, tx: &mut Tx) {
-        if let Some(anchor) = self.sidebar_reflow.take_if(|anchor| anchor.row.id == id) {
-            tx.scroll_key_to(
-                format!("row{}", id.0),
-                anchor.reflowed_offset(height, padding),
-            );
+    pub fn finish_sidebar_reflow(
+        &mut self,
+        id: BlockId,
+        part: ReadingPart,
+        height: f32,
+        tx: &mut Tx,
+    ) {
+        if let Some(anchor) = self
+            .sidebar_reflow
+            .take_if(|anchor| (anchor.id, anchor.part) == (id, part))
+        {
+            tx.scroll_key_to(part.key(id), anchor.reflowed_offset(height));
         } else {
             tx.live_only();
         }
@@ -942,25 +1003,38 @@ mod tests {
     #[test]
     fn reflow_keeps_the_same_paragraph_progress_on_either_side_of_the_old_offset() {
         let anchor = ReadingAnchor {
-            row: ReadingRow {
-                id: BlockId(1),
-                top: 0.0,
-                height: 824.0,
-            },
+            id: BlockId(1),
+            part: ReadingPart::Body,
             offset: -758.0,
+            height: 806.0,
         };
-        let padding = 18.0;
-        let progress = -anchor.offset / (anchor.row.height - padding);
+        let progress = -anchor.offset / anchor.height;
         for text in [620.0, 750.0, 765.0, 806.0, 837.0] {
-            let offset = anchor.reflowed_offset(text + padding, padding);
+            let offset = anchor.reflowed_offset(text);
             assert!(
                 (-offset / text - progress).abs() < 0.001,
                 "{text}: {offset}"
             );
         }
-        assert_eq!(
-            anchor.reflowed_offset(anchor.row.height, padding),
-            anchor.offset
-        );
+        assert_eq!(anchor.reflowed_offset(anchor.height), anchor.offset);
+    }
+
+    #[test]
+    fn reflow_anchors_translation_and_interlinear_source_independently() {
+        let row = ReadingRow::measure(BlockId(1), 20.0, |key| match key {
+            "row1" => Some([0.0, 30.0, 420.0, 184.0]),
+            "b1" => Some([0.0, 30.0, 420.0, 100.0]),
+            "s1" => Some([0.0, 136.0, 420.0, 60.0]),
+            _ => None,
+        })
+        .unwrap();
+        // Source wrapping does not advance the viewport past the last translated line.
+        let translation = row.anchor(104.0);
+        assert!(translation.part == ReadingPart::Body);
+        assert_eq!(translation.reflowed_offset(100.0), -94.0);
+        let source = row.anchor(146.0);
+        assert!(source.part == ReadingPart::Source);
+        assert_eq!(source.reflowed_offset(100.0), -50.0);
+        assert_eq!(row.anchor(112.0).reflowed_offset(80.0), -82.0);
     }
 }
