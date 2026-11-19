@@ -10,6 +10,12 @@ const COLUMNS: &str = "id, kind, parent_id, chapter_id, suggestion_id, state, in
                        attempts, tokens_in, tokens_out, error, resume_after, updated_at, model";
 
 impl Book {
+    /// Whether deleting this Chapter could disrupt an active Job, including a Fix
+    /// originating elsewhere whose scope can reach this Chapter.
+    pub fn chapter_has_active_job(&self, chapter: ChapterId) -> Result<bool> {
+        chapter_has_active_job(&self.conn, chapter)
+    }
+
     /// Adds a Job in state `queued`.
     pub fn enqueue(&mut self, spec: JobSpec) -> Result<JobId> {
         self.conn.execute(
@@ -135,6 +141,27 @@ impl Book {
             [now()],
         )?)
     }
+}
+
+pub(crate) fn chapter_has_active_job(
+    conn: &rusqlite::Connection,
+    chapter: ChapterId,
+) -> Result<bool> {
+    Ok(conn.query_row(
+        "SELECT EXISTS (
+            SELECT 1 FROM job j
+            WHERE j.state IN ('queued', 'running', 'checking', 'paused')
+              AND (j.chapter_id = ?1 OR EXISTS (
+                SELECT 1 FROM suggestion s WHERE s.id = j.suggestion_id
+                  AND (s.chapter_id = ?1 OR (
+                    j.kind IN ('suggest_batch', 'repair')
+                    AND s.state != 'done' AND s.scope != 'here'
+                  ))
+              ))
+        )",
+        [chapter.0],
+        |r| r.get(0),
+    )?)
 }
 
 struct RawJob {

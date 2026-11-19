@@ -23,28 +23,7 @@ impl Library {
         let Some(chapter) = self.chapters.get(index) else {
             return true;
         };
-        let Ok(suggestions) = self
-            .book
-            .suggestions(cipher_book::SuggestionFilter::default())
-        else {
-            return true;
-        };
-        self.book.jobs(true).map_or(true, |jobs| {
-            jobs.iter().any(|j| {
-                matches!(
-                    j.state,
-                    cipher_book::JobState::Queued
-                        | cipher_book::JobState::Running
-                        | cipher_book::JobState::Checking
-                        | cipher_book::JobState::Paused
-                ) && (j.chapter == Some(chapter.id)
-                    || j.suggestion.is_some_and(|id| {
-                        suggestions
-                            .iter()
-                            .any(|s| s.id == id && s.chapter == chapter.id)
-                    }))
-            })
-        })
+        self.book.chapter_has_active_job(chapter.id).unwrap_or(true)
     }
 
     pub fn delete_chapter(&mut self, index: usize) -> Result<()> {

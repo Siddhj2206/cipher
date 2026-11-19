@@ -202,6 +202,78 @@ fn delete_empty_chapter_and_missing_chapter() {
 }
 
 #[test]
+fn delete_chapter_checks_cross_chapter_suggestion_jobs() {
+    for scope in [Scope::Here, Scope::Everywhere, Scope::FromNowOn] {
+        for kind in [JobKind::SuggestBatch, JobKind::Repair, JobKind::Translate] {
+            for suggestion_state in [
+                SuggestionState::Working,
+                SuggestionState::Ready,
+                SuggestionState::Done,
+            ] {
+                for state in [
+                    JobState::Queued,
+                    JobState::Running,
+                    JobState::Checking,
+                    JobState::Paused,
+                    JobState::Done,
+                    JobState::Failed,
+                ] {
+                    let Fixture { mut book, .. } = new_book();
+                    let origin = add_chapter(&mut book, 1, &["Origin"]);
+                    let target = add_chapter(&mut book, 2, &["Target"]);
+                    let block = book.chapter(origin).unwrap().source[0].id;
+                    let suggestion = SuggestionId(
+                        book.apply(Change::AddSuggestion(NewSuggestion {
+                            chapter: origin,
+                            block,
+                            quote: "Origin".into(),
+                            said: "Fix everywhere".into(),
+                            scope,
+                            is_rename: false,
+                            source_expr: None,
+                            state: suggestion_state,
+                            kind: SuggestionKind::Reader,
+                            edits: vec![],
+                        }))
+                        .unwrap()
+                        .created[0],
+                    );
+                    let id = book
+                        .enqueue(JobSpec {
+                            kind,
+                            parent: None,
+                            chapter: None,
+                            suggestion: Some(suggestion),
+                            input: None,
+                        })
+                        .unwrap();
+                    let mut job = book.job(id).unwrap();
+                    job.state = state;
+                    book.save_job(&job).unwrap();
+                    let blocked = scope != Scope::Here
+                        && kind != JobKind::Translate
+                        && suggestion_state != SuggestionState::Done
+                        && !matches!(state, JobState::Done | JobState::Failed);
+                    assert_eq!(book.chapter_has_active_job(target).unwrap(), blocked);
+                    let before = seen(&book);
+                    let revisions = book.revisions(200).unwrap();
+                    let result = book.apply(Change::DeleteChapter { chapter: target });
+                    if blocked {
+                        assert!(result.unwrap_err().to_string().contains("active job"));
+                        assert_eq!(seen(&book), before);
+                        assert_eq!(book.revisions(200).unwrap(), revisions);
+                    } else {
+                        result.unwrap();
+                        assert_eq!(book.chapters().unwrap().len(), 1);
+                    }
+                    assert_eq!(book.job(id).unwrap(), job);
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn delete_chapter_refuses_suggestion_only_job() {
     let Fixture { mut book, .. } = new_book();
     let (chapter, suggestion, _) = with_suggestion(&mut book);

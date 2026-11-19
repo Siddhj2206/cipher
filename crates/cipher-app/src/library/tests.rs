@@ -64,6 +64,50 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 const LORD: &str = "마탑주";
 
 #[test]
+fn chapter_menu_blocks_cross_chapter_fix_jobs() {
+    use cipher_book::{NewSuggestion, Scope, SuggestionId, SuggestionKind, SuggestionState};
+
+    let (_dir, mut lib) = history_fixture();
+    let origin = lib.chapters[0].id;
+    let block = lib.book().chapter(origin).unwrap().translation[0].id;
+    let suggestion = SuggestionId(
+        lib.book_mut()
+            .apply(Change::AddSuggestion(NewSuggestion {
+                chapter: origin,
+                block,
+                quote: "opening".into(),
+                said: "Fix everywhere".into(),
+                scope: Scope::Everywhere,
+                is_rename: false,
+                source_expr: None,
+                state: SuggestionState::Working,
+                kind: SuggestionKind::Reader,
+                edits: vec![],
+            }))
+            .unwrap()
+            .created[0],
+    );
+    assert!(!lib.chapter_has_active_job(1));
+    let id = lib
+        .book_mut()
+        .enqueue(JobSpec {
+            kind: JobKind::SuggestBatch,
+            parent: None,
+            chapter: None,
+            suggestion: Some(suggestion),
+            input: None,
+        })
+        .unwrap();
+    assert!(lib.chapter_has_active_job(1));
+    assert!(lib.delete_chapter(1).is_err());
+    let mut job = lib.book().job(id).unwrap();
+    job.state = cipher_book::JobState::Failed;
+    lib.book_mut().save_job(&job).unwrap();
+    assert!(!lib.chapter_has_active_job(1));
+    lib.delete_chapter(1).unwrap();
+}
+
+#[test]
 fn delete_reopen_undo_chapter() {
     let (_dir, mut lib) = history_fixture();
     let original = lib.book().chapters().unwrap();

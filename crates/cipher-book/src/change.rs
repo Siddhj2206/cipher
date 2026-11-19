@@ -337,13 +337,9 @@ fn write(w: &mut Writer<'_>, change: Change, created: &mut Vec<i64>) -> Result<S
         Change::DeleteChapter { chapter } => {
             let (number, title) = chapter_head(w, chapter)?;
             let jobs = "chapter_id = ?1 OR suggestion_id IN (SELECT id FROM suggestion WHERE chapter_id = ?1)";
-            let active: bool = w.tx().query_row(
-                &format!("SELECT EXISTS (SELECT 1 FROM job WHERE ({jobs}) AND state IN ('queued', 'running', 'checking', 'paused'))"),
-                [chapter.0], |r| r.get(0),
-            )?;
-            if active {
+            if crate::jobs::chapter_has_active_job(w.tx(), chapter)? {
                 return Err(Error::Invalid(
-                    "Cannot delete a chapter with an active job; stop its jobs first".into(),
+                    "Cannot delete a chapter with an active job affecting it; stop those jobs first".into(),
                 ));
             }
             w.tx()
