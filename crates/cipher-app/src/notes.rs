@@ -201,6 +201,13 @@ impl NotesEdit {
     }
 
     fn save(&mut self, book: &mut Book) -> Result<bool, String> {
+        if self.saved_forms != book.glossary().map_err(|e| e.to_string())?.forms_of_address
+            || self.saved_notes != book.story_notes().map_err(|e| e.to_string())?
+        {
+            return Err(
+                "Book notes changed since you opened them — Revert to load the latest".into(),
+            );
+        }
         let change = self.changes()?;
         let changed = change.is_some();
         if let Some(change) = change {
@@ -240,7 +247,30 @@ impl State {
 
     pub fn revert_notes(&mut self) {
         if let Some(edit) = &mut self.notes {
-            edit.revert();
+            match NotesEdit::load(self.lib.book()) {
+                Ok(latest) => {
+                    if edit.saved_forms == latest.saved_forms
+                        && edit.saved_notes == latest.saved_notes
+                    {
+                        edit.revert();
+                    } else {
+                        *edit = latest;
+                    }
+                }
+                Err(e) => self.toast = Some(format!("Could not read Book notes: {e}")),
+            }
+        }
+    }
+
+    pub fn on_notes_job_finished(&mut self, job: cipher_book::JobId) {
+        if self
+            .lib
+            .book()
+            .job(job)
+            .is_ok_and(|j| j.kind == JobKind::CompactNotes)
+            && self.notes.as_ref().is_some_and(|edit| !edit.changed())
+        {
+            self.revert_notes();
         }
     }
 
@@ -496,6 +526,62 @@ mod tests {
         s.screen = Screen::Reading;
         s.open_notes();
         assert_eq!(s.notes.as_ref().unwrap().notes[0].text.text, "Unsaved");
+    }
+
+    #[test]
+    fn stale_compaction_snapshot_cannot_overwrite_summary() {
+        let (_dir, book) = fixture();
+        let mut s = State::new(Library::open(book.path()).unwrap());
+        s.open_notes();
+        s.notes.as_mut().unwrap().notes[0].text.text = "Unsaved".into();
+        s.lib
+            .book_mut()
+            .apply(Change::CompactStoryNotes {
+                summary: "New summary".into(),
+            })
+            .unwrap();
+        let revisions = s.lib.book().revisions(100).unwrap().len();
+        s.save_notes();
+        assert!(
+            s.toast
+                .as_ref()
+                .unwrap()
+                .contains("Revert to load the latest")
+        );
+        assert_eq!(s.lib.book().revisions(100).unwrap().len(), revisions);
+        assert_eq!(s.lib.book().story_notes().unwrap()[0].text, "New summary");
+        s.revert_notes();
+        assert_eq!(s.notes.as_ref().unwrap().notes[0].text.text, "New summary");
+        assert!(!s.notes.as_ref().unwrap().changed());
+    }
+
+    #[test]
+    fn compaction_completion_reloads_only_clean_editors() {
+        for dirty in [false, true] {
+            let (_dir, book) = fixture();
+            let mut s = State::new(Library::open(book.path()).unwrap());
+            s.open_notes();
+            s.compact_notes();
+            let mut job = s.lib.book_mut().claim_next_job().unwrap().unwrap();
+            if dirty {
+                s.notes.as_mut().unwrap().notes[0].text.text = "Unsaved".into();
+            }
+            s.lib
+                .book_mut()
+                .apply(Change::CompactStoryNotes {
+                    summary: "New summary".into(),
+                })
+                .unwrap();
+            job.state = JobState::Done;
+            s.lib.book_mut().save_job(&job).unwrap();
+            s.on_notes_job_finished(job.id);
+            let edit = s.notes.as_ref().unwrap();
+            assert_eq!(
+                edit.notes[0].text.text,
+                if dirty { "Unsaved" } else { "New summary" }
+            );
+            assert_eq!(edit.changed(), dirty);
+        }
     }
 
     #[test]
