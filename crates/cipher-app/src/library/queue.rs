@@ -22,7 +22,161 @@ pub struct Intake {
     pub exists: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntakeIssue {
+    NoNumber,
+    Duplicate,
+    InBook,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IntakePart {
+    pub key: (usize, usize),
+    pub source: Option<String>,
+    pub intake: Intake,
+    pub issue: Option<IntakeIssue>,
+    pub include: bool,
+}
+
 impl Library {
+    /// Splits only at numbered heading Blocks, leaving single-Chapter reading unchanged.
+    pub fn intakes(&self, text: &str) -> Vec<Intake> {
+        let blocks = blocks::split(text);
+        let heads: Vec<_> = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(i, b)| heading::chapter_heading(b)?.number.map(|_| i))
+            .collect();
+        if heads.len() < 2 {
+            return self.intake(text).into_iter().collect();
+        }
+        let mut starts = heads;
+        if starts[0] != 0 {
+            starts.insert(0, 0);
+        }
+        starts.push(blocks.len());
+        let mut numbers: Vec<_> = self.chapters.iter().map(|c| c.number).collect();
+        starts
+            .windows(2)
+            .map(|range| {
+                let part = &blocks[range[0]..range[1]];
+                let mut intake = self.intake(&part.join("\n\n")).expect("nonempty part");
+                intake.number = heading::chapter_heading(&part[0])
+                    .and_then(|h| h.number)
+                    .map(i64::from);
+                intake.after = match intake.number {
+                    Some(n) => numbers.iter().copied().filter(|&m| m < n).max(),
+                    None => numbers.iter().copied().max(),
+                };
+                intake.exists = intake.number.is_some_and(|n| numbers.contains(&n));
+                if let Some(n) = intake.number {
+                    numbers.push(n);
+                }
+                intake
+            })
+            .collect()
+    }
+
+    /// Files retain pick order as a tie-breaker; unnumbered parts go last.
+    pub fn intake_plan(&self, files: &[(String, String)], text: &str) -> Vec<IntakePart> {
+        let mut parts = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        for (source, (label, text)) in files
+            .iter()
+            .map(|(label, text)| (Some(label), text.as_str()))
+            .chain(std::iter::once((None, text)))
+            .enumerate()
+        {
+            for (index, intake) in self.intakes(text).into_iter().enumerate() {
+                let issue = match intake.number {
+                    None => Some(IntakeIssue::NoNumber),
+                    Some(n) if !seen.insert(n) => Some(IntakeIssue::Duplicate),
+                    Some(n) if self.chapters.iter().any(|c| c.number == n) => {
+                        Some(IntakeIssue::InBook)
+                    }
+                    Some(_) => None,
+                };
+                parts.push(IntakePart {
+                    key: (source, index),
+                    source: label.cloned(),
+                    intake,
+                    issue,
+                    include: !matches!(issue, Some(IntakeIssue::Duplicate | IntakeIssue::InBook)),
+                });
+            }
+        }
+        parts.sort_by_key(|p| (p.intake.number.is_none(), p.intake.number));
+        let mut next = self
+            .chapters
+            .iter()
+            .map(|c| c.number)
+            .chain(parts.iter().filter_map(|p| p.intake.number))
+            .max()
+            .unwrap_or(0);
+        let mut numbers: Vec<_> = self.chapters.iter().map(|c| c.number).collect();
+        for part in &mut parts {
+            let n = *part.intake.number.get_or_insert_with(|| {
+                next += 1;
+                next
+            });
+            part.intake.after = numbers.iter().copied().filter(|&m| m < n).max();
+            numbers.push(n);
+        }
+        parts
+    }
+
+    /// Adds included parts, then submits one ordered translation request.
+    pub fn add_intakes(&mut self, parts: &[IntakePart]) -> Result<Option<usize>> {
+        self.add_intakes_with(parts, Self::create_chapter)
+    }
+
+    pub(super) fn add_intakes_with(
+        &mut self,
+        parts: &[IntakePart],
+        mut create: impl FnMut(&mut Self, &Intake) -> Result<ChapterId>,
+    ) -> Result<Option<usize>> {
+        let included: Vec<_> = parts.iter().filter(|p| p.include).collect();
+        if included.iter().any(|p| p.intake.blocks.is_empty()) {
+            return Err(Error::Invalid(
+                "the pasted Chapter has no paragraphs".into(),
+            ));
+        }
+        let mut ids = Vec::new();
+        let mut failure = None;
+        for part in included {
+            match create(self, &part.intake) {
+                Ok(id) => ids.push(id),
+                Err(error) => {
+                    failure = Some(error);
+                    break;
+                }
+            }
+        }
+        if ids.is_empty() {
+            return failure.map_or(Ok(None), Err);
+        }
+        let chapters = self.book.chapters()?;
+        ids.sort_by_key(|id| chapters.iter().position(|c| c.id == *id));
+        cipher_engine::translate(&mut self.book, &ids).map_err(super::engine_error)?;
+        for id in &ids {
+            self.insert_row(*id)?;
+        }
+        let at: Vec<_> = ids
+            .iter()
+            .map(|id| {
+                self.chapters
+                    .iter()
+                    .position(|c| c.id == *id)
+                    .expect("added row")
+            })
+            .collect();
+        self.refresh_chapters(&at)?;
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        Ok(at.first().copied())
+    }
+
     /// Reads pasted text as a Chapter. `None` when it holds nothing but whitespace.
     pub fn intake(&self, text: &str) -> Option<Intake> {
         let mut blocks = blocks::split(text);
@@ -60,6 +214,12 @@ impl Library {
 
     /// Adds the Chapter in number order and queues it. Returns its index.
     pub fn add_chapter(&mut self, intake: &Intake) -> Result<usize> {
+        let id = self.create_chapter(intake)?;
+        cipher_engine::translate(&mut self.book, &[id]).map_err(super::engine_error)?;
+        self.insert_row(id)
+    }
+
+    fn create_chapter(&mut self, intake: &Intake) -> Result<ChapterId> {
         if intake.blocks.is_empty() {
             return Err(Error::Invalid(
                 "the pasted Chapter has no paragraphs".into(),
@@ -76,8 +236,7 @@ impl Library {
                 .first()
                 .ok_or_else(|| Error::Invalid("AddChapter created no Chapter".into()))?,
         );
-        cipher_engine::translate(&mut self.book, &[id]).map_err(super::engine_error)?;
-        self.insert_row(id)
+        Ok(id)
     }
 
     /// Queues an untranslated Chapter.

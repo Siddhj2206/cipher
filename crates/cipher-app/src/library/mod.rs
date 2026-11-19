@@ -24,7 +24,7 @@ use cipher_book::{
 
 pub use edits::counts;
 pub use page::{Page, PageBlock, PairFlag};
-pub use queue::Intake;
+pub use queue::{Intake, IntakeIssue, IntakePart};
 pub use stats::{ChapterStats, shown};
 
 use scan::SourceFinder;

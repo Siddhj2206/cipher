@@ -539,6 +539,215 @@ fn an_untranslated_chapter_can_be_queued_and_a_failed_one_retried() {
 }
 
 #[test]
+fn batch_splitting_preserves_single_reading_and_tracks_earlier_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 2, &["Already here."]);
+    let lib = Library::from_book(b).unwrap();
+    assert!(lib.intakes(" \n\n ").is_empty());
+    for text in ["Some prose.\n\nMore prose.", "3화\n\nA chapter."] {
+        assert_eq!(lib.intakes(text), vec![lib.intake(text).unwrap()]);
+    }
+    let parts = lib.intakes("Preamble.\n\n4화\n\nFour.\n\n3화\n\nThree.\n\n4화\n\nAnother four.");
+    assert_eq!(
+        parts.iter().map(|p| p.number).collect::<Vec<_>>(),
+        [None, Some(4), Some(3), Some(4)]
+    );
+    assert_eq!(parts[0].blocks, ["Preamble."]);
+    assert_eq!(parts[1].after, Some(2));
+    assert_eq!(parts[3].after, Some(3));
+    assert!(parts[3].exists);
+    assert!(!parts[1].exists);
+}
+
+#[test]
+fn batch_plan_orders_numbers_marks_conflicts_and_assigns_unnumbered_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 10, &["Existing."]);
+    let lib = Library::from_book(b).unwrap();
+    assert!(lib.intake_plan(&[], "").is_empty());
+    let files = vec![
+        (
+            "first.txt".into(),
+            "12화\n\nFirst twelve.\n\n11화\n\nEleven.".into(),
+        ),
+        ("second.txt".into(), "Unnumbered file.".into()),
+    ];
+    let plan = lib.intake_plan(
+        &files,
+        "Preamble.\n\n12화\n\nDuplicate.\n\n10화\n\nIn book.",
+    );
+    assert_eq!(
+        plan.iter()
+            .map(|p| p.intake.number.unwrap())
+            .collect::<Vec<_>>(),
+        [10, 11, 12, 12, 13, 14]
+    );
+    assert_eq!(
+        plan.iter().map(|p| p.issue).collect::<Vec<_>>(),
+        [
+            Some(IntakeIssue::InBook),
+            None,
+            None,
+            Some(IntakeIssue::Duplicate),
+            Some(IntakeIssue::NoNumber),
+            Some(IntakeIssue::NoNumber)
+        ]
+    );
+    assert_eq!(
+        plan.iter().map(|p| p.include).collect::<Vec<_>>(),
+        [false, true, true, false, true, true]
+    );
+    assert_eq!(plan[2].source.as_deref(), Some("first.txt"));
+    assert_eq!(plan[4].source.as_deref(), Some("second.txt"));
+    assert_eq!(plan[4].intake.after, Some(12));
+    assert_eq!(plan[5].intake.after, Some(13));
+    assert_ne!(plan[2].key, plan[3].key);
+}
+
+#[test]
+fn batch_commit_queues_selected_chapters_in_book_order_after_existing_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let existing = chapter(&mut b, 20, &["Existing."]);
+    cipher_engine::translate(&mut b, &[existing]).unwrap();
+    let mut lib = Library::from_book(b).unwrap();
+    let mut plan = lib.intake_plan(
+        &[],
+        "23화\n\nTwenty-three.\n\n21화\n\nTwenty-one.\n\n21화\n\nDuplicate.\n\n22화\n\nSkip me.",
+    );
+    plan.iter_mut()
+        .find(|p| p.intake.number == Some(22))
+        .unwrap()
+        .include = false;
+    assert_eq!(lib.add_intakes(&plan).unwrap(), Some(1));
+    assert_eq!(
+        lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+        [20, 21, 23]
+    );
+    assert_eq!(
+        lib.chapters
+            .iter()
+            .map(|c| c.queue_place)
+            .collect::<Vec<_>>(),
+        [Some(1), Some(2), Some(3)]
+    );
+    assert_eq!(
+        lib.book.chapter(lib.chapters[1].id).unwrap().source[0].text,
+        "Twenty-one."
+    );
+    let jobs = lib.book.jobs(false).unwrap();
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.kind == JobKind::Translate)
+            .map(|j| j.chapter.unwrap())
+            .collect::<Vec<_>>(),
+        lib.chapters.iter().map(|c| c.id).collect::<Vec<_>>()
+    );
+    for part in &mut plan {
+        part.include = false;
+    }
+    assert_eq!(lib.add_intakes(&plan).unwrap(), None);
+    assert_eq!(lib.chapters.len(), 3);
+}
+
+#[test]
+fn batch_commit_rejects_empty_parts_before_adding_anything_and_allows_opted_in_duplicates() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    let plan = lib.intake_plan(&[], "1화\n\nOne.\n\n2화");
+    assert!(lib.add_intakes(&plan).is_err());
+    assert!(lib.book.chapters().unwrap().is_empty());
+    let mut plan = lib.intake_plan(&[], "1화\n\nOne.\n\n1화\n\nAnother one.");
+    plan[1].include = true;
+    lib.add_intakes(&plan).unwrap();
+    assert_eq!(
+        lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+        [1, 1]
+    );
+}
+
+#[test]
+fn picking_more_files_preserves_the_first_file_and_any_later_paste() {
+    let mut draft = crate::draft::Draft {
+        text: rune::TextEdit::new("Old draft."),
+        back: 0,
+        files: Vec::new(),
+        file_name: None,
+        included: Default::default(),
+    };
+    draft.pick_file("one.txt".into(), "1화\n\nOne.".into(), false);
+    assert_eq!(draft.text.text, "1화\n\nOne.");
+    assert!(draft.files.is_empty());
+    draft.included.insert((0, 0), false);
+    draft.pick_file("two.txt".into(), "2화\n\nTwo.".into(), true);
+    assert_eq!(draft.files.len(), 2);
+    assert_eq!(draft.files[0].0, "one.txt");
+    assert!(draft.text.text.is_empty());
+    assert!(draft.included.is_empty());
+    draft.text = rune::TextEdit::new("3화\n\nPasted three.");
+    draft.pick_file("four.txt".into(), "4화\n\nFour.".into(), true);
+    assert_eq!(draft.files.len(), 3);
+    assert_eq!(draft.text.text, "3화\n\nPasted three.");
+    draft.pick_file("empty.txt".into(), "".into(), false);
+    assert!(draft.files.is_empty());
+    assert!(draft.text.text.is_empty());
+}
+
+#[test]
+fn partial_batch_failure_queues_created_chapters_in_book_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    let existing = lib.intake("10화\n\nAlready queued.").unwrap();
+    lib.add_chapter(&existing).unwrap();
+    let mut plan = lib.intake_plan(&[], "1화\n\nOne.\n\n2화\n\nTwo.\n\n3화\n\nThree.");
+    plan.swap(0, 1);
+    let error = lib
+        .add_intakes_with(&plan, |lib, intake| {
+            if intake.number == Some(3) {
+                return Err(cipher_book::Error::Invalid("creation failed".into()));
+            }
+            let applied = lib.book.apply(Change::AddChapter {
+                number: intake.number,
+                title: intake.title.clone(),
+                source: intake.blocks.clone(),
+            })?;
+            Ok(ChapterId(applied.created[0]))
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("creation failed"));
+    assert_eq!(
+        lib.chapters
+            .iter()
+            .map(|c| (c.number, c.queue_place))
+            .collect::<Vec<_>>(),
+        [(1, Some(2)), (2, Some(3)), (10, Some(1))]
+    );
+    let error = lib
+        .add_intakes_with(&plan, |_, _| {
+            Err(cipher_book::Error::Invalid("first failed".into()))
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("first failed"));
+    assert_eq!(lib.book.jobs(false).unwrap().len(), 3);
+}
+
+#[test]
+fn batch_range_tracks_selection_and_falls_back_when_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    let mut plan = lib.intake_plan(&[], "1화\n\nOne.\n\n321화\n\nNext.\n\n322화\n\nLast.");
+    plan[0].include = false;
+    assert_eq!(crate::draft::batch_range(&plan), "321–322");
+    plan[1].include = false;
+    assert_eq!(crate::draft::batch_range(&plan), "322");
+    plan[2].include = false;
+    assert_eq!(crate::draft::batch_range(&plan), "1–322");
+    assert_eq!(crate::draft::batch_range(&[]), "");
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);

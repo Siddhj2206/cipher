@@ -141,7 +141,8 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Chapter actions: Translate again, and Translate all N from here (2026-11-16).
 - [ ] Delete a Chapter.
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
-- [ ] "Fetch models" from an API-key Endpoint's `/models`; several chapters at once (a multi-file pick, or a paste holding several numbered chapters).
+- [ ] "Fetch models" from an API-key Endpoint's `/models`.
+- [x] Several chapters at once: numbered multi-chapter paste or repeated file picks, with ordered preview, conflict notes and per-chapter Include/Skip.
 - [x] Sidebars that give way on narrow windows (2026-11-16).
 - [ ] Resizable, remembered sidebar widths.
 - [ ] A History panel: Revisions listed with Undo. Today only Reviews offer Undo, so a re-translation or a re-pair can't be undone from the app.
