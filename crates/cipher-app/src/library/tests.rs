@@ -76,6 +76,46 @@ fn history_fixture() -> (tempfile::TempDir, Library) {
 }
 
 #[test]
+fn history_undo_of_added_chapter_removes_unstarted_jobs_but_refuses_running_jobs() {
+    for running in [false, true] {
+        let mut lib = Library::blank();
+        let intake = lib.intake("# Chapter 1\n\nSource paragraph").unwrap();
+        lib.add_chapter(&intake).unwrap();
+        let revision = lib.revisions().unwrap()[0].id;
+        let chapter = lib.chapters[0].id;
+        assert_eq!(lib.book().jobs(false).unwrap().len(), 1);
+        if running {
+            lib.book_mut().claim_next_job().unwrap().unwrap();
+        }
+        let preview = lib.preview_undo(revision).unwrap();
+        assert_eq!(lib.book().jobs(false).unwrap().len(), 1);
+        if running {
+            assert!(preview.conflicts.iter().any(|c| c.entity == "job"));
+            assert!(
+                preview
+                    .conflict_chapters
+                    .iter()
+                    .any(|(c, ch)| c.entity == "job" && *ch == chapter)
+            );
+            assert!(matches!(
+                lib.undo_revision(revision).unwrap(),
+                cipher_book::UndoOutcome::Conflict { .. }
+            ));
+            assert_eq!(lib.chapters.len(), 1);
+            assert_eq!(lib.book().jobs(false).unwrap().len(), 1);
+        } else {
+            assert!(preview.conflicts.is_empty(), "{:?}", preview.conflicts);
+            assert!(matches!(
+                lib.undo_revision(revision).unwrap(),
+                cipher_book::UndoOutcome::Undone { .. }
+            ));
+            assert!(lib.chapters.is_empty());
+            assert!(lib.book().jobs(false).unwrap().is_empty());
+        }
+    }
+}
+
+#[test]
 fn history_translation_reloads_page_and_whole_conflicts_are_located() {
     use cipher_book::UndoOutcome;
     let (_dir, mut lib) = history_fixture();

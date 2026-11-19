@@ -55,6 +55,7 @@ impl State {
             return;
         };
         let id = p.revision.id;
+        let style_changed = p.changes.iter().any(|(entity, _)| *entity == "style_rule");
         match self.lib.undo_revision(id) {
             Ok(outcome) => {
                 self.toast = Some(match outcome {
@@ -68,7 +69,20 @@ impl State {
                         }
                         self.fix.picked = None;
                         self.term_card = None;
-                        self.style = None;
+                        self.load_strip(self.lib.current());
+                        if style_changed {
+                            if self
+                                .style
+                                .as_ref()
+                                .is_some_and(crate::style::StyleEdit::changed)
+                            {
+                                if let Ok(saved) = cipher_engine::style_text(self.lib.book()) {
+                                    self.style.as_mut().unwrap().saved = saved;
+                                }
+                            } else {
+                                self.style = None;
+                            }
+                        }
                         if skipped.is_empty() {
                             "Undone".into()
                         } else {
@@ -139,6 +153,70 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_undo_reloads_neighbor_pages_in_the_reading_strip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quiet.cipher");
+        cipher_engine::import(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/the-quiet-tower"),
+            &path,
+        )
+        .unwrap();
+        let mut s = State::new(crate::library::Library::open(&path).unwrap());
+        assert!(s.lib.page_at(1).is_some());
+        let block = s
+            .lib
+            .book()
+            .chapter(s.lib.chapters[0].id)
+            .unwrap()
+            .translation[0]
+            .id;
+        s.lib
+            .book_mut()
+            .apply(cipher_book::Change::EditBlock {
+                block,
+                text: "Edited".into(),
+                hand: true,
+            })
+            .unwrap();
+        s.open_history();
+        s.undo_history();
+        assert_eq!(s.strip, vec![0, 1]);
+        assert!(s.lib.page_at(1).is_some());
+    }
+
+    #[test]
+    fn history_undo_preserves_unsaved_style_and_only_invalidates_changed_rules() {
+        for touched_style in [false, true] {
+            for unsaved in [false, true] {
+                let mut s = State::new(crate::library::Library::blank());
+                s.open_style();
+                if unsaved {
+                    s.style.as_mut().unwrap().text.text = "My unsaved draft".into();
+                }
+                if touched_style {
+                    cipher_engine::set_style(s.lib.book_mut(), "New saved rules").unwrap();
+                } else {
+                    s.lib
+                        .book_mut()
+                        .apply(cipher_book::Change::AddStoryNote {
+                            chapter: None,
+                            text: "Unrelated note".into(),
+                        })
+                        .unwrap();
+                }
+                s.open_history();
+                s.undo_history();
+                if unsaved {
+                    assert_eq!(s.style.as_ref().unwrap().text.text, "My unsaved draft");
+                } else {
+                    assert_eq!(s.style.is_none(), touched_style);
+                }
+            }
+        }
+    }
 
     #[test]
     fn unreadable_preview_keeps_the_row_and_clears_stale_preview() {

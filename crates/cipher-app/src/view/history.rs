@@ -131,7 +131,7 @@ pub fn history_page(s: &State, p: &Pal) -> El {
             });
         detail = detail.child(actions);
         if blocked || undone {
-            detail = detail.child(text(if undone { "Already undone. Select its Undo revision to redo." } else { "Nothing will be undone: later work changed these chapters. Structural changes must be undone as a whole." }).font(SMALL).color(p.ink3).wrap());
+            detail = detail.child(text(if undone { "Already undone. Select its Undo revision to redo." } else if preview.conflicts.iter().any(|c| c.entity == "job") { "Nothing will be undone: this chapter has work that has started or has dependent jobs. Finish that work before undoing the chapter." } else { "Nothing will be undone: later work changed these chapters. Structural changes must be undone as a whole." }).font(SMALL).color(p.ink3).wrap());
         }
         expanded = Some(detail);
     } else if let Some(error) = &s.history.preview_error {
