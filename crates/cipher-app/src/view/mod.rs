@@ -8,6 +8,7 @@ mod context;
 mod diff;
 mod draft;
 mod drift;
+mod find;
 mod fix;
 mod header;
 mod history;
@@ -149,6 +150,7 @@ fn screen(s: &State, cx: &mut Cx<State>) -> El {
         .child(shell.instant_changes());
     for layer in [
         fix::chip_bar(s, &p),
+        find::bar(s, &p),
         fix::composer(s, &p),
         review::bar(s, &p),
         review::toast(s, &p),

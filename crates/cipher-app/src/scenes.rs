@@ -317,6 +317,28 @@ fn shelf(s: &mut State) {
 
 type Scene = (&'static str, fn(&mut State));
 
+fn find_scene(s: &mut State, source: bool) {
+    let query = if source { "탑" } else { "tower" };
+    s.find = Some(crate::find::Find {
+        query: TextEdit::new(query),
+        scope: if source {
+            cipher_book::Side::Source
+        } else {
+            cipher_book::Side::Translation
+        },
+        results: crate::find::Results::default(),
+        current: 0,
+        generation: 0,
+        searching: true,
+        searched: String::new(),
+        search: crate::find::Search::default(),
+        due: None,
+        book_generation: (0, 0),
+        refresh: None,
+    });
+    s.search_find();
+}
+
 fn history(s: &mut State, conflict: bool, undone: bool) {
     let chapter = s.lib.chapters[0].id;
     let old = s.lib.book().chapter(chapter).expect("chapter");
@@ -394,6 +416,13 @@ fn history(s: &mut State, conflict: bool, undone: bool) {
 }
 
 pub const SCENES: &[Scene] = &[
+    ("find", |s| {
+        find_scene(s, false);
+    }),
+    ("find-source-dark", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+        find_scene(s, true);
+    }),
     ("history-metadata", |s| {
         s.prefs.appearance = crate::prefs::Appearance::Light;
         let term = s.lib.book().glossary().expect("glossary").terms[0].clone();

@@ -198,6 +198,7 @@ pub struct State {
     /// How the Book names the Term whose drift panel is open (`drift.rs`).
     pub look: Option<crate::drift::Look>,
     pub palette: Option<TextEdit>,
+    pub find: Option<crate::find::Find>,
     pub palette_pick: usize,
     pub toast: Option<String>,
     /// The toast offers Undo for this Suggestion's Review.
@@ -284,6 +285,7 @@ impl State {
             cast_drifting: false,
             look: None,
             palette: None,
+            find: None,
             palette_pick: 0,
             toast: None,
             toast_undo: None,
@@ -878,6 +880,15 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 
 /// Keys for what is on screen: a sheet, Settings, the Shelf or a Book.
 fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
+    if s.home.is_none() && s.screen == Screen::Reading && s.settings_page.is_none() {
+        if k.key == Key::Command('f') {
+            crate::find::key(s, k, tx);
+            return true;
+        }
+        if s.find.is_some() && s.palette.is_none() && crate::find::key(s, k, tx) {
+            return true;
+        }
+    }
     if s.model_menu.is_some() && k.key == Key::Escape {
         s.model_menu = None;
         return true;

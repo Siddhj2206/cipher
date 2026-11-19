@@ -134,6 +134,24 @@ fn body_text(s: &State, b: &PageBlock, side: Side, p: &Pal) -> El {
             }
         })
         .collect();
+    if let Some(f) = &s.find
+        && f.book_generation == s.lib.text_generation()
+    {
+        for (i, hit) in f
+            .results
+            .hits
+            .iter()
+            .enumerate()
+            .filter(|(_, h)| h.block == id && h.side == side)
+        {
+            let color = if i == f.current {
+                p.highlight
+            } else {
+                p.highlight.alpha(p.highlight.a * 0.35)
+            };
+            spans.push(Span::new(hit.range.start, hit.range.end).bg(color, 1.0));
+        }
+    }
     // The fix box takes the keyboard, so the quote keeps its highlight by itself.
     if let Some(sel) = s.fix.picked.as_ref().filter(|sel| sel.block == id)
         && let Some(at) = b.text.find(&sel.text)

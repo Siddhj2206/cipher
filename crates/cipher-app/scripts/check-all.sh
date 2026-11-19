@@ -20,6 +20,7 @@ run() {
 run queue   sh "$here/check-queue.sh"   "$tmp/book.cipher" "$bin"
 run fix     sh "$here/check-fix.sh"     "$tmp/book.cipher" "$bin"
 run desktop sh "$here/check-desktop.sh" "$tmp/book.cipher" "$bin"
+run find    sh "$here/check-find.sh"    "$tmp/book.cipher" "$bin"
 run sidebars sh "$here/check-sidebars.sh" "$tmp/book.cipher" "$bin" "$dev"
 run shelf   sh "$here/check-shelf.sh"   "$fixture" "$bin"
 exit $failed

@@ -173,6 +173,7 @@ impl State {
 
     /// Makes `lib` the Book on screen, from its first Chapter, with its own worker.
     pub fn show_book(&mut self, lib: Library) {
+        self.find = None;
         self.lib = lib;
         self.home = None;
         self.screen = Screen::Reading;
@@ -210,6 +211,7 @@ impl State {
     }
 
     pub fn show_shelf(&mut self) {
+        self.find = None;
         self.bg.stop();
         let dir = self.scratch.as_ref().map(|d| d.path().to_path_buf());
         self.lib = Library::blank();

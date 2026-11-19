@@ -8,6 +8,7 @@
 mod draft;
 mod drift;
 mod files;
+mod find;
 mod fix;
 mod history;
 mod home;
@@ -219,6 +220,7 @@ fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
     let settled = s.settle_strip(tx);
     s.start_scan();
     let changed = s.drain(tx) || scrolled || settled;
+    let changed = s.poll_find(tx) || changed;
     let now = tx.clock();
     let changed = s.settle_toast(now, tx) || changed;
     s.save_prefs();
