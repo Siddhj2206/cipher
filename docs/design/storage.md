@@ -25,6 +25,10 @@ Covered by Revisions: chapter, pair, block, term, forbidden_rendering, style_rul
 
 V5 adds `proposed_metadata`: Suggestion-linked Drift Glossary/Story Note proposals, in id order. Each stores a typed JSON change, the before text for Review, a deterministic full-row snapshot of the affected Term and its Forbidden Renderings or Story Note, and its decision state. Accept checks that snapshot inside the write transaction; mismatches become stale. Content writes and the decision share one Revision. A Suggestion is not Done while its metadata items remain pending or stale.
 
+Undoing an added Chapter removes its queued, never-started Jobs in the same transaction. Jobs with saved input, partial output, attempts or dependents, or Jobs no longer queued, block that Undo; previews report those Jobs as conflicts. If the Chapter cannot be removed, its Jobs remain untouched.
+
+`Book::preview_undo` runs the same Undo algorithm in an Immediate transaction using `SkipConflicts`, then always rolls it back. It returns the Revision, sorted affected Chapter ids, per-entity change counts, conflicts (including foreign-key-blocked restores) with Chapter locations, and any `already_undone_by`. It creates no Revision and changes no data.
+
 `book_meta` keys: `title`, `source_lang`, `target_lang`, `created_at`, and, when the Book has chosen a model, `model_endpoint` (an Endpoint id from the user's `endpoints.json`) with `model`.
 
 ## Rules the schema does not enforce

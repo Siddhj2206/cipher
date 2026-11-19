@@ -34,6 +34,12 @@ The home screen: `cipher` opens here, and the library icon at the top of the con
 
 An empty Book opens on the page for its first chapter (Adding chapters).
 
+## History
+
+Open History beside Style in Contents, with Ctrl+H, or the palette's “History — Undo translations, reviews and edits”. It reads the latest 200 Revisions from the Book, newest first, including work from earlier sessions. Each row shows its label, kind, age and a greyed “Undone” marker. Up/Down selects; Tab and Enter reach and activate actions; Esc returns to reading.
+
+The selected Revision previews affected Chapters (links back to reading), change counts in plain words and rows changed since, grouped by Chapter. Translation, added Chapter, Import (including re-pair), and Undo Revisions are all-or-nothing: conflicts disable Undo and explain why. Reviews, Hand Edits, Glossary, Suggestions and Notes offer “Undo what's unchanged” when needed. Undo rechecks conflicts transactionally, reports its result in a toast and refreshes both history and the Book's reading data. An Undo Revision can itself be undone to redo.
+
 ## Welcome
 
 The first run, while the Shelf is empty, opens a title page instead of the Shelf: "Cipher" large in italic serif, "Read web novels in your own language.", a short paragraph on what the app does, then two numbered steps, each done in place:
@@ -53,7 +59,7 @@ Three columns, each with a 52px header row so the headers line up.
 **Contents (left, 272px, Ctrl+\\)**
 - **Header:** the Book title (serif italic) and a hide button.
 - **Progress:** one hairline bar (translated in ink3, waiting in amber) and the line "92 translated · 2 waiting · 94 chapters".
-- **Pages:** Reading, Cast & terms (with its drifting count), Style and New chapter (Ctrl N).
+- **Pages:** Reading, Cast & terms (with its drifting count), Style, History (Ctrl H) and New chapter (Ctrl N).
 - **Chapter list:**
   - each row shows the number in tabular figures, the saved Chapter title (or its opening line when untitled; two lines, serif) and badges;
   - badges: a red count of pending Proposed Edits, an amber dot for waiting to translate;

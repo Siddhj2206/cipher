@@ -8,6 +8,7 @@
 //! No Rune types appear here, so all of it is tested against a Book in a temp dir.
 
 mod edits;
+mod history;
 mod page;
 mod queue;
 mod scan;
@@ -23,6 +24,7 @@ use cipher_book::{
 };
 
 pub use edits::counts;
+pub use history::undo_mode;
 pub use page::{Page, PageBlock, PairFlag};
 pub use queue::Intake;
 pub use stats::{ChapterStats, shown};

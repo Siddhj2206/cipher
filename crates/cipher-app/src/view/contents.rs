@@ -259,6 +259,17 @@ pub fn contents(s: &State, p: &Pal) -> El {
         )
         .child(
             nav(
+                &crate::theme::I_HISTORY,
+                "History",
+                "Ctrl H".into(),
+                "nav-history",
+                s.screen == Screen::History,
+            )
+            .help("Undo translations, reviews and edits")
+            .on_press(|s: &mut State| s.open_history()),
+        )
+        .child(
+            nav(
                 &I_PLUS,
                 "New chapter",
                 "Ctrl N".into(),
