@@ -321,6 +321,9 @@ impl State {
         };
         let at = state.lib.current();
         state.load_strip(at);
+        if state.lib.is_saved() && state.lib.chapters.is_empty() {
+            state.open_draft("");
+        }
         state
     }
 
