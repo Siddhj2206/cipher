@@ -120,34 +120,38 @@ impl Library {
 
     /// Files retain pick order as a tie-breaker; unnumbered parts go last.
     pub fn intake_plan(&self, files: &[(String, String)], text: &str) -> Vec<IntakePart> {
+        self.intake_plan_with_numbers(files, text, &Default::default())
+    }
+
+    pub fn intake_plan_with_numbers(
+        &self,
+        files: &[(String, String)],
+        text: &str,
+        restored: &std::collections::BTreeMap<(usize, usize), i64>,
+    ) -> Vec<IntakePart> {
         let mut parts = Vec::new();
-        let mut seen = std::collections::HashSet::new();
         for (source, (label, text)) in files
             .iter()
             .map(|(label, text)| (Some(label), text.as_str()))
             .chain(std::iter::once((None, text)))
             .enumerate()
         {
-            for (index, intake) in self.intakes(text).into_iter().enumerate() {
-                let issue = match intake.number {
-                    None => Some(IntakeIssue::NoNumber),
-                    Some(n) if !seen.insert(n) => Some(IntakeIssue::Duplicate),
-                    Some(n) if self.chapters.iter().any(|c| c.number == n) => {
-                        Some(IntakeIssue::InBook)
-                    }
-                    Some(_) => None,
-                };
+            for (index, mut intake) in self.intakes(text).into_iter().enumerate() {
+                let key = (source, index);
+                let issue = intake.number.is_none().then_some(IntakeIssue::NoNumber);
+                if let Some(&number) = restored.get(&key) {
+                    intake.number = Some(number);
+                }
                 parts.push(IntakePart {
-                    key: (source, index),
+                    key,
                     source: label.cloned(),
                     intake,
                     issue,
-                    include: !matches!(issue, Some(IntakeIssue::Duplicate | IntakeIssue::InBook)),
+                    include: true,
                     added: false,
                 });
             }
         }
-        parts.sort_by_key(|p| (p.intake.number.is_none(), p.intake.number));
         let mut next = self
             .chapters
             .iter()
@@ -155,12 +159,29 @@ impl Library {
             .chain(parts.iter().filter_map(|p| p.intake.number))
             .max()
             .unwrap_or(0);
-        let mut numbers: Vec<_> = self.chapters.iter().map(|c| c.number).collect();
+        let mut seen = std::collections::HashSet::new();
         for part in &mut parts {
             let n = *part.intake.number.get_or_insert_with(|| {
                 next += 1;
                 next
             });
+            part.intake.exists = self.chapters.iter().any(|c| c.number == n);
+            part.issue = if !seen.insert(n) {
+                Some(IntakeIssue::Duplicate)
+            } else if part.intake.exists {
+                Some(IntakeIssue::InBook)
+            } else {
+                part.issue
+            };
+            part.include = !matches!(
+                part.issue,
+                Some(IntakeIssue::Duplicate | IntakeIssue::InBook)
+            );
+        }
+        parts.sort_by_key(|p| p.intake.number);
+        let mut numbers: Vec<_> = self.chapters.iter().map(|c| c.number).collect();
+        for part in &mut parts {
+            let n = part.intake.number.unwrap();
             part.intake.after = numbers.iter().copied().filter(|&m| m < n).max();
             numbers.push(n);
         }

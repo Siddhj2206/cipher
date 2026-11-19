@@ -5,7 +5,7 @@
 
 use rune::{FileDialogOptions, TextEdit, Tx};
 
-use crate::library::{Intake, IntakeIssue, IntakePart};
+use crate::library::{Intake, IntakePart};
 use crate::state::{Screen, State};
 
 pub fn batch_range(parts: &[IntakePart]) -> String {
@@ -86,31 +86,16 @@ impl State {
         let mut plan = if d.files.is_empty()
             && let Some(name) = &d.file_name
         {
-            self.lib
-                .intake_plan(&[(name.clone(), d.text.text.clone())], "")
-        } else {
-            self.lib.intake_plan(&d.files, &d.text.text)
-        };
-        let mut next = self
-            .lib
-            .chapters
-            .iter()
-            .map(|c| c.number)
-            .chain(d.numbers.values().copied())
-            .chain(
-                plan.iter()
-                    .filter(|p| p.issue != Some(IntakeIssue::NoNumber))
-                    .filter_map(|p| p.intake.number),
+            self.lib.intake_plan_with_numbers(
+                &[(name.clone(), d.text.text.clone())],
+                "",
+                &d.numbers,
             )
-            .max()
-            .unwrap_or(0);
+        } else {
+            self.lib
+                .intake_plan_with_numbers(&d.files, &d.text.text, &d.numbers)
+        };
         for part in &mut plan {
-            if let Some(&number) = d.numbers.get(&part.key) {
-                part.intake.number = Some(number);
-            } else if !d.numbers.is_empty() && part.issue == Some(IntakeIssue::NoNumber) {
-                next += 1;
-                part.intake.number = Some(next);
-            }
             if let Some(&include) = d.included.get(&part.key) {
                 part.include = include;
             }
@@ -119,7 +104,6 @@ impl State {
                 part.include = false;
             }
         }
-        plan.sort_by_key(|p| p.intake.number);
         plan
     }
 

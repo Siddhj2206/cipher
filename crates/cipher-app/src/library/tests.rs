@@ -1137,6 +1137,59 @@ fn leaving_a_partial_draft_returns_to_the_original_chapter_after_insertions() {
 }
 
 #[test]
+fn appended_explicit_numbers_conflict_with_restored_automatic_numbers() {
+    for claimed in [13, 12] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("");
+        s.draft.as_mut().unwrap().files = vec![
+            ("one.txt".into(), "One.".into()),
+            ("two.txt".into(), "Two.".into()),
+            ("three.txt".into(), "Three.".into()),
+        ];
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        s.draft.as_mut().unwrap().pick_file(
+            "claimed.txt".into(),
+            format!("Chapter {claimed}\n\nClaimed."),
+            true,
+        );
+        let plan = s.draft_plan();
+        let appended = plan
+            .iter()
+            .find(|p| p.source.as_deref() == Some("claimed.txt"))
+            .unwrap();
+        assert_eq!(appended.issue, Some(IntakeIssue::Duplicate));
+        assert_eq!(appended.intake.exists, claimed == 12);
+        assert!(!appended.include);
+        assert_eq!(
+            plan.iter()
+                .filter(|p| p.include && p.intake.number == Some(claimed))
+                .count(),
+            usize::from(claimed == 13)
+        );
+        s.add_draft(&mut rune::Tx::default());
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            [10, 11, 12, 13]
+        );
+    }
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);
