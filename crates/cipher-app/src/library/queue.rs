@@ -15,6 +15,10 @@ fn marker_heading(block: &str) -> Option<i64> {
         || lower.starts_with("ch.")
         || line.starts_with(['제', '第'])
         || rest.is_empty()
+        || (block.trim_start().starts_with('#')
+            && rest
+                .chars()
+                .all(|c| c.is_whitespace() || matches!(c, '.' | ':' | ')')))
         || rest.starts_with(['화', '話', '章', '장', '回']))
     .then_some(number)
 }

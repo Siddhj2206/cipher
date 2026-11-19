@@ -1190,6 +1190,24 @@ fn appended_explicit_numbers_conflict_with_restored_automatic_numbers() {
 }
 
 #[test]
+fn punctuated_bare_markdown_numbers_split_at_any_heading_level() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    for hashes in ["#", "###"] {
+        for punctuation in [".", ":", ")"] {
+            let text = format!("# 321\n\nFirst.\n\n{hashes} 322{punctuation}\n\nSecond.");
+            let parts = lib.intakes(&text);
+            assert_eq!(parts.len(), 2, "{hashes} 322{punctuation}");
+            assert_eq!(parts[1].number, Some(322));
+            assert_eq!(parts[1].title, None);
+            assert_eq!(parts[1].blocks, ["Second."]);
+        }
+    }
+    let plain = "321\n\nFirst.\n\n322.\n\nSecond.";
+    assert_eq!(lib.intakes(plain), vec![lib.intake(plain).unwrap()]);
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);
