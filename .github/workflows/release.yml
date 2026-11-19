@@ -42,8 +42,8 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - name: Linux linker dependencies
-        run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends clang mold
+      - name: Linux build dependencies
+        run: sudo apt-get update -q && sudo apt-get install -yq --no-install-recommends clang mold libxkbcommon-dev
       - run: rustup toolchain install --profile minimal
       - uses: Swatinem/rust-cache@v2
         with:
