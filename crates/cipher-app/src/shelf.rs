@@ -561,16 +561,13 @@ mod tests {
         assert_eq!(percent_encode("/a b/전"), "/a%20b/%EC%A0%84");
         assert_eq!(utc_datetime(0), "1970-01-01T00:00:00");
         assert_eq!(utc_datetime(1_763_164_800), "2025-11-15T00:00:00");
-        let home = Path::new("/home/u");
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
         let dirs = "# comment\nXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\n";
-        assert_eq!(
-            documents_dir(dirs, home),
-            Some(PathBuf::from("/home/u/Docs"))
-        );
+        assert_eq!(documents_dir(dirs, home), Some(home.join("Docs")));
         assert_eq!(documents_dir("XDG_DOCUMENTS_DIR=\"$HOME/\"", home), None);
-        assert_eq!(
-            documents_dir("XDG_DOCUMENTS_DIR=\"/data/d\"", home),
-            Some("/data/d".into())
-        );
+        let documents = home.join("data").join("d");
+        let dirs = format!("XDG_DOCUMENTS_DIR=\"{}\"", documents.display());
+        assert_eq!(documents_dir(&dirs, home), Some(documents));
     }
 }
