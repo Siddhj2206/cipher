@@ -5,7 +5,7 @@
 
 use rune::{FileDialogOptions, TextEdit, Tx};
 
-use crate::library::{Intake, IntakePart};
+use crate::library::{Intake, IntakeIssue, IntakePart};
 use crate::state::{Screen, State};
 
 pub fn batch_range(parts: &[IntakePart]) -> String {
@@ -45,7 +45,6 @@ impl Draft {
     }
 
     pub fn pick_file(&mut self, name: String, text: String, append: bool) {
-        self.reset_parts();
         if append {
             if self.files.is_empty() && !self.text.text.trim().is_empty() {
                 self.files.push((
@@ -53,9 +52,25 @@ impl Draft {
                     self.text.text.clone(),
                 ));
                 self.text = TextEdit::new("");
+            } else if !self.text.text.trim().is_empty() {
+                let source = self.files.len();
+                let move_key = |(s, index)| (if s == source { s + 1 } else { s }, index);
+                self.included = std::mem::take(&mut self.included)
+                    .into_iter()
+                    .map(|(key, value)| (move_key(key), value))
+                    .collect();
+                self.added = std::mem::take(&mut self.added)
+                    .into_iter()
+                    .map(move_key)
+                    .collect();
+                self.numbers = std::mem::take(&mut self.numbers)
+                    .into_iter()
+                    .map(|(key, value)| (move_key(key), value))
+                    .collect();
             }
             self.files.push((name, text));
         } else {
+            self.reset_parts();
             self.files.clear();
             self.file_name = Some(name);
             self.text = TextEdit::new(&text);
@@ -76,9 +91,25 @@ impl State {
         } else {
             self.lib.intake_plan(&d.files, &d.text.text)
         };
+        let mut next = self
+            .lib
+            .chapters
+            .iter()
+            .map(|c| c.number)
+            .chain(d.numbers.values().copied())
+            .chain(
+                plan.iter()
+                    .filter(|p| p.issue != Some(IntakeIssue::NoNumber))
+                    .filter_map(|p| p.intake.number),
+            )
+            .max()
+            .unwrap_or(0);
         for part in &mut plan {
             if let Some(&number) = d.numbers.get(&part.key) {
                 part.intake.number = Some(number);
+            } else if !d.numbers.is_empty() && part.issue == Some(IntakeIssue::NoNumber) {
+                next += 1;
+                part.intake.number = Some(next);
             }
             if let Some(&include) = d.included.get(&part.key) {
                 part.include = include;

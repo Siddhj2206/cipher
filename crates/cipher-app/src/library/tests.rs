@@ -687,7 +687,7 @@ fn picking_more_files_preserves_the_first_file_and_any_later_paste() {
     assert_eq!(draft.files.len(), 2);
     assert_eq!(draft.files[0].0, "one.txt");
     assert!(draft.text.text.is_empty());
-    assert!(draft.included.is_empty());
+    assert_eq!(draft.included.get(&(0, 0)), Some(&false));
     draft.text = rune::TextEdit::new("3화\n\nPasted three.");
     draft.pick_file("four.txt".into(), "4화\n\nFour.".into(), true);
     assert_eq!(draft.files.len(), 3);
@@ -1029,6 +1029,78 @@ fn titled_markdown_subsections_stay_inside_the_shallowest_chapters() {
             .len(),
         2
     );
+}
+
+#[test]
+fn appending_a_file_after_partial_import_preserves_saved_and_skipped_parts() {
+    for sources in 0..3 {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("");
+        let d = s.draft.as_mut().unwrap();
+        if sources == 0 {
+            d.text = rune::TextEdit::new("11화\n\nOne.\n\n12화\n\nTwo.\n\n13화\n\nThree.");
+        } else {
+            d.files = vec![
+                ("one.txt".into(), "One.".into()),
+                ("two.txt".into(), "Two.".into()),
+            ];
+            if sources == 1 {
+                d.files.push(("three.txt".into(), "Three.".into()));
+            } else {
+                d.text = rune::TextEdit::new("Three.");
+            }
+        }
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        let skipped = s
+            .draft_plan()
+            .iter()
+            .find(|p| p.intake.number == Some(13))
+            .unwrap()
+            .key;
+        s.toggle_draft_part(skipped);
+        s.draft
+            .as_mut()
+            .unwrap()
+            .pick_file("four.txt".into(), "Four.".into(), true);
+        let plan = s.draft_plan();
+        let saved = plan.iter().find(|p| p.intake.number == Some(12)).unwrap();
+        assert!(saved.added);
+        assert!(!saved.include);
+        let skipped = plan.iter().find(|p| p.intake.number == Some(13)).unwrap();
+        assert!(!skipped.include);
+        assert_eq!(skipped.intake.blocks, ["Three."]);
+        let skipped_key = skipped.key;
+        assert_eq!(
+            plan.iter()
+                .find(|p| p.intake.blocks == ["Four."])
+                .unwrap()
+                .intake
+                .number,
+            Some(14)
+        );
+        s.toggle_draft_part(skipped_key);
+        s.add_draft(&mut rune::Tx::default());
+        assert!(s.draft.is_none());
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            [10, 11, 12, 13, 14]
+        );
+    }
 }
 
 #[test]
