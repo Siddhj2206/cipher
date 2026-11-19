@@ -240,6 +240,7 @@ fn endpoint_list(f: &crate::settings::Settings, p: &Pal) -> El {
 
 fn intro(line: &str, p: &Pal) -> El {
     text(line.to_string())
+        .key("settings-description")
         .font(SMALL)
         .color(p.ink3)
         .wrap()

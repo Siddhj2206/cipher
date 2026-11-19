@@ -8,6 +8,7 @@ trap 'rm -rf "$tmp"' EXIT
 for scene in settings-general settings settings-chatgpt settings-about settings-shortcuts shortcuts settings-no-key settings-error settings-busy settings-chatgpt-busy settings-chatgpt-signed-in settings-models-failed settings-models-failed-zoom settings-general-zoom settings-zoom settings-chatgpt-zoom settings-error-zoom settings-about-zoom settings-shortcuts-zoom shortcuts-zoom; do
   case "$scene" in shortcuts*) pane=shortcuts-list;; *) pane=settings-pane;; esac
   printf '%s\n' "{\"events\":[{\"t\":0.1,\"type\":\"scroll\",\"key\":\"$pane\",\"dy\":-1500},{\"t\":0.5,\"type\":\"mark\",\"name\":\"bottom\"}]}" > "$tmp/scroll.json"
+  "$bin" "$book" --scene "$scene" --at 0.2 --fps 10 --size 640x480 --scale 1 --tree "$tmp/start.json" 2>"$tmp/stderr" || { cat "$tmp/stderr"; exit 1; }
   "$bin" "$book" --scene "$scene" --script "$tmp/scroll.json" --at mark:bottom --fps 10 --size 640x480 --scale 1 --tree "$tmp/$scene.json" 2>"$tmp/stderr" || { cat "$tmp/stderr"; exit 1; }
   case "$scene" in settings-models-failed*)
     python3 -I - "$tmp/$scene.json" "$tmp/scroll.json" <<'PY'
@@ -22,11 +23,12 @@ json.dump(script, open(sys.argv[2], 'w'))
 PY
     "$bin" "$book" --scene "$scene" --script "$tmp/scroll.json" --at mark:fetch --fps 10 --size 640x480 --scale 1 --tree "$tmp/$scene.json" 2>"$tmp/stderr" || { cat "$tmp/stderr"; exit 1; }
   ;; esac
-  python3 -I - "$tmp/$scene.json" "$scene" <<'PY'
+  python3 -I - "$tmp/$scene.json" "$scene" "$tmp/start.json" <<'PY'
 import json, sys
 tree = json.load(open(sys.argv[1]))
 scene = sys.argv[2]
 els = {e['key']: e for e in tree['elements'] if 'key' in e}
+start = {e['key']: e for e in json.load(open(sys.argv[3]))['elements'] if 'key' in e}
 w, h = tree['viewport']
 if scene.endswith('-zoom'):
     assert abs(w - 400) < 1 and abs(h - 300) < 1, f'{scene}: expected 160% interface zoom, got {w}x{h}'
@@ -45,10 +47,15 @@ if scene.startswith('shortcuts'):
 else:
     for key in ['settings-window', 'settings-nav', 'settings-heading', 'set-close']:
         inside(key)
+        assert els[key]['rect'] == start[key]['rect'], f'{scene}: scrolling moved {key}'
     for section in ['general', 'reading', 'translation', 'shortcuts', 'about']:
         inside('set-' + section)
     translation = not any(part in scene for part in ['general', 'about', 'shortcuts'])
     if translation:
+        description = els['settings-description']
+        assert '/settings-pane/' in description['path'], f'{scene}: pinned description'
+        assert description['rect'][1] < start['settings-description']['rect'][1], f'{scene}: description did not scroll'
+        assert description['rect'][1] + description['rect'][3] <= els['settings-pane']['rect'][1], f'{scene}: description stayed visible after scrolling'
         for key in ['ep-footer', 'ep-status', 'ep-cancel', 'ep-test', 'ep-save']:
             inside(key)
         status, save = els['ep-status']['rect'], els['ep-save']['rect']
@@ -79,4 +86,4 @@ else:
         assert els['ep-key-hint']['text'] == 'No key: requests go out without one.'
 PY
 done
-echo 'ok: Settings navigation, heading, close and Endpoint footer at 640x480 and 160% zoom; no-key, error, busy, signed-in and Fetch models Retry states'
+echo 'ok: Settings navigation, heading, close and Endpoint footer at 640x480 and 160% zoom; description scrolls, heading stays pinned; no-key, error, busy, signed-in and Fetch models Retry states'
