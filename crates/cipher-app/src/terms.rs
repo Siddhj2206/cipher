@@ -172,4 +172,42 @@ mod tests {
         s.undo_cast_term(s.term_toast_undo.unwrap());
         assert!(s.strip.iter().all(|&i| s.lib.page_at(i).is_some()));
     }
+
+    #[test]
+    fn scanned_usage_retries_evidence_for_the_open_term() {
+        let (_dir, mut s) = state();
+        let applied = s
+            .lib
+            .book_mut()
+            .apply(Change::AddChapter {
+                number: Some(1),
+                title: None,
+                source: vec!["A A A A".into()],
+            })
+            .unwrap();
+        let chapter = cipher_book::ChapterId(applied.created[0]);
+        let source = s.lib.book().chapter(chapter).unwrap().source[0].id;
+        s.lib
+            .book_mut()
+            .apply(Change::SetTranslation {
+                chapter,
+                pairs: vec![cipher_book::NewPair {
+                    source: vec![source],
+                    translation: vec!["He.".into()],
+                    flagged: None,
+                }],
+            })
+            .unwrap();
+        s.lib.reload().unwrap();
+        s.cast_open = Some(0);
+        s.decide_term(0, true);
+        assert!(s.lib.terms[0].forbidden.is_empty());
+        assert!(s.look.is_none());
+        s.lib.apply_scan(s.lib.scan()().unwrap());
+        s.start_scan();
+        assert_eq!(s.look.as_ref().unwrap().term, s.lib.terms[0].id);
+        assert!(s.look.as_ref().unwrap().evidence.is_none());
+        s.start_scan();
+        assert_eq!(s.look.as_ref().unwrap().generation, s.lib.generation());
+    }
 }
