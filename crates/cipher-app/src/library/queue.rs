@@ -6,6 +6,19 @@ use cipher_text::{blocks, heading};
 
 use super::{ChapterRow, Library, opening_line, stats};
 
+fn batch_heading(block: &str) -> Option<i64> {
+    let number = i64::from(heading::chapter_heading(block)?.number?);
+    let line = block.trim().trim_start_matches('#').trim();
+    let lower = line.to_lowercase();
+    let rest = line.trim_start_matches(|c: char| c.is_ascii_digit()).trim();
+    (lower.starts_with("chapter")
+        || lower.starts_with("ch.")
+        || line.starts_with(['제', '第'])
+        || rest.is_empty()
+        || rest.starts_with(['화', '話', '章', '장', '回']))
+    .then_some(number)
+}
+
 /// Pasted text read as a new Chapter, for the paste sheet.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Intake {
@@ -45,7 +58,7 @@ impl Library {
         let heads: Vec<_> = blocks
             .iter()
             .enumerate()
-            .filter_map(|(i, b)| heading::chapter_heading(b)?.number.map(|_| i))
+            .filter_map(|(i, b)| batch_heading(b).map(|_| i))
             .collect();
         if heads.len() < 2 {
             return self.intake(text).into_iter().collect();

@@ -748,6 +748,38 @@ fn batch_range_tracks_selection_and_falls_back_when_empty() {
 }
 
 #[test]
+fn batch_boundaries_do_not_treat_numbered_lists_as_chapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    let single = "Chapter 321\n\nA checklist.\n\n1. Check the gate\n\n2. Light the lamp";
+    assert_eq!(lib.intakes(single), vec![lib.intake(single).unwrap()]);
+    let text = format!("{single}\n\n322화\n\nThe next chapter.");
+    let parts = lib.intakes(&text);
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].blocks.contains(&"1. Check the gate".into()));
+    for marker in [
+        "1화",
+        "1話",
+        "1章",
+        "1장",
+        "1回",
+        "제1",
+        "第1",
+        "Chapter 1",
+        "Ch. 1",
+        "# 1",
+    ] {
+        assert_eq!(
+            lib.intakes(&format!("{marker}\n\nFirst.\n\n2\n\nSecond."))
+                .len(),
+            2,
+            "{marker}"
+        );
+    }
+    assert!(lib.intakes("").is_empty());
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);
