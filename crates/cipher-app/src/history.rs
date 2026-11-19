@@ -8,6 +8,7 @@ pub struct History {
     pub revisions: Vec<RevisionSummary>,
     pub selected: usize,
     pub preview: Option<UndoPreview>,
+    pub preview_error: Option<String>,
 }
 
 impl State {
@@ -36,10 +37,15 @@ impl State {
     pub fn select_history(&mut self, index: usize) {
         self.history.selected = index;
         self.history.preview = None;
+        self.history.preview_error = None;
         if let Some(r) = self.history.revisions.get(index) {
             match self.lib.preview_undo(r.id) {
                 Ok(preview) => self.history.preview = Some(preview),
-                Err(e) => self.toast = Some(format!("Could not preview undo: {e}")),
+                Err(e) => {
+                    self.history.preview_error = Some(format!(
+                        "This change can't be undone here. It may need a newer version of Cipher. Details: {e}"
+                    ));
+                }
             }
         }
     }
@@ -127,4 +133,34 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
         _ => return false,
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unreadable_preview_keeps_the_row_and_clears_stale_preview() {
+        let mut s = State::new(crate::library::Library::blank());
+        s.history.revisions.push(RevisionSummary {
+            id: RevisionId(i64::MAX),
+            kind: cipher_book::RevisionKind::Review,
+            label: "Unsupported change".into(),
+            created_at: 0,
+            undone_by: None,
+        });
+        s.select_history(0);
+        assert_eq!(s.history.revisions.len(), 1);
+        assert!(s.history.preview.is_none());
+        assert!(
+            s.history
+                .preview_error
+                .as_ref()
+                .unwrap()
+                .contains("can't be undone here")
+        );
+        s.undo_history();
+        s.select_history(1);
+        assert!(s.history.preview_error.is_none());
+    }
 }

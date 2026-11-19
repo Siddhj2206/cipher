@@ -1,6 +1,6 @@
 use cipher_book::UndoMode;
 use rune::tok::TextStyle;
-use rune::{El, ScrollSpec, col, text};
+use rune::{El, ScrollSpec, col, row, text};
 
 use super::widgets::{ago, btn};
 use crate::history::{change_words, entity_words};
@@ -20,6 +20,7 @@ pub fn history_page(s: &State, p: &Pal) -> El {
                 .color(p.ink)
                 .wrap(),
         );
+    let mut expanded = None;
     if let Some(preview) = &s.history.preview {
         let mut detail = col()
             .w_full()
@@ -42,9 +43,10 @@ pub fn history_page(s: &State, p: &Pal) -> El {
                 .color(p.ink2)
                 .wrap(),
             );
+        let mut chapters = row().w_full().gap(8.0).flex_wrap();
         for id in &preview.chapters {
             if let Some(index) = s.lib.chapter_index(*id) {
-                detail = detail.child(
+                chapters = chapters.child(
                     btn(
                         &format!("Chapter {}", s.lib.chapters[index].number),
                         false,
@@ -54,7 +56,7 @@ pub fn history_page(s: &State, p: &Pal) -> El {
                     .on_press_tx(move |s: &mut State, tx| s.go(tx, index)),
                 );
             } else {
-                detail = detail.child(
+                chapters = chapters.child(
                     text(format!("Chapter {} (not currently in this book)", id.0))
                         .font(SMALL)
                         .color(p.ink3)
@@ -62,6 +64,7 @@ pub fn history_page(s: &State, p: &Pal) -> El {
                 );
             }
         }
+        detail = detail.child(chapters);
         for id in &preview.chapters {
             let conflicts: Vec<_> = preview
                 .conflict_chapters
@@ -117,15 +120,22 @@ pub fn history_page(s: &State, p: &Pal) -> El {
             "Undo"
         };
         let button = btn(label, true, p).key("history-undo");
-        detail = detail.child(if blocked || undone {
-            button.opacity(0.4)
-        } else {
-            button.on_press(|s: &mut State| s.undo_history())
-        });
+        let actions = row()
+            .w_full()
+            .gap(8.0)
+            .center_y()
+            .child(if blocked || undone {
+                button.opacity(0.4)
+            } else {
+                button.on_press(|s: &mut State| s.undo_history())
+            });
+        detail = detail.child(actions);
         if blocked || undone {
             detail = detail.child(text(if undone { "Already undone. Select its Undo revision to redo." } else { "Nothing will be undone: later work changed these chapters. Structural changes must be undone as a whole." }).font(SMALL).color(p.ink3).wrap());
         }
-        body = body.child(detail);
+        expanded = Some(detail);
+    } else if let Some(error) = &s.history.preview_error {
+        expanded = Some(text(error).font(SMALL).color(p.red).wrap());
     }
     if s.history.revisions.is_empty() {
         body = body.child(text("No changes yet.").font(UI).color(p.ink3));
@@ -171,6 +181,9 @@ pub fn history_page(s: &State, p: &Pal) -> El {
                 .key(format!("history-row-{i}"))
                 .on_press(move |s: &mut State| s.select_history(i)),
         );
+        if selected && let Some(detail) = expanded.take() {
+            body = body.child(detail);
+        }
     }
     col()
         .w_full()

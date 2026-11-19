@@ -211,6 +211,8 @@ fn history_review_survives_reopening() {
 fn history_skip_conflicts_empty_and_missing_revision() {
     use cipher_book::{RevisionId, RevisionKind, UndoOutcome};
     let (_dir, mut lib) = history_fixture();
+    lib.stats[1].counts = vec![987654];
+    let untouched = format!("{:?}", lib.stats[1]);
     let ch = lib.chapters[0].id;
     let blocks = lib.book().chapter(ch).unwrap().translation;
     let revision = lib
@@ -237,6 +239,7 @@ fn history_skip_conflicts_empty_and_missing_revision() {
         })
         .unwrap();
     let outcome = lib.undo_revision(revision).unwrap();
+    assert_eq!(format!("{:?}", lib.stats[1]), untouched);
     let UndoOutcome::Undone { skipped, .. } = outcome else {
         panic!("{outcome:?}")
     };
@@ -296,6 +299,10 @@ fn history_repair_import_and_added_chapter_undo() {
         UndoOutcome::Undone { .. }
     ));
     assert!(!lib.chapters.iter().any(|c| c.number == 99));
+    assert!(!lib.scanned());
+    let scan = lib.scan()().unwrap();
+    lib.apply_scan(scan);
+    assert!(lib.scanned());
 }
 
 #[test]

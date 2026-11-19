@@ -76,6 +76,33 @@ fn undo_preview_is_read_only_and_reports_conflicts_and_undone() {
 }
 
 #[test]
+fn unsupported_revision_changes_remain_listable_and_preview_writes_nothing() {
+    let mut f = new_book();
+    let id = f
+        .book
+        .apply(Change::Group {
+            kind: RevisionKind::Review,
+            label: "Newer metadata change".into(),
+            changes: vec![],
+        })
+        .unwrap()
+        .revision;
+    let conn = rusqlite::Connection::open(f.book.path()).unwrap();
+    conn.execute(
+        "INSERT INTO revision_change (revision_id, seq, entity, entity_id, before, after) VALUES (?1, 0, 'proposed_metadata', 1, NULL, '{}')",
+        [id.0],
+    ).unwrap();
+    let revisions = f.book.revisions(200).unwrap();
+    assert!(revisions.iter().any(|r| r.id == id));
+    let error = f.book.preview_undo(id).unwrap_err().to_string();
+    assert!(error.contains("unknown entity"));
+    assert_eq!(f.book.revisions(200).unwrap(), revisions);
+    conn.execute("DELETE FROM revision_change WHERE revision_id = ?1", [id.0])
+        .unwrap();
+    assert!(f.book.preview_undo(id).is_ok());
+}
+
+#[test]
 fn undo_preview_of_an_empty_revision_is_empty() {
     let mut f = new_book();
     let id = f

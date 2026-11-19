@@ -263,7 +263,7 @@ pub fn contents(s: &State, p: &Pal) -> El {
         )
         .child(
             nav(
-                &I_PEN,
+                &crate::theme::I_HISTORY,
                 "History",
                 "Ctrl H".into(),
                 "nav-history",
