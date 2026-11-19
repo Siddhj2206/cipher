@@ -129,6 +129,7 @@ impl Library {
     }
 
     /// Files retain pick order as a tie-breaker; unnumbered parts go last.
+    #[cfg(test)]
     pub fn intake_plan(&self, files: &[(String, String)], text: &str) -> Vec<IntakePart> {
         self.intake_plan_with_numbers(files, text, &Default::default())
     }

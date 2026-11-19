@@ -17,7 +17,7 @@ pub fn batch_range(parts: &[IntakePart]) -> String {
     let Some(first) = numbers.next() else {
         return String::new();
     };
-    let last = numbers.last().unwrap_or(first);
+    let last = numbers.next_back().unwrap_or(first);
     if first == last {
         first.to_string()
     } else {
