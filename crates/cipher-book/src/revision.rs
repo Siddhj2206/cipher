@@ -90,6 +90,20 @@ pub(crate) fn preview(tx: &Transaction<'_>, id: RevisionId) -> Result<crate::Und
         UndoOutcome::AlreadyUndone { by } => (Vec::new(), Some(by)),
         UndoOutcome::Conflict { conflicts } => (conflicts, None),
     };
+    for conflict in &conflicts {
+        if conflict.entity == "job" {
+            let chapter: Option<i64> = tx.query_row(
+                "SELECT chapter_id FROM job WHERE id = ?1",
+                [conflict.id],
+                |r| r.get(0),
+            )?;
+            if let Some(chapter) = chapter {
+                let chapter = crate::ChapterId(chapter);
+                chapters.insert(chapter);
+                locations.push((conflict.clone(), chapter));
+            }
+        }
+    }
     locations.retain(|(c, _)| conflicts.contains(c));
     Ok(crate::UndoPreview {
         revision,
@@ -296,18 +310,40 @@ pub(crate) fn undo(
             });
             continue;
         }
-        let result = match (&before, &after) {
-            (None, Some(_)) => w.delete(table, id),
-            (Some(row), None) => restore(&mut w, table, row),
-            (Some(row), Some(_)) => w.update(
-                table,
-                id,
-                &row.iter()
-                    .filter(|(k, _)| k.as_str() != "id")
-                    .map(|(k, v)| (k.as_str(), to_value(v)))
-                    .collect::<Vec<_>>(),
-            ),
-            (None, None) => Ok(()),
+        let result = if table == Table::Chapter && before.is_none() && after.is_some() {
+            let blocked = {
+                let mut stmt = tx.prepare(
+                    "SELECT id FROM job WHERE chapter_id = ?1 AND (state != 'queued' OR attempts != 0 OR EXISTS (SELECT 1 FROM job child WHERE child.parent_id = job.id))"
+                )?;
+                stmt.query_map([id], |r| r.get::<_, i64>(0))?
+                    .collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            if !blocked.is_empty() {
+                conflicts.extend(blocked.into_iter().map(|id| Conflict { entity: "job", id }));
+                continue;
+            }
+            tx.execute_batch("SAVEPOINT undo_chapter_jobs")?;
+            tx.execute("DELETE FROM job WHERE chapter_id = ?1", [id])?;
+            let result = w.delete(table, id);
+            if result.is_err() {
+                tx.execute_batch("ROLLBACK TO undo_chapter_jobs")?;
+            }
+            tx.execute_batch("RELEASE undo_chapter_jobs")?;
+            result
+        } else {
+            match (&before, &after) {
+                (None, Some(_)) => w.delete(table, id),
+                (Some(row), None) => restore(&mut w, table, row),
+                (Some(row), Some(_)) => w.update(
+                    table,
+                    id,
+                    &row.iter()
+                        .filter(|(k, _)| k.as_str() != "id")
+                        .map(|(k, v)| (k.as_str(), to_value(v)))
+                        .collect::<Vec<_>>(),
+                ),
+                (None, None) => Ok(()),
+            }
         };
         match result {
             Ok(()) => {}
