@@ -763,7 +763,13 @@ pub fn shelf(s: &State, h: &Home, p: &Pal) -> El {
                 .gap(8.0)
                 .pb(24.0)
                 .center_y()
-                .child(text(e.clone()).font(UI).color(p.red).wrap_anywhere())
+                .child(
+                    text(e.clone())
+                        .font(UI)
+                        .color(p.red)
+                        .shrink()
+                        .wrap_anywhere(),
+                )
                 .child(
                     el().size(22.0, 22.0)
                         .center()
