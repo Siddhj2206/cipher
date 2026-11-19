@@ -106,6 +106,7 @@ impl Library {
                 .unwrap_or(index.min(self.chapters.len() - 1));
             self.open_chapter(at)?;
         }
+        self.derive_usage();
         Ok(())
     }
     pub fn revisions(&self) -> Result<Vec<RevisionSummary>> {

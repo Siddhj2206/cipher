@@ -737,6 +737,41 @@ fn page_renders_blocks_and_finds_terms_on_both_sides() {
 }
 
 #[test]
+fn deleting_drifting_chapters_rebuilds_usage_and_cast_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let lord = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+    b.apply(Change::AddForbidden {
+        term: lord,
+        rendering: "Tower Master".into(),
+    })
+    .unwrap();
+    for number in 1..=2 {
+        let c = chapter(&mut b, number, &["마탑주가 왔다."]);
+        translate(&mut b, c, &["The Tower Master came."], None);
+    }
+    let mut state = crate::state::State::new(Library::from_book(b).unwrap());
+    let li = state.lib.terms.iter().position(|t| t.id == lord).unwrap();
+    assert_eq!(state.lib.usage(li).drift_chapters, vec![0, 1]);
+    assert_eq!(state.drift_summary(li).forbidden_chapters, 2);
+
+    state.lib.delete_chapter(0).unwrap();
+    assert_eq!(state.lib.usage(li).drift_chapters, vec![0]);
+    assert_eq!(state.drift_summary(li).forbidden_chapters, 1);
+    assert_eq!(state.lib.drifting_terms(), 1);
+    assert_eq!(state.lib.usage(li).total, 0);
+
+    state.lib.delete_chapter(0).unwrap();
+    assert_eq!(*state.lib.usage(li), TermUsage::default());
+    assert_eq!(
+        state.drift_summary(li),
+        crate::drift::DriftSummary::default()
+    );
+    assert_eq!(state.lib.cast_order(), vec![li]);
+    assert!(state.lib.scanned);
+}
+
+#[test]
 fn forbidden_rendering_present_is_drift_and_is_marked_on_the_page() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);
