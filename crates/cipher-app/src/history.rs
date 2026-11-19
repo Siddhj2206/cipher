@@ -69,6 +69,7 @@ impl State {
                         }
                         self.fix.picked = None;
                         self.term_card = None;
+                        self.load_strip(self.lib.current());
                         if style_changed {
                             if self
                                 .style
@@ -151,6 +152,39 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_undo_reloads_neighbor_pages_in_the_reading_strip() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quiet.cipher");
+        cipher_engine::import(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/the-quiet-tower"),
+            &path,
+        )
+        .unwrap();
+        let mut s = State::new(crate::library::Library::open(&path).unwrap());
+        assert!(s.lib.page_at(1).is_some());
+        let block = s
+            .lib
+            .book()
+            .chapter(s.lib.chapters[0].id)
+            .unwrap()
+            .translation[0]
+            .id;
+        s.lib
+            .book_mut()
+            .apply(cipher_book::Change::EditBlock {
+                block,
+                text: "Edited".into(),
+                hand: true,
+            })
+            .unwrap();
+        s.open_history();
+        s.undo_history();
+        assert_eq!(s.strip, vec![0, 1]);
+        assert!(s.lib.page_at(1).is_some());
+    }
 
     #[test]
     fn history_undo_preserves_unsaved_style_and_only_invalidates_changed_rules() {
