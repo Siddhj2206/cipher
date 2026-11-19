@@ -1,5 +1,7 @@
 use std::process::Command;
 
+mod http_support;
+
 fn cipher_binary() -> Command {
     Command::new(env!("CARGO_BIN_EXE_cipher"))
 }
@@ -48,6 +50,156 @@ fn book_with_chapter(home: &tempfile::TempDir, name: &str) -> std::path::PathBuf
     init_book(&mut isolated_command(home), &book_path);
     write_chapter(&book_path);
     book_path
+}
+
+#[tokio::test]
+async fn real_book_reruns_track_source_glossary_and_overwrite_without_dry_run_writes() {
+    use serde_json::{Value, json};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(http_support::StructuredReply)
+        .mount(&server)
+        .await;
+    let home = temp_dir();
+    let book = book_with_chapter(&home, "rerun-book");
+    std::fs::write(book.join("raw/001.md"), "# Chapter 1\n\n星空舰 walks.\n").unwrap();
+    std::fs::write(book.join("raw/002.md"), "# Chapter 2\n\n山河图 sleeps.\n").unwrap();
+    std::fs::write(book.join("raw/003.md"), "").unwrap();
+    let glossary = |translation: &str| {
+        json!([
+        {"term": translation, "og_term": "星空舰", "definition": "Protagonist", "notes": null},
+        {"term": "Town", "og_term": "山河图", "definition": "Location", "notes": null},
+        {"term": "One", "og_term": null, "definition": "Global convention one"},
+        {"term": "Two", "og_term": null, "definition": "Global convention two"},
+        {"term": "Three", "og_term": null, "definition": "Global convention three"},
+        {"term": "Four", "og_term": null, "definition": "Global convention four"}
+        ])
+    };
+    std::fs::write(book.join("glossary.json"), glossary("Champion").to_string()).unwrap();
+    write_global_config(
+        &home,
+        &format!(
+            r#"
+        default_profile = "local"
+        [providers.local]
+        kind = "openai_compatible"
+        base_url = "{}/v1"
+        keys = [{{ value = "test-key" }}]
+        [profiles.local]
+        provider = "local"
+        model = "test-model"
+    "#,
+            server.uri()
+        ),
+    );
+    let run = |args: &[&str]| -> Value {
+        let output = isolated_command(&home)
+            .arg("translate")
+            .arg(&book)
+            .arg("--json")
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let snapshot = || {
+        let mut files = std::collections::BTreeMap::new();
+        fn collect(
+            dir: &std::path::Path,
+            files: &mut std::collections::BTreeMap<std::path::PathBuf, Vec<u8>>,
+        ) {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    collect(&path, files);
+                } else {
+                    files.insert(path.clone(), std::fs::read(path).unwrap());
+                }
+            }
+        }
+        collect(&book.join(".cipher"), &mut files);
+        collect(&book.join("tl"), &mut files);
+        files
+    };
+
+    assert_eq!(run(&[])["summary"]["translated"], 2);
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+    let first_states = cipher::state::load_all_chapter_states(&book).unwrap();
+    assert!(first_states["001.md"].source_text_hash.is_some());
+    assert_eq!(
+        first_states["001.md"]
+            .glossary_usage
+            .as_ref()
+            .unwrap()
+            .terms
+            .len(),
+        5
+    );
+    assert!(
+        std::fs::read_to_string(book.join("tl/001.md"))
+            .unwrap()
+            .contains("Translated body")
+    );
+    assert!(!book.join("tl/003.md").exists());
+    for mode in ["--rerun", "--rerun=source", "--rerun=glossary"] {
+        assert_eq!(run(&[mode])["summary"]["translated"], 0);
+    }
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+
+    std::fs::write(book.join("raw/001.md"), "# Chapter 1\n\n星空舰 runs.\n").unwrap();
+    let before = snapshot();
+    let preview = run(&["--rerun=source", "--dry-run"]);
+    assert_eq!(preview["chapters"][0]["action"], "rerun");
+    assert_eq!(preview["chapters"][0]["reason"], "Chapter source changed");
+    assert_eq!(preview["summary"]["rerun"], 1);
+    assert_eq!(snapshot(), before);
+    assert_eq!(server.received_requests().await.unwrap().len(), 4);
+    assert_eq!(run(&["--rerun=glossary"])["summary"]["translated"], 0);
+    assert_eq!(run(&["--rerun=source"])["summary"]["translated"], 1);
+    let source_states = cipher::state::load_all_chapter_states(&book).unwrap();
+    assert_ne!(
+        source_states["001.md"].source_text_hash,
+        first_states["001.md"].source_text_hash
+    );
+    assert_eq!(
+        source_states["002.md"].source_text_hash,
+        first_states["002.md"].source_text_hash
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 6);
+
+    std::fs::write(book.join("glossary.json"), glossary("Knight").to_string()).unwrap();
+    let before = snapshot();
+    let preview = run(&["--rerun=glossary", "--dry-run"]);
+    assert_eq!(preview["summary"]["rerun"], 1);
+    assert_eq!(
+        preview["chapters"][0]["reason"],
+        "Glossary term changed: 星空舰"
+    );
+    assert_eq!(preview["chapters"][1]["action"], "skip");
+    assert_eq!(snapshot(), before);
+    assert_eq!(run(&["--rerun=source"])["summary"]["translated"], 0);
+    assert_eq!(run(&["--rerun=glossary"])["summary"]["translated"], 1);
+    assert_eq!(server.received_requests().await.unwrap().len(), 8);
+    let glossary_states = cipher::state::load_all_chapter_states(&book).unwrap();
+    assert_ne!(
+        serde_json::to_value(&source_states["001.md"].glossary_usage).unwrap(),
+        serde_json::to_value(&glossary_states["001.md"].glossary_usage).unwrap()
+    );
+    assert_eq!(run(&["--rerun"])["summary"]["translated"], 0);
+    let before = snapshot();
+    assert_eq!(run(&["--overwrite", "--dry-run"])["summary"]["rerun"], 2);
+    assert_eq!(snapshot(), before);
+    assert_eq!(run(&["--overwrite"])["summary"]["translated"], 2);
+    assert_eq!(server.received_requests().await.unwrap().len(), 12);
 }
 
 #[test]
