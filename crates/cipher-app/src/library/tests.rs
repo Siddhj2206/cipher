@@ -990,8 +990,9 @@ fn titled_markdown_headings_split_without_splitting_plain_lists() {
     let dir = tempfile::tempdir().unwrap();
     let lib = Library::from_book(book(&dir)).unwrap();
     for first in ["# 321: The Gate", "## 321. The Gate", "# 321 - The Gate"] {
+        let hashes = first.split_whitespace().next().unwrap();
         let text = format!(
-            "{first}\n\nOpening.\n\n1. Check the gate\n\n2. Light the lamp\n\n# 322: The Tower\n\nNext."
+            "{first}\n\nOpening.\n\n1. Check the gate\n\n2. Light the lamp\n\n{hashes} 322: The Tower\n\nNext."
         );
         let parts = lib.intakes(&text);
         assert_eq!(parts.len(), 2, "{first}");
@@ -1003,6 +1004,31 @@ fn titled_markdown_headings_split_without_splitting_plain_lists() {
         );
         assert_eq!(parts[1].number, Some(322));
     }
+}
+
+#[test]
+fn titled_markdown_subsections_stay_inside_the_shallowest_chapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    let single = "# 321: The Gate\n\nOpening.\n\n## 1. Arrival\n\nAt the gate.";
+    assert_eq!(lib.intakes(single), vec![lib.intake(single).unwrap()]);
+    let parts = lib.intakes(&format!(
+        "{single}\n\n# 322: The Tower\n\n## 2. Climbing\n\nUpstairs."
+    ));
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].number, Some(321));
+    assert!(parts[0].blocks.contains(&"## 1. Arrival".into()));
+    assert!(parts[1].blocks.contains(&"## 2. Climbing".into()));
+    assert_eq!(
+        lib.intakes("# 321: The Gate\n\nOpening.\n\n### Chapter 322\n\nNext.")
+            .len(),
+        2
+    );
+    assert_eq!(
+        lib.intakes("# 321: The Gate\n\nOpening.\n\n### 322\n\nNext.")
+            .len(),
+        2
+    );
 }
 
 #[test]
