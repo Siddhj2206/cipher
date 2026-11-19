@@ -1,6 +1,6 @@
 use cipher_book::{
-    Book, BookMeta, Change, ChapterId, ChapterState, JobKind, JobSpec, NewPair, Side, TermFields,
-    TermStatus,
+    Book, BookMeta, Change, ChapterId, ChapterState, EditState, JobKind, JobSpec, MetadataEditId,
+    NewPair, Side, SuggestionFilter, TermFields, TermStatus,
 };
 use cipher_text::drift::DriftKind;
 
@@ -303,6 +303,109 @@ fn history_repair_import_and_added_chapter_undo() {
     let scan = lib.scan()().unwrap();
     lib.apply_scan(scan);
     assert!(lib.scanned());
+}
+
+#[test]
+fn successive_review_accepts_keep_every_revision_for_undo() {
+    for accept_prose in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        let tid = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+        let ch = chapter(&mut b, 1, &["마탑주가 웃었다."]);
+        translate(&mut b, ch, &["The Magic Tower Lord smiled."], None);
+        b.apply(Change::AddStoryNote {
+            chapter: None,
+            text: "The Magic Tower Lord smiled.".into(),
+        })
+        .unwrap();
+        let glossary = b.glossary().unwrap();
+        let notes = b.story_notes().unwrap();
+        let original_chapter = b.chapter(ch).unwrap();
+        let path = b.path().to_owned();
+        drop(b);
+        let mut lib = Library::open(&path).unwrap();
+        let at = lib.terms.iter().position(|t| t.id == tid).unwrap();
+        let sid = lib.use_wording(at, "Tower Master", &[]).unwrap().unwrap();
+        let metadata: Vec<_> = lib
+            .suggestion(sid)
+            .unwrap()
+            .metadata
+            .iter()
+            .map(|e| e.id)
+            .collect();
+        assert_eq!(metadata.len(), 2);
+        let mut state = crate::state::State::new(lib);
+        for eid in metadata {
+            state.review_metadata(sid, vec![(eid, true)]);
+        }
+        assert_ne!(state.lib.book().glossary().unwrap(), glossary);
+        assert_ne!(state.lib.book().story_notes().unwrap(), notes);
+        if accept_prose {
+            state.accept_all(sid);
+            assert_ne!(state.lib.book().chapter(ch).unwrap(), original_chapter);
+        }
+        assert_eq!(state.fix.finished.len(), 1);
+        let finished = &state.fix.finished[0];
+        let count = if accept_prose { 3 } else { 2 };
+        assert_eq!(finished.revisions.len(), count);
+        assert!(finished.revisions.windows(2).all(|r| r[0].0 < r[1].0));
+        assert_eq!(finished.applied, count);
+        assert_eq!((finished.stale, finished.skipped), (0, 0));
+        assert_eq!(
+            finished.chapters,
+            if accept_prose { vec![ch] } else { vec![] }
+        );
+        state.undo(sid);
+        assert_eq!(state.lib.book().glossary().unwrap(), glossary);
+        assert_eq!(state.lib.book().story_notes().unwrap(), notes);
+        assert_eq!(state.lib.book().chapter(ch).unwrap(), original_chapter);
+        assert!(state.fix.finished.is_empty());
+        let pending = state.lib.suggestion(sid).unwrap();
+        assert!(
+            pending
+                .metadata
+                .iter()
+                .all(|e| e.state == EditState::Pending)
+        );
+        assert!(pending.edits.iter().all(|e| e.state == EditState::Pending));
+    }
+}
+
+#[test]
+fn drift_metadata_review_reloads_the_glossary_and_undo_restores_pending_items() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let tid = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+    let ch = chapter(&mut b, 1, &["마탑주가 웃었다."]);
+    translate(&mut b, ch, &["The Tower Master smiled."], None);
+    let path = b.path().to_owned();
+    drop(b);
+    let mut lib = Library::open(&path).unwrap();
+    let at = lib.terms.iter().position(|t| t.id == tid).unwrap();
+    let sid = lib.use_wording(at, "Tower Master", &[]).unwrap().unwrap();
+    assert_eq!(lib.terms[at].rendering, "Magic Tower Lord");
+    assert!(lib.suggestion(sid).unwrap().edits.is_empty());
+    let eid = lib.suggestion(sid).unwrap().metadata[0].id;
+    assert!(
+        lib.decide_metadata(vec![(MetadataEditId(-1), true)])
+            .is_err()
+    );
+    let empty = lib.decide_metadata(Vec::new()).unwrap();
+    assert_eq!((empty.applied, empty.stale), (0, 0));
+    let decided = lib.decide_metadata(vec![(eid, true)]).unwrap();
+    assert_eq!((decided.applied, decided.stale), (1, 0));
+    assert_eq!(lib.terms[at].rendering, "Tower Master");
+    assert!(lib.suggestion(sid).is_none());
+    lib.undo_review(decided.revision, &[]).unwrap();
+    assert_eq!(lib.terms[at].rendering, "Magic Tower Lord");
+    assert_eq!(
+        lib.suggestion(sid).unwrap().metadata[0].state,
+        EditState::Pending
+    );
+    let result = lib.decide_metadata(vec![(eid, false)]).unwrap();
+    assert_eq!(result.applied, 0);
+    let s = lib.book().suggestions(SuggestionFilter::default()).unwrap();
+    assert_eq!(s[0].metadata[0].state, EditState::Rejected);
 }
 
 #[test]

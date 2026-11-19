@@ -142,8 +142,7 @@ impl Library {
     }
 
     /// Makes `winner` Term `term`'s rendering and renames the wordings in `same` to it, as one
-    /// Suggestion to review (`cipher_engine::use_wording`). The Glossary changes, so the
-    /// Library reloads.
+    /// Suggestion to review (`cipher_engine::use_wording`). No Book content changes yet.
     pub fn use_wording(
         &mut self,
         term: usize,
@@ -234,6 +233,31 @@ impl Library {
         })
     }
 
+    pub fn decide_metadata(
+        &mut self,
+        decisions: Vec<(cipher_book::MetadataEditId, bool)>,
+    ) -> Result<Decided> {
+        let ids: Vec<_> = decisions.iter().map(|d| d.0).collect();
+        let applied = self.book.apply(Change::DecideMetadata { decisions })?;
+        let after = self.book.suggestions(SuggestionFilter::default())?;
+        let edits: Vec<_> = after
+            .iter()
+            .flat_map(|s| &s.metadata)
+            .filter(|e| ids.contains(&e.id))
+            .collect();
+        let decided = Decided {
+            revision: applied.revision,
+            applied: edits
+                .iter()
+                .filter(|e| e.state == EditState::Accepted)
+                .count(),
+            stale: edits.iter().filter(|e| e.state == EditState::Stale).count(),
+            chapters: Vec::new(),
+        };
+        self.reload()?;
+        Ok(decided)
+    }
+
     /// Undoes a Review. Blocks edited since are left alone and reported as conflicts.
     pub fn undo_review(
         &mut self,
@@ -242,6 +266,7 @@ impl Library {
     ) -> Result<UndoOutcome> {
         let out = self.book.undo(revision, UndoMode::SkipConflicts)?;
         self.reread(chapters)?;
+        self.reload()?;
         Ok(out)
     }
 
