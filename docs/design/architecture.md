@@ -216,16 +216,6 @@ Driving the real app headless (`--script`, `--snap`, `--tree`, `--out` from Rune
 - **Toolchain:** Rust 1.100.0, edition 2024, pinned in `rust-toolchain.toml` for CI and rustup. No `rust-version`: nothing is published, and the pin already decides the compiler. mise sets `RUSTUP_TOOLCHAIN`, which overrides the file, so keep mise's Rust at the pinned version or CI and local builds differ.
 - **Rune:** pinned by git revision `8fc71fbf21db41920409bf6fa20ffb41ddb2f99d` from `https://github.com/anomalyco/rune`, with the `tooling` feature (release builds need it for `--snap`, `--scene`, `--script` and `--tree`). Rune vendors patched `parley_engine`, `winit` and `wgpu-hal` and asks apps to patch them too, so the root `Cargo.toml` has a `[patch.crates-io]` pointing at the same revision; bump all four revs together. (The macOS and Windows accesskit patches are left out: Linux only.)
 - **Linker:** clang with mold, from the root `.cargo/config.toml`.
-- **This machine (Fedora Atomic) has no `libxkbcommon-devel`.** Linking anything that depends on Rune needs Homebrew's copy:
-
-  ```toml
-  [target.x86_64-unknown-linux-gnu]
-  rustflags = ["-L", "/home/linuxbrew/.linuxbrew/lib"]
-  [env]
-  PKG_CONFIG_PATH = "/home/linuxbrew/.linuxbrew/lib/pkgconfig:/home/linuxbrew/.linuxbrew/share/pkgconfig"
-  ```
-
-  The prototype carries this in `prototypes/editor-spike/.cargo/config.toml`. On this machine it is in `~/.cargo/config.toml` (outside the repo, because it is machine-specific); cargo merges it with the repo's `.cargo/config.toml`.
 - **Pre-commit hook:** `.githooks/pre-commit` (`core.hooksPath`) runs `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`. 
 - **Snapshot tooling:** Rune apps take `--snap out.png --scene NAME --scale 1`, `--script file.json` and `--tree out.json`. In script events, keys are `{"type":"key","name":"j","cmd":true}`, and a triple-click needs about 0.6 seconds before the next key so the selection is in place.
 

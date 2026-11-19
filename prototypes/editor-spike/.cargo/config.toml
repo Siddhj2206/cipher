@@ -1,6 +1,0 @@
-# PROTOTYPE: Fedora Atomic host has no libxkbcommon-devel; link against Homebrew's copy.
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-L", "/home/linuxbrew/.linuxbrew/lib"]
-
-[env]
-PKG_CONFIG_PATH = "/home/linuxbrew/.linuxbrew/lib/pkgconfig:/home/linuxbrew/.linuxbrew/share/pkgconfig"
