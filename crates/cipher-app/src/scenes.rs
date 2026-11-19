@@ -2,8 +2,8 @@
 //! Book, so scenes that write (a Suggestion, a seeded Review) never touch the real one.
 
 use cipher_book::{
-    BlockId, Change, ChapterId, EditOrigin, NewProposedEdit, NewSuggestion, Scope, SuggestionId,
-    SuggestionKind, SuggestionState,
+    AddressFields, BlockId, Change, ChapterId, EditOrigin, NewProposedEdit, NewSuggestion, Scope,
+    SuggestionId, SuggestionKind, SuggestionState,
 };
 use rune::TextEdit;
 
@@ -165,6 +165,50 @@ fn focus_notes(s: &mut State) {
     seed_model(s, "Holy Scripture", "Divine Scripture", (4, 0, 0));
 }
 
+fn book_notes(s: &mut State) {
+    s.prefs.appearance = crate::prefs::Appearance::Light;
+    s.prefs.contents_open = true;
+    let chapters = s.lib.book().chapters().expect("scene chapters");
+    for (speaker, listener, source_form, rendering) in [
+        ("Erian", "Tower Master", "스승님", "Master"),
+        ("Erian", "Older apprentice", "형", "brother"),
+        ("Guild envoy", "Tower Master", "선배", "senior"),
+    ] {
+        s.lib
+            .book_mut()
+            .apply(Change::AddFormOfAddress(AddressFields {
+                speaker: speaker.into(),
+                listener: listener.into(),
+                source_form: source_form.into(),
+                rendering: rendering.into(),
+            }))
+            .expect("scene form");
+    }
+    for (chapter, text) in [
+        (
+            None,
+            "Erian is the Quiet Tower's new apprentice. The old master has returned, drawing the Silver Guild's attention.",
+        ),
+        (
+            chapters.first().map(|c| c.id),
+            "Erian rings the silver bell and meets the old master, who has been waiting for him.",
+        ),
+        (
+            chapters.get(1).map(|c| c.id),
+            "In Borisol, Erian buys herbs. Merchants ask about the master; guild soldiers arrive, and he slips away.",
+        ),
+    ] {
+        s.lib
+            .book_mut()
+            .apply(Change::AddStoryNote {
+                chapter,
+                text: text.into(),
+            })
+            .expect("scene note");
+    }
+    s.open_notes();
+}
+
 /// What a reader would copy from a web novel site: a heading, then paragraphs.
 const PASTED: &str = "321화\n\n그날 밤, 탑 위에서 바람이 불었다.\n\n테실리드는 조용히 고개를 들었다.\n\n\"이제 시작이군.\"\n\n마탑주의 목소리가 멀리서 들려왔다.";
 
@@ -283,6 +327,11 @@ pub const SCENES: &[Scene] = &[
     ("interlinear", |s| s.interlinear = true),
     ("source", |s| s.source = true),
     ("cast", |s| s.screen = Screen::Cast),
+    ("book-notes", book_notes),
+    ("book-notes-dark", |s| {
+        book_notes(s);
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+    }),
     ("cast-drift", |s| {
         s.screen = Screen::Cast;
         s.cast_open = s.lib.cast_order().first().copied();

@@ -263,6 +263,16 @@ pub fn contents(s: &State, p: &Pal) -> El {
         )
         .child(
             nav(
+                &I_PEN,
+                "Book notes",
+                String::new(),
+                "nav-notes",
+                s.screen == Screen::Notes,
+            )
+            .on_press(|s: &mut State| s.open_notes()),
+        )
+        .child(
+            nav(
                 &I_PLUS,
                 "New chapter",
                 "Ctrl N".into(),
