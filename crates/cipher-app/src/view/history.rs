@@ -119,7 +119,10 @@ pub fn history_page(s: &State, p: &Pal) -> El {
         } else {
             "Undo"
         };
-        let button = btn(label, true, p).key("history-undo");
+        let button = btn(label, true, p)
+            .key("history-undo")
+            .focusable(!blocked && !undone)
+            .focus_ring(2.0, 2.0, p.red);
         let actions = row()
             .w_full()
             .gap(8.0)
