@@ -204,3 +204,66 @@ fn cut(s: &str, max: usize) -> String {
         None => s.to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cipher_book::{BookMeta, Change, ChapterId, TermFields};
+
+    #[test]
+    fn term_status_controls_prompt_context() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut book = Book::create(
+            dir.path().join("prompt.cipher"),
+            BookMeta {
+                title: "Test".into(),
+                source_lang: "ko".into(),
+                target_lang: "en".into(),
+            },
+        )
+        .unwrap();
+        let chapter = book
+            .apply(Change::AddChapter {
+                number: Some(1),
+                title: None,
+                source: vec!["탑".into()],
+            })
+            .unwrap();
+        let chapter = book.chapter(ChapterId(chapter.created[0])).unwrap();
+        let term = book
+            .apply(Change::UpsertTerm {
+                id: None,
+                fields: TermFields {
+                    source: "탑".into(),
+                    rendering: "Tower".into(),
+                    ..TermFields::default()
+                },
+                status: TermStatus::Pending,
+                first_chapter: None,
+            })
+            .unwrap();
+        let id = cipher_book::TermId(term.created[0]);
+        assert!(
+            Context::gather(&book, &chapter, &book.glossary().unwrap())
+                .unwrap()
+                .text
+                .contains("Tower (provisional)")
+        );
+        book.apply(Change::SetTermStatus {
+            term: id,
+            status: TermStatus::Accepted,
+        })
+        .unwrap();
+        let context = Context::gather(&book, &chapter, &book.glossary().unwrap()).unwrap();
+        assert!(context.text.contains("탑 = Tower"));
+        assert!(!context.text.contains("provisional"));
+        book.apply(Change::SetTermStatus {
+            term: id,
+            status: TermStatus::Dismissed,
+        })
+        .unwrap();
+        let context = Context::gather(&book, &chapter, &book.glossary().unwrap()).unwrap();
+        assert!(context.terms.is_empty());
+        assert!(!context.text.contains("Tower"));
+    }
+}

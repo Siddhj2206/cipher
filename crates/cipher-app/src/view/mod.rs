@@ -19,6 +19,7 @@ mod sheets;
 mod shelf;
 mod sidebar;
 mod style;
+mod term_editor;
 mod welcome;
 mod widgets;
 

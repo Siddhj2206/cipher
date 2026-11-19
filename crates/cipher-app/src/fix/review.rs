@@ -130,6 +130,7 @@ impl State {
 
     /// Keeps a finished Review for Undo and says what it did.
     fn record(&mut self, acc: Finished) {
+        self.term_toast_undo = None;
         self.toast = Some(acc.summary());
         if let Some(fin) = self
             .fix
@@ -152,6 +153,7 @@ impl State {
             self.fix.finished.push(acc);
         } else {
             self.toast_undo = None;
+            self.term_toast_undo = None;
         }
     }
 
@@ -174,6 +176,7 @@ impl State {
             }
         }
         self.toast_undo = None;
+        self.term_toast_undo = None;
         self.toast = Some(if conflicts == 0 {
             "Undone".to_string()
         } else {

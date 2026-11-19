@@ -70,6 +70,7 @@ impl State {
 
     /// Opens or closes a Term's row on the Cast page.
     pub fn toggle_cast_term(&mut self, term: usize) {
+        self.term_editor = None;
         self.cast_open = if self.cast_open == Some(term) {
             None
         } else {

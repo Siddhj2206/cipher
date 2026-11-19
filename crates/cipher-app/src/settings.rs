@@ -400,6 +400,7 @@ impl State {
             None => "This book now uses the default model".into(),
         });
         self.toast_undo = None;
+        self.term_toast_undo = None;
     }
 
     /// Restarts the open Book's worker, which picks its Endpoint and model again.

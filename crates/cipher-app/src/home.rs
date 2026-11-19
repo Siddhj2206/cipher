@@ -183,6 +183,9 @@ impl State {
         self.palette = None;
         self.toast = None;
         self.toast_undo = None;
+        self.term_toast_undo = None;
+        self.term_editor = None;
+        self.cast_open = None;
         self.fix = Fix::new();
         self.draft = None;
         self.progress = None;
@@ -218,6 +221,9 @@ impl State {
         self.palette = None;
         self.toast = None;
         self.toast_undo = None;
+        self.term_toast_undo = None;
+        self.term_editor = None;
+        self.cast_open = None;
         self.fix = Fix::new();
         self.home = Some(Home::load(dir.as_deref()));
     }
@@ -347,6 +353,7 @@ impl State {
                 }
                 self.toast = Some(line);
                 self.toast_undo = None;
+                self.term_toast_undo = None;
             }
             Err(e) => h.error = Some(e),
         }
