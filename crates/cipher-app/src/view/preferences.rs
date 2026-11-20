@@ -5,8 +5,8 @@
 use rune::tok::TextStyle;
 use rune::{Cursor, El, col, el, row, text};
 
-use super::sheets::endpoint_form;
-use super::widgets::{btn, card, kbd, scrolling, segmented, setting_row, switch};
+use super::sheets::{endpoint_footer, endpoint_form};
+use super::widgets::{btn, card, kbd, scrolling, segmented, switch};
 use crate::keys::{SHORTCUTS, groups};
 use crate::prefs::{Appearance, Prefs, Reading, Typeface};
 use crate::shelf::Shelf;
@@ -14,45 +14,58 @@ use crate::state::{Section, State};
 use crate::theme::{LABEL, Pal, SERIF, SMALL, UI, UI_MED, body};
 
 fn scrim(p: &Pal) -> El {
+    let [w, h] = rune::memo::layout_size("app-root").unwrap_or([1280.0, 900.0]);
     col()
         .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
         .fill(p.scrim)
         .items_center()
         .justify_center()
-        .padding(40.0)
+        .padding(if w < 800.0 || h < 600.0 { 12.0 } else { 40.0 })
 }
 
 pub fn settings(s: &State, p: &Pal) -> Option<El> {
     let section = s.settings_page?;
-    let mut nav = col()
-        .w(196.0)
-        .h_full()
-        .fill(p.side)
-        .px(10.0)
-        .pt(22.0)
-        .gap(2.0)
-        .border_sides([0.0, 1.0, 0.0, 0.0], p.rule)
-        .child(text("SETTINGS").font(LABEL).color(p.ink3).px(10.0).pb(10.0));
+    let compact = rune::memo::layout_size("app-root").is_some_and(|[w, _]| w < 800.0);
+    let inset = if compact { 16.0 } else { 36.0 };
+    let mut nav = if compact {
+        row().w_full().flex_wrap().padding(6.0)
+    } else {
+        col()
+            .w(196.0)
+            .h_full()
+            .px(10.0)
+            .pt(22.0)
+            .child(text("SETTINGS").font(LABEL).color(p.ink3).px(10.0).pb(10.0))
+    }
+    .key("settings-nav")
+    .fill(p.side)
+    .gap(2.0)
+    .border_sides(
+        if compact {
+            [0.0, 0.0, 1.0, 0.0]
+        } else {
+            [0.0, 1.0, 0.0, 0.0]
+        },
+        p.rule,
+    );
     for sec in Section::ALL {
         let on = sec == section;
-        nav = nav.child(
-            text(sec.name())
-                .key(format!("set-{}", sec.name().to_lowercase()))
-                .font(if on { UI_MED } else { UI })
-                .color(if on { p.ink } else { p.ink2 })
-                .w_full()
-                .px(10.0)
-                .py(6.0)
-                .radius(6.0)
-                .fill(if on {
-                    p.selected
-                } else {
-                    rune::Color::TRANSPARENT
-                })
-                .hover(p.hover)
-                .cursor(Cursor::Pointer)
-                .on_press(move |s: &mut State| s.open_settings_at(sec)),
-        );
+        let tab = text(sec.name())
+            .key(format!("set-{}", sec.name().to_lowercase()))
+            .font(if on { UI_MED } else { UI })
+            .color(if on { p.ink } else { p.ink2 })
+            .px(10.0)
+            .py(6.0)
+            .radius(6.0)
+            .fill(if on {
+                p.selected
+            } else {
+                rune::Color::TRANSPARENT
+            })
+            .hover(p.hover)
+            .cursor(Cursor::Pointer)
+            .on_press(move |s: &mut State| s.open_settings_at(sec));
+        nav = nav.child(if compact { tab } else { tab.w_full() });
     }
 
     let body = match section {
@@ -82,6 +95,7 @@ pub fn settings(s: &State, p: &Pal) -> Option<El> {
         .pb(6.0)
         .child(
             text(section.name())
+                .key("settings-heading")
                 .font(TextStyle::new(24.0, 400.0).family(SERIF))
                 .color(p.ink)
                 .grow(1.0),
@@ -99,16 +113,22 @@ pub fn settings(s: &State, p: &Pal) -> Option<El> {
                 .help("Close (Esc)")
                 .on_press(|s: &mut State| s.close_settings()),
         );
-    let pane = scrolling(
-        col()
-            .w_full()
-            .px(36.0)
-            .pt(24.0)
-            .pb(36.0)
-            .child(head)
-            .child(body),
-        "settings-pane",
-    );
+    let mut pane = col()
+        .key("settings-content")
+        .grow(1.0)
+        .min_w(0.0)
+        .min_h(0.0)
+        .h_full()
+        .child(head.px(inset).pt(16.0))
+        .child(scrolling(
+            col().w_full().px(inset).pb(20.0).child(body),
+            "settings-pane",
+        ));
+    if section == Section::Translation
+        && let Some(f) = &s.settings
+    {
+        pane = pane.child(endpoint_footer(f, p).px(inset).py(10.0));
+    }
     let window = card(p)
         .key("settings-window")
         .w_full()
@@ -119,12 +139,12 @@ pub fn settings(s: &State, p: &Pal) -> Option<El> {
         .modal(true, |s: &mut State| s.close_settings())
         .child(
             // Sections switch in place, with no fade or spring.
-            row()
+            (if compact { col() } else { row() })
                 .w_full()
                 .h_full()
                 .instant_changes()
                 .child(nav)
-                .child(col().grow(1.0).min_w(0.0).h_full().child(pane)),
+                .child(pane),
         );
     Some(scrim(p).child(window))
 }
@@ -145,7 +165,8 @@ fn endpoint_list(f: &crate::settings::Settings, p: &Pal) -> El {
         } else {
             String::new()
         };
-        let mut actions = row().gap(6.0).center_y();
+        let narrow = narrow_pane();
+        let mut actions = row().gap(6.0).center_y().flex_wrap();
         if is_default {
             actions = actions.child(text("Default").font(SMALL).color(p.green).px(6.0));
         } else {
@@ -172,13 +193,12 @@ fn endpoint_list(f: &crate::settings::Settings, p: &Pal) -> El {
                 .on_press(move |s: &mut State| s.remove_endpoint(&id)),
         );
         list = list.child(
-            row()
+            (if narrow { col() } else { row() })
                 .key(format!("prov{i}"))
                 .w_full()
                 .py(10.0)
                 .px(12.0)
                 .gap(12.0)
-                .center_y()
                 .radius(7.0)
                 .fill(if editing {
                     p.selected
@@ -220,6 +240,7 @@ fn endpoint_list(f: &crate::settings::Settings, p: &Pal) -> El {
 
 fn intro(line: &str, p: &Pal) -> El {
     text(line.to_string())
+        .key("settings-description")
         .font(SMALL)
         .color(p.ink3)
         .wrap()
@@ -244,6 +265,30 @@ fn with_reset(control: El, changed: bool, key: &str, reset: fn(&mut State), p: &
         );
     }
     r.child(control)
+}
+
+pub(super) fn narrow_pane() -> bool {
+    rune::memo::layout_size("settings-content").is_some_and(|[w, _]| w < 640.0)
+}
+
+fn setting_row(label: &str, about: &str, control: El, p: &Pal) -> El {
+    if !narrow_pane() {
+        return super::widgets::setting_row(label, about, control, p);
+    }
+    let mut words = col()
+        .w_full()
+        .gap(2.0)
+        .child(text(label.to_string()).font(UI_MED).color(p.ink).wrap());
+    if !about.is_empty() {
+        words = words.child(text(about.to_string()).font(SMALL).color(p.ink3).wrap());
+    }
+    col()
+        .w_full()
+        .py(10.0)
+        .gap(8.0)
+        .border_sides([0.0, 0.0, 1.0, 0.0], p.rule)
+        .child(words)
+        .child(control)
 }
 
 fn general(s: &State, p: &Pal) -> El {
@@ -544,7 +589,8 @@ pub fn shortcuts_sheet(s: &State, p: &Pal) -> Option<El> {
     }
     let sheet = card(p)
         .key("shortcuts")
-        .w(560.0)
+        .w_full()
+        .max_w(560.0)
         .h_full()
         .max_h(620.0)
         .clip_rounded(10.0)

@@ -299,6 +299,42 @@ fn settings(s: &mut State) {
     form.status = Status::Ok("model-large replied “OK” in 1.2 s · 31 tokens in, 2 out".into());
 }
 
+fn settings_chatgpt(s: &mut State) {
+    settings(s);
+    let f = s.settings.as_mut().expect("open");
+    f.id = "e-plan".into();
+    f.kind = Kind::ChatGpt;
+    f.name = TextEdit::new("ChatGPT");
+    f.base_url = TextEdit::new("");
+    f.translate = TextEdit::new("gpt-5.1-codex");
+    f.small = TextEdit::new("");
+    f.others = TextEdit::new("");
+    f.has_key = false;
+    f.all[1].translate_model = "gpt-5.1-codex".into();
+    f.status = Status::Idle;
+}
+
+fn settings_no_key(s: &mut State) {
+    settings(s);
+    let f = s.settings.as_mut().expect("open");
+    f.has_key = false;
+    f.name = TextEdit::new("Local server");
+    f.base_url = TextEdit::new("http://localhost:11434/v1");
+    f.status = Status::Idle;
+}
+
+fn settings_error(s: &mut State) {
+    settings(s);
+    s.settings.as_mut().expect("open").status = Status::Failed(
+        "Could not test this Endpoint: the server refused the request. Check the base URL, model and credentials, then try again.".into());
+}
+
+fn settings_models_failed(s: &mut State) {
+    settings(s);
+    s.settings.as_mut().expect("open").fetch =
+        Status::Failed("The server refused the key. Check it, then retry.".into());
+}
+
 /// The Shelf with the scene's Book and two more: one new and empty, one renamed.
 fn shelf(s: &mut State) {
     s.show_shelf();
@@ -566,16 +602,56 @@ pub const SCENES: &[Scene] = &[
         .to_vec();
         form.available_from = form.source();
     }),
-    ("settings-models-failed", |s| {
-        settings(s);
-        let form = s.settings.as_mut().expect("open");
-        form.fetch = Status::Failed("The server refused the key. Check it, then retry.".into());
+    ("settings-models-failed", settings_models_failed),
+    ("settings-models-failed-zoom", |s| {
+        settings_models_failed(s);
+        s.prefs.zoom = 1.6;
     }),
-    ("settings-chatgpt", |s| {
+    ("settings-chatgpt", settings_chatgpt),
+    ("settings-no-key", settings_no_key),
+    ("settings-error", settings_error),
+    ("settings-busy", |s| {
         settings(s);
-        let form = s.settings.as_mut().expect("open");
-        form.kind = Kind::ChatGpt;
-        form.status = Status::Idle;
+        s.settings.as_mut().expect("open").status = Status::Busy("Testing…".into());
+    }),
+    ("settings-chatgpt-busy", |s| {
+        settings_chatgpt(s);
+        s.settings.as_mut().expect("open").status = Status::Busy("Waiting for the browser…".into());
+    }),
+    ("settings-chatgpt-signed-in", |s| {
+        settings_chatgpt(s);
+        let f = s.settings.as_mut().expect("open");
+        f.signed_in = Some("reader@example.com".into());
+        f.available = vec!["gpt-5.1-codex".into(), "gpt-5.1-codex-mini".into()];
+        f.status = Status::Ok("Signed in with ChatGPT.".into());
+    }),
+    ("settings-general-zoom", |s| {
+        s.prefs.zoom = 1.6;
+        s.open_settings_at(crate::state::Section::General);
+    }),
+    ("settings-zoom", |s| {
+        settings(s);
+        s.prefs.zoom = 1.6;
+    }),
+    ("settings-chatgpt-zoom", |s| {
+        settings_chatgpt(s);
+        s.prefs.zoom = 1.6;
+    }),
+    ("settings-error-zoom", |s| {
+        settings_error(s);
+        s.prefs.zoom = 1.6;
+    }),
+    ("settings-about-zoom", |s| {
+        s.prefs.zoom = 1.6;
+        s.open_settings_at(crate::state::Section::About);
+    }),
+    ("settings-shortcuts-zoom", |s| {
+        s.prefs.zoom = 1.6;
+        s.open_settings_at(crate::state::Section::Shortcuts);
+    }),
+    ("shortcuts-zoom", |s| {
+        s.prefs.zoom = 1.6;
+        s.shortcuts_open = true;
     }),
     ("home", |_| {}),
     ("shelf", shelf),

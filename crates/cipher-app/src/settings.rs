@@ -205,6 +205,14 @@ impl Settings {
         self.endpoint().is_ok() && (self.kind == Kind::ApiKey || self.signed_in.is_some())
     }
 
+    fn ready_endpoint(&self) -> Result<Endpoint, String> {
+        let endpoint = self.endpoint()?;
+        if !self.ready() {
+            return Err("Sign in with ChatGPT first.".into());
+        }
+        Ok(endpoint)
+    }
+
     pub fn busy(&self) -> bool {
         matches!(self.status, Status::Busy(_))
     }
@@ -419,14 +427,13 @@ impl State {
 
     /// Writes the key and the Endpoint, makes it current and restarts the worker on it.
     pub fn save_settings(&mut self) {
-        let Some(form) = &self.settings else { return };
-        let endpoint = match form.endpoint() {
+        let Some(form) = self.settings.as_ref().filter(|f| !f.busy()) else {
+            return;
+        };
+        let endpoint = match form.ready_endpoint() {
             Ok(e) => e,
             Err(why) => return self.settings_failed(why),
         };
-        if !form.ready() {
-            return self.settings_failed("Sign in with ChatGPT first.".into());
-        }
         if rune::is_headless() {
             return self.endpoint_saved(&endpoint.name);
         }
@@ -480,7 +487,7 @@ impl State {
         let Some(form) = self.settings.as_mut().filter(|f| !f.busy()) else {
             return;
         };
-        let endpoint = match form.endpoint() {
+        let endpoint = match form.ready_endpoint() {
             Ok(e) => e,
             Err(why) => {
                 form.status = Status::Failed(why);
@@ -865,5 +872,61 @@ mod tests {
         st.settings.as_mut().unwrap().fetch = Status::Idle;
         st.fetch_models();
         assert_eq!(st.settings.as_ref().unwrap().fetch, Status::Idle);
+    }
+
+    #[test]
+    fn keyless_api_endpoints_are_ready() {
+        let mut f = blank();
+        f.base_url = field("http://localhost:11434/v1");
+        f.translate = field("local-model");
+        assert!(!f.has_key);
+        assert!(f.key.text.is_empty());
+        assert!(f.ready());
+    }
+
+    #[test]
+    fn save_test_and_sign_in_leave_busy_forms_unchanged() {
+        for kind in [Kind::ApiKey, Kind::ChatGpt] {
+            let mut s = State::new(crate::library::Library::blank());
+            let mut f = blank();
+            f.kind = kind;
+            f.status = Status::Busy("Working…".into());
+            s.settings = Some(f);
+            s.save_settings();
+            s.test_settings();
+            s.sign_in();
+            let f = s.settings.as_ref().unwrap();
+            assert_eq!(f.status, Status::Busy("Working…".into()));
+            assert!(f.all.is_empty());
+            assert!(f.is_new);
+        }
+    }
+
+    #[test]
+    fn save_and_test_explain_the_same_missing_requirements() {
+        for (kind, model, url, why) in [
+            (Kind::ApiKey, "", "", "Name the default model."),
+            (Kind::ApiKey, "model", "", "Give the base URL."),
+            (Kind::ChatGpt, "", "", "Name the default model."),
+            (Kind::ChatGpt, "model", "", "Sign in with ChatGPT first."),
+        ] {
+            let mut s = State::new(crate::library::Library::blank());
+            let mut f = blank();
+            f.kind = kind;
+            f.translate = field(model);
+            f.base_url = field(url);
+            s.settings = Some(f);
+            s.save_settings();
+            assert_eq!(
+                s.settings.as_ref().unwrap().status,
+                Status::Failed(why.into())
+            );
+            s.settings.as_mut().unwrap().status = Status::Idle;
+            s.test_settings();
+            assert_eq!(
+                s.settings.as_ref().unwrap().status,
+                Status::Failed(why.into())
+            );
+        }
     }
 }

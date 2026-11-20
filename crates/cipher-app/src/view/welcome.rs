@@ -4,7 +4,7 @@
 use rune::tok::TextStyle;
 use rune::{Color, Cursor, El, col, el, row, text};
 
-use super::sheets::endpoint_form;
+use super::sheets::{endpoint_footer, endpoint_form};
 use super::shelf::{blank_cover, new_book_label};
 use super::widgets::{card, scrolling};
 use crate::home::Home;
@@ -80,7 +80,11 @@ pub fn welcome(s: &State, h: &Home, p: &Pal) -> El {
         ),
         None => {
             let body = match (&s.settings, w.picked) {
-                (Some(f), true) => col().w_full().child(endpoint_form(f, p)),
+                (Some(f), true) => col()
+                    .w_full()
+                    .gap(14.0)
+                    .child(endpoint_form(f, p))
+                    .child(endpoint_footer(f, p)),
                 _ => col()
                     .w_full()
                     .gap(12.0)

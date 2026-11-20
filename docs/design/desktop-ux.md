@@ -273,7 +273,9 @@ Cipher should feel like a native app, not a web page. The user asked for this ex
 
 ## Settings
 
-Ctrl+, (or the gear in the reading header and on the Shelf) opens the Settings window over a scrim: at most 920 × 640, a section list on the left (General, Reading, Translation, Shortcuts, About) and the section on the right. Esc, ✕ or a click outside closes it. Each setting is a row: name and a line about it on the left, the control on the right, and ↺ beside it when it differs from the default.
+Ctrl+, (or the gear in the reading header and on the Shelf) opens the Settings window over a scrim: at most 920 × 800, fitting the available window with smaller outer padding when short or narrow. Wide windows show a section list on the left (General, Reading, Translation, Shortcuts, About); narrow windows and high interface zoom use a wrapping tab row above the section. Navigation and the section heading with ✕ stay pinned; descriptions and section content scroll below. Esc, ✕ or a click outside closes it. Each setting is a row: name and a line about it on the left, the control on the right, and ↺ beside it when it differs from the default. Narrow panes stack the words above the control; Endpoint list rows, model fields and sign-in/Fetch models controls stack too.
+
+Translation keeps its shared API-key/ChatGPT footer outside the section scroll: wrapping status on its own line above Revert, Test and Save. Test, Save and sign-in are disabled while busy; Test and Save explain the same missing requirements. Local API-key Endpoints may omit a key, with a muted no-key hint. The Welcome setup uses the same form and footer.
 
 Everything except an Endpoint applies the moment it changes, and is saved to `prefs.json` beside `endpoints.json` (written atomically; unknown or missing fields fall back to defaults):
 - **General:** Appearance (System, Light, Dark; System follows the desktop live through the XDG portal's color-scheme, which Rune reads), Interface size (80–160%, `Cx::zoom`), Reopen the last Book (on by default), Books folder with Show.
