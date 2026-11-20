@@ -237,6 +237,8 @@ impl crate::state::State {
     /// Called from Rune's `poll`: takes what the worker and the other threads sent and re-reads
     /// what changed. Returns whether anything on screen may differ.
     pub fn drain(&mut self, tx: &mut Tx) -> bool {
+        self.notifier
+            .configure(self.window_focused, self.prefs.notify_when_done);
         let msgs = self.bg.drain();
         if msgs.is_empty() {
             return false;
@@ -244,6 +246,19 @@ impl crate::state::State {
         let mut reread = Vec::new();
         let mut sync = false;
         for msg in msgs {
+            if let Msg::Event(event) = &msg {
+                self.notifier.event(event, || {
+                    if !self.prefs.notify_show_chapters {
+                        return None;
+                    }
+                    match event {
+                        Event::JobFinished {
+                            chapter: Some(id), ..
+                        } => self.lib.notification_chapter(*id),
+                        _ => None,
+                    }
+                });
+            }
             match msg {
                 Msg::Reach { selection, reach } => self.on_reach(selection, reach),
                 Msg::Tested(result) => self.on_tested(result),
@@ -340,6 +355,18 @@ impl crate::state::State {
             self.toast = Some(format!("Could not read the Book: {e}"));
         }
         true
+    }
+
+    pub fn flush_notifications(&mut self) {
+        self.notifier
+            .configure(self.window_focused, self.prefs.notify_when_done);
+        if self.notifier.pending() {
+            self.notifier.flush(
+                self.lib.translations_busy().unwrap_or(true),
+                self.prefs.notify_show_chapters,
+                &mut self.notification_sink,
+            );
+        }
     }
 
     /// An old import's position Pairs were re-paired on another thread: read the Book again,

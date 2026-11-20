@@ -18,6 +18,80 @@ fn book(dir: &tempfile::TempDir) -> Book {
     .unwrap()
 }
 
+#[test]
+fn notification_chapter_uses_reading_position_not_database_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut book = book(&dir);
+    chapter(&mut book, 40, &["First"]);
+    for title in [None, Some("Unnumbered title".to_string())] {
+        book.apply(Change::AddChapter {
+            number: None,
+            title,
+            source: vec!["An unnumbered chapter".into()],
+        })
+        .unwrap();
+    }
+    chapter(&mut book, 10, &["Inserted before the others"]);
+    let lib = Library::from_book(book).unwrap();
+    assert_eq!(
+        lib.notification_chapter(lib.chapters[1].id).as_deref(),
+        Some("Chapter 40")
+    );
+    for chapter in &lib.chapters[2..] {
+        assert_ne!(chapter.id.0, chapter.number);
+        let expected = if chapter.number == 3 {
+            "Chapter 3"
+        } else {
+            "Chapter 4: Unnumbered title"
+        };
+        assert_eq!(
+            lib.notification_chapter(chapter.id).as_deref(),
+            Some(expected)
+        );
+    }
+}
+
+#[test]
+fn notification_queue_uses_persisted_translation_states() {
+    use cipher_book::JobState;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    assert!(!lib.translations_busy().unwrap());
+    let id = lib
+        .book
+        .enqueue(JobSpec {
+            kind: JobKind::Translate,
+            parent: None,
+            chapter: None,
+            suggestion: None,
+            input: None,
+        })
+        .unwrap();
+    let mut job = lib.book.job(id).unwrap();
+    for state in [JobState::Queued, JobState::Running, JobState::Checking] {
+        job.state = state;
+        lib.book.save_job(&job).unwrap();
+        assert!(lib.translations_busy().unwrap());
+    }
+    for state in [JobState::Done, JobState::Paused, JobState::Failed] {
+        job.state = state;
+        lib.book.save_job(&job).unwrap();
+        assert!(!lib.translations_busy().unwrap());
+    }
+    lib.book
+        .enqueue(JobSpec {
+            kind: JobKind::SuggestBatch,
+            parent: None,
+            chapter: None,
+            suggestion: None,
+            input: None,
+        })
+        .unwrap();
+    assert!(!lib.translations_busy().unwrap());
+    assert_eq!(lib.notification_chapter(ChapterId(999)), None);
+}
+
 fn term(book: &mut Book, source: &str, rendering: &str, status: TermStatus) -> TermId {
     let applied = book
         .apply(Change::UpsertTerm {
