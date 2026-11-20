@@ -335,7 +335,10 @@ fn learn_terms(
         .join("\n");
     let mut seen: Vec<(String, String)> = known
         .iter()
-        .map(|t| (t.fields.source.clone(), t.fields.rendering.to_lowercase()))
+        .flat_map(|t| {
+            t.source_forms()
+                .map(|source| (source.to_string(), t.fields.rendering.to_lowercase()))
+        })
         .collect();
     let mut out = Vec::new();
     for (src, rendering, kind, gender) in &progress.new_terms {
@@ -388,6 +391,7 @@ fn check_terms(terms: &[Term]) -> Vec<CheckTerm> {
         .iter()
         .map(|t| CheckTerm {
             source: t.fields.source.clone(),
+            aliases: t.aliases.clone(),
             rendering: t.fields.rendering.clone(),
             forbidden: t.forbidden.clone(),
             may_omit: t.fields.may_omit,

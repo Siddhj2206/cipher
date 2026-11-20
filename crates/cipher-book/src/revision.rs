@@ -147,6 +147,7 @@ pub(crate) enum Table {
     Pair,
     Block,
     Term,
+    TermAlias,
     ForbiddenRendering,
     StyleRule,
     FormOfAddress,
@@ -163,6 +164,7 @@ impl Table {
             Table::Pair => "pair",
             Table::Block => "block",
             Table::Term => "term",
+            Table::TermAlias => "term_alias",
             Table::ForbiddenRendering => "forbidden_rendering",
             Table::StyleRule => "style_rule",
             Table::FormOfAddress => "form_of_address",
@@ -174,11 +176,12 @@ impl Table {
     }
 
     fn from_name(name: &str) -> Result<Table> {
-        const ALL: [Table; 11] = [
+        const ALL: [Table; 12] = [
             Table::Chapter,
             Table::Pair,
             Table::Block,
             Table::Term,
+            Table::TermAlias,
             Table::ForbiddenRendering,
             Table::StyleRule,
             Table::FormOfAddress,
@@ -300,11 +303,11 @@ pub(crate) fn undo(
     target: RevisionId,
     mode: UndoMode,
 ) -> Result<UndoOutcome> {
-    let (label, undone_by): (String, Option<i64>) = tx
+    let (label, kind, undone_by): (String, String, Option<i64>) = tx
         .query_row(
-            "SELECT label, undone_by FROM revision WHERE id = ?1",
+            "SELECT label, kind, undone_by FROM revision WHERE id = ?1",
             [target.0],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()?
         .ok_or(Error::NotFound("revision", target.0))?;
@@ -386,7 +389,9 @@ pub(crate) fn undo(
             Err(e) => return Err(e),
         }
     }
-    if !conflicts.is_empty() && mode == UndoMode::Whole {
+    if !conflicts.is_empty()
+        && (mode == UndoMode::Whole || kind == RevisionKind::TermMerge.as_str())
+    {
         return Ok(UndoOutcome::Conflict { conflicts });
     }
     let revision = w.finish(&format!("Undo: {label}"))?;

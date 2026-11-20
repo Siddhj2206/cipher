@@ -193,6 +193,7 @@ pub struct State {
     pub cast_open: Option<usize>,
     pub cast_pending: bool,
     pub term_editor: Option<crate::terms::TermEditor>,
+    pub term_merge: Option<crate::terms::TermMergeEditor>,
     pub term_toast_undo: Option<cipher_book::RevisionId>,
     /// The Cast page's search, over renderings, source forms and forbidden wordings.
     pub cast_search: TextEdit,
@@ -289,6 +290,7 @@ impl State {
             cast_open: None,
             cast_pending: false,
             term_editor: None,
+            term_merge: None,
             term_toast_undo: None,
             cast_search: TextEdit::new(""),
             cast_drifting: false,
@@ -904,6 +906,7 @@ impl State {
     }
 
     pub fn toggle_cast(&mut self) {
+        self.term_merge = None;
         self.screen = if self.screen == Screen::Cast {
             Screen::Reading
         } else {
@@ -935,6 +938,10 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 
 /// Keys for what is on screen: a sheet, Settings, the Shelf or a Book.
 fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
+    if s.screen == Screen::Cast && s.term_merge.is_some() && k.key == Key::Escape {
+        s.term_merge = None;
+        return true;
+    }
     if s.term_editor.is_some() && k.key == Key::Escape {
         s.term_editor = None;
         return true;

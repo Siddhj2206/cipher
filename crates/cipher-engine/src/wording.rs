@@ -12,6 +12,7 @@ use cipher_book::{
     TermId, TermStatus,
 };
 use cipher_text::checks::PairText;
+use cipher_text::matching::SourceForms;
 use cipher_text::rename::{self, RenameSpec};
 use cipher_text::wordings::{self, Query};
 
@@ -153,7 +154,7 @@ fn gather(book: &Book, term: TermId) -> Result<(Evidence, Vec<BookPair>, Vec<usi
             translation: &p.translation,
         })
         .collect();
-    let sources: Vec<&str> = terms.iter().map(|t| t.fields.source.as_str()).collect();
+    let sources = SourceForms::new(terms.iter().map(Term::source_forms));
     let renderings: Vec<&str> = terms.iter().map(|t| t.fields.rendering.as_str()).collect();
     let ev = wordings::evidence(
         &texts,
@@ -318,7 +319,7 @@ pub fn use_wording(
 
     // The Blocks the Rename may touch: those in Pairs whose source names the Term.
     let source = t.fields.source.trim().to_string();
-    let sources: Vec<&str> = terms.iter().map(|o| o.fields.source.as_str()).collect();
+    let sources = SourceForms::new(terms.iter().map(Term::source_forms));
     let at = terms.iter().position(|o| o.id == term).unwrap_or(0);
     let mut blocks: Vec<(ChapterId, cipher_book::Block)> = Vec::new();
     for summary in book.chapters()? {
@@ -329,7 +330,7 @@ pub fn use_wording(
                 .map(|b| b.text.as_str())
                 .collect::<Vec<_>>()
                 .join("\n");
-            if cipher_text::wordings::names_term(&src, &sources, at) {
+            if sources.names_term(&src, at) {
                 blocks.extend(
                     chapter
                         .blocks_in(pair.id, Side::Translation)

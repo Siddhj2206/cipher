@@ -6,7 +6,16 @@ use crate::{Error, Result};
 
 /// One entry per schema version; `PRAGMA user_version` counts how many have run.
 /// Never edit a migration once a real Book has been written with it: append a new one.
-const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5];
+const MIGRATIONS: &[&str] = &[V1, V2, V3, V4, V5, V6];
+
+const V6: &str = r#"
+CREATE TABLE term_alias (
+  id INTEGER PRIMARY KEY,
+  term_id INTEGER NOT NULL REFERENCES term(id),
+  source TEXT NOT NULL,
+  UNIQUE (term_id, source)
+);
+"#;
 
 const V5: &str = r#"
 CREATE TABLE proposed_metadata (

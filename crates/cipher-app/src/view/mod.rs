@@ -21,6 +21,7 @@ mod shelf;
 mod sidebar;
 mod style;
 mod term_editor;
+mod term_merge;
 mod welcome;
 mod widgets;
 

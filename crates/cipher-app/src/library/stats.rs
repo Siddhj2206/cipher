@@ -9,6 +9,7 @@ use cipher_book::Chapter;
 use cipher_text::blocks;
 use cipher_text::checks::{CheckTerm, PairText};
 use cipher_text::drift::{self, Drift};
+use cipher_text::matching::SourceForms;
 
 use super::TermInfo;
 use super::scan::{Candidates, Prefilter};
@@ -37,6 +38,7 @@ pub fn check_terms(terms: &[TermInfo]) -> Vec<CheckTerm> {
         .iter()
         .map(|t| CheckTerm {
             source: t.source.clone(),
+            aliases: t.aliases.clone(),
             rendering: t.rendering.clone(),
             forbidden: t.forbidden.clone(),
             may_omit: t.may_omit,
@@ -67,16 +69,16 @@ pub fn compute(
             .collect::<Vec<_>>()
             .join("\n");
         let cand = pre.sources_in(&all);
-        let sources: Vec<&str> = cand.iter().map(|&i| terms[i].source.as_str()).collect();
-        let counts = cipher_text::matching::count_matches(&all, &sources);
-        let mut found: Vec<(usize, usize, u32)> = cand
-            .iter()
-            .zip(counts)
-            .filter(|(_, n)| *n > 0)
-            .map(|(&i, n)| (all.find(&terms[i].source).unwrap_or(0), i, n as u32))
-            .collect();
-        found.sort();
-        stats.in_source = found.into_iter().map(|(_, i, n)| (i, n)).collect();
+        let forms = SourceForms::new(cand.iter().map(|&i| terms[i].source_forms()));
+        let mut counts = vec![0; cand.len()];
+        let mut order = Vec::new();
+        for hit in forms.find(&all) {
+            if counts[hit.index] == 0 {
+                order.push(hit.index);
+            }
+            counts[hit.index] += 1;
+        }
+        stats.in_source = order.into_iter().map(|i| (cand[i], counts[i])).collect();
         return stats;
     }
     let texts: Vec<String> = chapter.translation.iter().map(|b| shown(&b.text)).collect();

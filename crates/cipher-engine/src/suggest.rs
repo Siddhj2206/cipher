@@ -109,7 +109,7 @@ fn rivals<'a>(expr: &'a str, terms: &'a [Term]) -> Vec<&'a str> {
         terms
             .iter()
             .filter(|t| t.status != TermStatus::Dismissed)
-            .map(|t| t.fields.source.as_str())
+            .flat_map(Term::source_forms)
             .filter(|s| s.len() > expr.len() && s.contains(expr)),
     );
     out
@@ -164,6 +164,13 @@ fn plan(book: &Book, selection: &Selection, scope: Scope) -> Result<Plan> {
         }
     };
     let unresolved = source_expr.is_none();
+    let active: Vec<_> = glossary
+        .terms
+        .iter()
+        .filter(|t| t.status != TermStatus::Dismissed)
+        .collect();
+    let known = term.and_then(|t| active.iter().position(|a| a.id == t.id));
+    let forms = matching::SourceForms::new(active.iter().map(|t| t.source_forms()));
     let rivals = source_expr
         .as_deref()
         .map(|e| rivals(e, &glossary.terms))
@@ -172,7 +179,10 @@ fn plan(book: &Book, selection: &Selection, scope: Scope) -> Result<Plan> {
         .into_iter()
         .filter_map(|(chapter, b, source)| {
             let exact = contains(&b.text);
-            let by_source = !rivals.is_empty() && names(&source, &rivals);
+            let by_source = match known {
+                Some(i) => forms.names_term(&source, i),
+                None => !rivals.is_empty() && names(&source, &rivals),
+            };
             (exact || by_source).then_some(Candidate {
                 chapter,
                 block: b.id,
@@ -457,14 +467,16 @@ pub(crate) fn run_batch(
         .map(|(_, s, _)| s.as_str())
         .collect::<Vec<_>>()
         .join("\n");
-    let sources: Vec<&str> = glossary
+    let active: Vec<_> = glossary
         .terms
         .iter()
-        .map(|t| t.fields.source.as_str())
+        .filter(|t| t.status != TermStatus::Dismissed)
         .collect();
-    let terms: String = matching::terms_in(&all_source, &sources)
+    let sources = matching::SourceForms::new(active.iter().map(|t| t.source_forms()));
+    let terms: String = sources
+        .terms_in(&all_source)
         .into_iter()
-        .map(|i| prompt::term_line(&glossary.terms[i]) + "\n")
+        .map(|i| prompt::term_line(active[i]) + "\n")
         .collect();
 
     let mut text = match (suggestion.kind, &suggestion.source_expr) {
@@ -478,17 +490,33 @@ pub(crate) fn run_batch(
                  not this name (an ordinary word, another person).\n",
                 q = suggestion.quote
             );
-            let longer: Vec<String> = glossary
-                .terms
+            let own = active.iter().find(|t| {
+                t.fields.rendering == suggestion.quote && t.source_forms().any(|s| s == expr)
+            });
+            let aliases: Vec<_> = own
+                .into_iter()
+                .flat_map(|t| t.source_forms())
+                .filter(|s| *s != expr)
+                .collect();
+            if !aliases.is_empty() {
+                t.push_str(&format!(
+                    "These are also source forms of the same name: {}.\n",
+                    aliases.join(", ")
+                ));
+            }
+            let longer: Vec<String> = active
                 .iter()
-                .filter(|t| {
-                    let s = t.fields.source.as_str();
-                    t.status != TermStatus::Dismissed
-                        && s.len() > expr.len()
-                        && s.contains(expr.as_str())
-                        && all_source.contains(s)
+                .filter(|term| own.is_none_or(|own| own.id != term.id))
+                .flat_map(|term| {
+                    term.source_forms()
+                        .filter(|s| {
+                            std::iter::once(expr.as_str())
+                                .chain(aliases.iter().copied())
+                                .any(|form| s.len() > form.len() && s.contains(form))
+                                && all_source.contains(s)
+                        })
+                        .map(|s| format!("{s} = {}", term.fields.rendering))
                 })
-                .map(|t| format!("{} = {}", t.fields.source, t.fields.rendering))
                 .collect();
             if !longer.is_empty() {
                 t.push_str(&format!(

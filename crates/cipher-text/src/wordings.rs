@@ -18,7 +18,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::checks::PairText;
-use crate::matching::{find, find_rendering};
+use crate::matching::{SourceForms, find_rendering};
 
 /// Wordings shown at most.
 pub const SHOWN: usize = 5;
@@ -58,18 +58,17 @@ pub struct Wording {
     pub other_term: Option<usize>,
 }
 
-/// One Term to look for: its source and rendering, and every Term's source and rendering
-/// (`sources[term]` is its own).
+/// One Term to look for, with all Terms' source forms and renderings for comparison.
 pub struct Query<'a> {
     pub term: usize,
-    pub sources: &'a [&'a str],
+    pub sources: &'a SourceForms<'a>,
     pub renderings: &'a [&'a str],
 }
 
 /// The evidence for `q.term` over a Book's Pairs.
 pub fn evidence(pairs: &[PairText], q: &Query) -> Evidence {
     let rendering = q.renderings[q.term];
-    let names = |text: &str| names_term(text, q.sources, q.term);
+    let names = |text: &str| q.sources.names_term(text, q.term);
     let mut out = Evidence::default();
     let mut naming = vec![false; pairs.len()];
     let mut missing: Vec<usize> = Vec::new();
@@ -195,7 +194,7 @@ pub fn evidence(pairs: &[PairText], q: &Query) -> Evidence {
         if let Some(t) = other {
             let named_there = sets[&k]
                 .iter()
-                .filter(|&&p| names_term(pairs[p].source, q.sources, t))
+                .filter(|&&p| q.sources.names_term(pairs[p].source, t))
                 .count();
             if named_there * 2 >= sets[&k].len() {
                 continue;
@@ -221,23 +220,6 @@ pub fn evidence(pairs: &[PairText], q: &Query) -> Evidence {
         .collect();
     out.wordings = shown;
     out
-}
-
-/// The source names Term `term` itself: longer sources containing its source take their
-/// matches away from it (마탑 inside 블레이버 마탑 is not 마탑).
-pub fn names_term(text: &str, sources: &[&str], term: usize) -> bool {
-    let source = sources[term];
-    if source.is_empty() || !text.contains(source) {
-        return false;
-    }
-    let mut rivals: Vec<&str> = vec![source];
-    rivals.extend(
-        sources
-            .iter()
-            .copied()
-            .filter(|s| s.len() > source.len() && s.contains(source)),
-    );
-    find(text, &rivals).iter().any(|m| m.index == 0)
 }
 
 /// Lowercase words, the last one stemmed.

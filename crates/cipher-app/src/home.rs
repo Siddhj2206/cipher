@@ -186,6 +186,7 @@ impl State {
         self.toast_undo = None;
         self.term_toast_undo = None;
         self.term_editor = None;
+        self.term_merge = None;
         self.cast_open = None;
         self.fix = Fix::new();
         self.draft = None;
@@ -226,6 +227,7 @@ impl State {
         self.toast_undo = None;
         self.term_toast_undo = None;
         self.term_editor = None;
+        self.term_merge = None;
         self.cast_open = None;
         self.fix = Fix::new();
         self.home = Some(Home::load(dir.as_deref()));

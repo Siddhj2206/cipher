@@ -159,6 +159,8 @@ These rules apply to Suggestions:
 
 Pending terms have a count filter and can be accepted or dismissed. Open any row to edit its source form, rendering and note inline. Changes affect future translations; renaming preserves the old rendering as forbidden wording for Drift. Each change offers Undo in its toast. Dismissed terms leave both chapter prompts and Drift counts.
 
+**Merge duplicate…** lets you find another Term and choose which entry to keep. The preview shows the retained source forms, preferred and Forbidden Renderings, and differing metadata. The survivor keeps its status and metadata; both source forms still name it, and the other rendering becomes forbidden unless it matches the preferred wording. Chapter text stays unchanged: use Drift to review old wording separately. Undo the whole merge from the toast or History.
+
 The Glossary as a page the Book fills in itself.
 - **Header:** "224 terms" and the drifting count, then a search field (rendering, source form or a forbidden wording) and a **Drifting only** filter, and labels over the columns (Term, Uses, Across the book).
 - **Order:** Terms drifting in the most Chapters first, then by use; a long Book has many Terms missed in one Chapter of hundreds, which sink below the real problems.

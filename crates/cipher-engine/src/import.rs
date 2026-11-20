@@ -237,7 +237,10 @@ pub fn realign_imported(book: &mut Book) -> cipher_book::Result<usize> {
         .glossary()?
         .terms
         .iter()
-        .map(|t| (t.fields.source.clone(), t.fields.rendering.clone()))
+        .flat_map(|t| {
+            t.source_forms()
+                .map(|source| (source.to_string(), t.fields.rendering.clone()))
+        })
         .collect();
     let anchors: Vec<Anchor> = anchors_owned
         .iter()

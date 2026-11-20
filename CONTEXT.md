@@ -41,6 +41,7 @@ A Glossary entry: a source expression (a name, place, title, or recurring phrase
 - a kind;
 - a gender, for characters;
 - a short note;
+- Other source forms of the same Term, kept as aliases when duplicate Terms are merged.
 - Forbidden Renderings.
 
 A Term covers every grammatical form of the expression, not just one spelling.

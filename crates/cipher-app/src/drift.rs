@@ -63,7 +63,9 @@ impl State {
         let t = &self.lib.terms[term];
         self.lib.suggestions.iter().find(|x| {
             x.state != SuggestionState::Done
-                && x.source_expr.as_deref() == Some(t.source.as_str())
+                && x.source_expr
+                    .as_deref()
+                    .is_some_and(|source| t.source_forms().any(|s| s == source))
                 && (x.kind == cipher_book::SuggestionKind::Drift || x.is_rename)
         })
     }
@@ -71,6 +73,7 @@ impl State {
     /// Opens or closes a Term's row on the Cast page.
     pub fn toggle_cast_term(&mut self, term: usize) {
         self.term_editor = None;
+        self.term_merge = None;
         self.cast_open = if self.cast_open == Some(term) {
             None
         } else {

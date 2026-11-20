@@ -70,11 +70,9 @@ pub struct Prefilter {
 
 impl Prefilter {
     pub fn new(terms: &[TermInfo]) -> Self {
-        let build = |pick: &dyn Fn(&TermInfo) -> String| {
-            let (pats, ids): (Vec<String>, Vec<usize>) = terms
-                .iter()
-                .enumerate()
-                .map(|(i, t)| (pick(t), i))
+        let build = |forms: Vec<(String, usize)>| {
+            let (pats, ids): (Vec<String>, Vec<usize>) = forms
+                .into_iter()
                 .filter(|(p, _)| !p.trim().is_empty())
                 .unzip();
             aho_corasick::AhoCorasick::new(&pats)
@@ -82,8 +80,20 @@ impl Prefilter {
                 .map(|ac| (ac, ids))
         };
         Prefilter {
-            sources: build(&|t| t.source.clone()),
-            renderings: build(&|t| fold(&t.rendering)),
+            sources: build(
+                terms
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(i, t)| t.source_forms().map(move |s| (s.to_owned(), i)))
+                    .collect(),
+            ),
+            renderings: build(
+                terms
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| (fold(&t.rendering), i))
+                    .collect(),
+            ),
         }
     }
 
@@ -122,8 +132,8 @@ impl SourceFinder {
         let mut forms = Vec::new();
         let mut term_of = Vec::new();
         for (i, t) in terms.iter().enumerate() {
-            if !t.source.trim().is_empty() {
-                forms.push(t.source.clone());
+            for form in t.source_forms().filter(|s| !s.trim().is_empty()) {
+                forms.push(form.to_owned());
                 term_of.push(i);
             }
         }

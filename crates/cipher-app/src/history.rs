@@ -19,6 +19,7 @@ impl State {
             return;
         }
         self.palette = None;
+        self.term_merge = None;
         self.screen = Screen::History;
         self.refresh_history(None);
     }
@@ -66,6 +67,9 @@ impl State {
         {
             self.toast = Some(if p.conflicts.iter().any(|c| c.entity == "job") {
                 "Not undone: this chapter has started work, saved progress or dependent jobs. Finish that work first.".into()
+            } else if p.revision.kind == cipher_book::RevisionKind::TermMerge {
+                "Not undone: later work changed this merge. Term merges must be undone as a whole."
+                    .into()
             } else {
                 "Not undone: later work changed these chapters. Structural changes must be undone as a whole.".into()
             });
@@ -86,6 +90,8 @@ impl State {
                         }
                         self.fix.picked = None;
                         self.term_card = None;
+                        self.cast_open = None;
+                        self.term_editor = None;
                         self.load_strip(self.lib.current());
                         if style_changed {
                             if self
@@ -139,6 +145,7 @@ pub fn entity_words(entity: &str, count: usize) -> String {
         "block" => "paragraph",
         "pair" => "alignment",
         "forbidden_rendering" => "forbidden rendering",
+        "term_alias" => "alternate source form",
         "style_rule" => "style rule",
         "form_of_address" => "form of address",
         "story_note" => "story note",

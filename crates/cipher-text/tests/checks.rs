@@ -6,6 +6,7 @@ use cipher_text::script::Script;
 fn term(source: &str, rendering: &str, forbidden: &[&str]) -> CheckTerm {
     CheckTerm {
         source: source.into(),
+        aliases: Vec::new(),
         rendering: rendering.into(),
         forbidden: forbidden.iter().map(|s| s.to_string()).collect(),
         may_omit: false,

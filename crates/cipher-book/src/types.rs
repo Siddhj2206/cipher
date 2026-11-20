@@ -93,6 +93,7 @@ text_enum!(RevisionKind {
     Review = "review",
     HandEdit = "hand_edit",
     Glossary = "glossary",
+    TermMerge = "term_merge",
     Suggestion = "suggestion",
     Notes = "notes",
     Undo = "undo",
@@ -224,14 +225,22 @@ pub struct TermFields {
     pub may_omit: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Term {
     pub id: TermId,
     pub fields: TermFields,
     pub status: TermStatus,
     pub first_chapter: Option<ChapterId>,
+    /// Other source forms of this same Term, sorted, excluding the primary form.
+    pub aliases: Vec<String>,
     /// Renderings that must not appear, sorted.
     pub forbidden: Vec<String>,
+}
+
+impl Term {
+    pub fn source_forms(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.fields.source.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

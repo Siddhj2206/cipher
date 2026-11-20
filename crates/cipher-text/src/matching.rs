@@ -101,6 +101,66 @@ pub struct Match {
     pub range: Range<usize>,
 }
 
+/// Alternate source forms grouped by Term, so matching one form counts for its owner.
+pub struct SourceForms<'a> {
+    forms: Vec<&'a str>,
+    owners: Vec<usize>,
+    terms: usize,
+}
+
+impl<'a> SourceForms<'a> {
+    pub fn new(groups: impl IntoIterator<Item = impl IntoIterator<Item = &'a str>>) -> Self {
+        let mut this = Self {
+            forms: Vec::new(),
+            owners: Vec::new(),
+            terms: 0,
+        };
+        for group in groups {
+            for form in group {
+                this.forms.push(form);
+                this.owners.push(this.terms);
+            }
+            this.terms += 1;
+        }
+        this
+    }
+
+    /// Precision hits with the Term index, not the individual source-form index.
+    pub fn find(&self, text: &str) -> impl Iterator<Item = Match> + '_ {
+        find(text, &self.forms).into_iter().map(|mut hit| {
+            hit.index = self.owners[hit.index];
+            hit
+        })
+    }
+
+    pub fn counts(&self, text: &str) -> Vec<usize> {
+        let mut counts = vec![0; self.terms];
+        for hit in self.find(text) {
+            counts[hit.index] += 1;
+        }
+        counts
+    }
+
+    pub fn names_term(&self, text: &str, term: usize) -> bool {
+        let start = self.owners.partition_point(|&i| i < term);
+        let end = self.owners.partition_point(|&i| i <= term);
+        self.forms[start..end]
+            .iter()
+            .any(|s| !s.is_empty() && text.contains(s))
+            && self.find(text).any(|hit| hit.index == term)
+    }
+
+    /// Recall hits, deduplicated by Term, for glossary prompts.
+    pub fn terms_in(&self, text: &str) -> Vec<usize> {
+        let mut terms: Vec<_> = terms_in(text, &self.forms)
+            .into_iter()
+            .map(|i| self.owners[i])
+            .collect();
+        terms.dedup();
+        terms
+    }
+}
+
 /// Recall matcher: indices of `sources` that occur anywhere in `text`.
 ///
 /// Plain substring search, case-insensitive for scripts with case, with no

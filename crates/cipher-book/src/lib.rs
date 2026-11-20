@@ -17,6 +17,7 @@ mod jobs;
 mod read;
 mod revision;
 mod schema;
+mod term_merge;
 mod types;
 
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 
 pub use change::Change;
+pub use term_merge::TermMerge;
 pub use types::*;
 
 #[derive(Debug, thiserror::Error)]

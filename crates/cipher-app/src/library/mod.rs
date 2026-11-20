@@ -37,6 +37,7 @@ use scan::SourceFinder;
 pub struct TermInfo {
     pub id: TermId,
     pub source: String,
+    pub aliases: Vec<String>,
     pub rendering: String,
     pub kind: Option<String>,
     pub gender: Option<String>,
@@ -46,6 +47,20 @@ pub struct TermInfo {
     pub forbidden: Vec<String>,
     /// May go unnamed in the Translation (`TermFields::may_omit`).
     pub may_omit: bool,
+}
+
+impl TermInfo {
+    pub fn source_forms(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.source.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
+
+    pub fn matches_query(&self, query: &str) -> bool {
+        query.is_empty()
+            || std::iter::once(self.rendering.as_str())
+                .chain(self.source_forms())
+                .chain(self.forbidden.iter().map(String::as_str))
+                .any(|s| s.to_lowercase().contains(query))
+    }
 }
 
 /// A row of the Contents list.
@@ -217,6 +232,7 @@ fn term_info(t: cipher_book::Term) -> TermInfo {
     TermInfo {
         id: t.id,
         source: t.fields.source,
+        aliases: t.aliases,
         rendering: t.fields.rendering,
         kind: t.fields.kind,
         gender: t.fields.gender,
@@ -675,7 +691,7 @@ impl Library {
         (0..self.terms.len())
             .filter(|&i| {
                 let t = &self.terms[i];
-                t.rendering.to_lowercase().contains(&q) || t.source.to_lowercase().contains(&q)
+                t.matches_query(&q)
             })
             .collect()
     }
