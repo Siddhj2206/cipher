@@ -14,6 +14,7 @@ mod home;
 mod keys;
 mod library;
 mod notes;
+mod notify;
 mod palette;
 mod prefs;
 mod scenes;
@@ -219,6 +220,7 @@ fn poll(s: &mut State, _t: f64, tx: &mut Tx) -> bool {
     let settled = s.settle_strip(tx);
     s.start_scan();
     let changed = s.drain(tx) || scrolled || settled;
+    s.flush_notifications();
     let now = tx.clock();
     let changed = s.settle_toast(now, tx) || changed;
     s.save_prefs();
@@ -257,6 +259,10 @@ fn main() {
     })
     .maximized(prefs.window.maximized && !headless)
     .on_close(|s: &mut State, _| s.on_close())
+    .on_focus(|s: &mut State, focused, _| {
+        s.window_focused = focused;
+        s.notifier.configure(focused, s.prefs.notify_when_done);
+    })
     .on_open_url(|s: &mut State, url: &str, _: &mut Tx| {
         if let Some(path) = book_arg(url) {
             s.open_from_desktop(std::path::Path::new(&path));

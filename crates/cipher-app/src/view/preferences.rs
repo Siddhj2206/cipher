@@ -318,6 +318,21 @@ fn general(s: &State, p: &Pal) -> El {
             p,
         ))
         .child(setting_row(
+            "Notify when translations finish",
+            "Only while Cipher is in the background.",
+            switch(s.prefs.notify_when_done, "set-notify", p)
+                .on_press(|s: &mut State| s.prefs.notify_when_done = !s.prefs.notify_when_done),
+            p,
+        ))
+        .child(setting_row(
+            "Show chapter names in notifications",
+            "Off by default to keep your reading private.",
+            switch(s.prefs.notify_show_chapters, "set-notify-chapters", p).on_press(
+                |s: &mut State| s.prefs.notify_show_chapters = !s.prefs.notify_show_chapters,
+            ),
+            p,
+        ))
+        .child(setting_row(
             "Books folder",
             &books,
             btn("Show", false, p)
