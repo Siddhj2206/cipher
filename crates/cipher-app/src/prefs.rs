@@ -131,6 +131,8 @@ pub struct Prefs {
     pub context_width: f32,
     /// Open the Book that was open when the app last closed, instead of the Shelf.
     pub reopen_last: bool,
+    pub notify_when_done: bool,
+    pub notify_show_chapters: bool,
     pub last_book: Option<PathBuf>,
     pub shelf_sort: ShelfSort,
     /// The welcome has been seen through (or skipped).
@@ -149,6 +151,8 @@ impl Default for Prefs {
             contents_width: Sidebar::Contents.default_width(),
             context_width: Sidebar::Context.default_width(),
             reopen_last: true,
+            notify_when_done: true,
+            notify_show_chapters: false,
             last_book: None,
             shelf_sort: ShelfSort::Recent,
             onboarded: false,
@@ -215,6 +219,10 @@ mod tests {
         assert_eq!(p.reading.size, 21.0);
         assert_eq!(p.reading.width, Reading::default().width);
         assert!(p.contents_open);
+        assert!(p.notify_when_done);
+        assert!(!p.notify_show_chapters);
+        assert!(Prefs::default().notify_when_done);
+        assert!(!Prefs::default().notify_show_chapters);
         assert_eq!(p.contents_width, Sidebar::Contents.default_width());
         assert_eq!(p.context_width, Sidebar::Context.default_width());
     }
@@ -225,6 +233,8 @@ mod tests {
         let path = dir.path().join("sub/prefs.json");
         let p = Prefs {
             appearance: Appearance::Light,
+            notify_when_done: false,
+            notify_show_chapters: true,
             contents_width: 318.0,
             context_width: 396.0,
             window: WindowState {

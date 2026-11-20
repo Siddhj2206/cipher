@@ -207,6 +207,9 @@ pub struct State {
     toast_seen: Option<(String, f64)>,
     pub fix: Fix,
     pub bg: Background,
+    pub window_focused: bool,
+    pub notifier: crate::notify::Notifier,
+    pub notification_sink: crate::notify::desktop::Desktop,
     /// The Shelf, while it shows instead of a Book. `lib` is then a blank Book.
     pub home: Option<Home>,
     /// The first-run welcome, over the Shelf.
@@ -292,6 +295,9 @@ impl State {
             toast_seen: None,
             fix: Fix::new(),
             bg: Background::new(),
+            window_focused: true,
+            notifier: crate::notify::Notifier::default(),
+            notification_sink: crate::notify::desktop::Desktop,
             home: None,
             draft: None,
             style: None,
