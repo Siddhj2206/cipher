@@ -191,6 +191,9 @@ pub struct State {
     pub term_card: Option<TermCard>,
     /// The Term whose row is open on the Cast page (an index into `lib.terms`).
     pub cast_open: Option<usize>,
+    pub cast_pending: bool,
+    pub term_editor: Option<crate::terms::TermEditor>,
+    pub term_toast_undo: Option<cipher_book::RevisionId>,
     /// The Cast page's search, over renderings, source forms and forbidden wordings.
     pub cast_search: TextEdit,
     /// The Cast page shows only drifting Terms.
@@ -284,6 +287,9 @@ impl State {
             unfolded: Vec::new(),
             term_card: None,
             cast_open: None,
+            cast_pending: false,
+            term_editor: None,
+            term_toast_undo: None,
             cast_search: TextEdit::new(""),
             cast_drifting: false,
             look: None,
@@ -464,6 +470,7 @@ impl State {
         } else {
             self.toast = Some("Drop a .cipher book, or a folder of chapters to import.".into());
             self.toast_undo = None;
+            self.term_toast_undo = None;
         }
     }
 
@@ -584,9 +591,22 @@ impl State {
         self.prefs_path = path;
     }
 
+    pub(crate) fn visible_term(&self) -> Option<usize> {
+        match self.screen {
+            Screen::Cast => self.cast_open,
+            Screen::Reading => self.term_card.map(|card| card.term),
+            _ => None,
+        }
+    }
+
     /// Light or dark, as chosen or as the desktop has it.
     /// Counts the open Book's Terms on another thread, once per load (`Library::scan`).
     pub fn start_scan(&mut self) {
+        if self.lib.scanned()
+            && let Some(term) = self.visible_term()
+        {
+            self.look_at(term);
+        }
         // Once the Book is counted, re-pair what an old import paired by position: once per
         // opened Book, after the counts, so they never wait on it.
         if self.lib.scanned()
@@ -780,11 +800,15 @@ impl State {
             self.toast_seen = Some((msg.clone(), t));
         }
         let since = self.toast_seen.as_ref().map_or(t, |x| x.1);
-        let life =
-            if self.toast_undo.is_some() { 10.0 } else { 5.0 } + msg.chars().count() as f64 / 25.0;
+        let life = if self.toast_undo.is_some() || self.term_toast_undo.is_some() {
+            10.0
+        } else {
+            5.0
+        } + msg.chars().count() as f64 / 25.0;
         if t - since >= life {
             self.toast = None;
             self.toast_undo = None;
+            self.term_toast_undo = None;
             self.toast_seen = None;
             true
         } else {
@@ -911,6 +935,10 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 
 /// Keys for what is on screen: a sheet, Settings, the Shelf or a Book.
 fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
+    if s.term_editor.is_some() && k.key == Key::Escape {
+        s.term_editor = None;
+        return true;
+    }
     if s.model_menu.is_some() && k.key == Key::Escape {
         s.model_menu = None;
         return true;
@@ -1045,6 +1073,7 @@ fn fix_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
             } else {
                 s.toast = None;
                 s.toast_undo = None;
+                s.term_toast_undo = None;
             }
         }
         _ => return false,

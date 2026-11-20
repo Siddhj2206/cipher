@@ -23,6 +23,7 @@ mod shelf;
 mod sidebars;
 mod state;
 mod style;
+mod terms;
 mod theme;
 mod view;
 mod welcome;

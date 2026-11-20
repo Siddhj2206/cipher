@@ -154,6 +154,7 @@ fn requests(s: &mut State) {
     s.accept_all(done);
     s.toast = None;
     s.toast_undo = None;
+    s.term_toast_undo = None;
     s.tab = Tab::Suggestions;
 }
 
@@ -393,6 +394,22 @@ fn history(s: &mut State, conflict: bool, undone: bool) {
     }
 }
 
+fn cast_pending(s: &mut State) {
+    let id = s.lib.terms[0].id;
+    s.lib
+        .book_mut()
+        .apply(cipher_book::Change::SetTermStatus {
+            term: id,
+            status: cipher_book::TermStatus::Pending,
+        })
+        .expect("seed pending term");
+    s.lib.reload().expect("reload");
+    let scan = s.lib.scan()().expect("scan scene");
+    s.lib.apply_scan(scan);
+    s.screen = Screen::Cast;
+    s.cast_open = s.lib.terms.iter().position(|t| t.id == id);
+}
+
 pub const SCENES: &[Scene] = &[
     ("history-metadata", |s| {
         s.prefs.appearance = crate::prefs::Appearance::Light;
@@ -436,6 +453,13 @@ pub const SCENES: &[Scene] = &[
     }),
     ("history-conflict", |s| history(s, true, false)),
     ("history-undone", |s| history(s, false, true)),
+    ("cast-pending", cast_pending),
+    ("cast-edit", |s| {
+        cast_pending(s);
+        let i = s.cast_open.expect("pending term");
+        s.edit_cast_term(i);
+        s.term_editor.as_mut().unwrap().rendering = TextEdit::new("Tower Keeper");
+    }),
     ("reading", |_| {}),
     ("focus", |s| {
         s.prefs.contents_open = false;

@@ -150,6 +150,16 @@ pub fn toast(s: &State, p: &Pal) -> Option<El> {
                 .on_press(move |s: &mut State| s.undo(id)),
         );
     }
+    if let Some(revision) = s.term_toast_undo {
+        r = r.child(
+            text("Undo")
+                .font(UI_MED)
+                .color(p.red)
+                .cursor(Cursor::Pointer)
+                .key("term-toast-undo")
+                .on_press(move |s: &mut State| s.undo_cast_term(revision)),
+        );
+    }
     r = r.child(
         el().size(18.0, 18.0)
             .center()
@@ -159,6 +169,7 @@ pub fn toast(s: &State, p: &Pal) -> Option<El> {
             .on_press(|s: &mut State| {
                 s.toast = None;
                 s.toast_undo = None;
+                s.term_toast_undo = None;
             }),
     );
     let lift = if s.fix.review.is_some() { 86.0 } else { 26.0 };

@@ -2,6 +2,56 @@
 
 use cipher_book::*;
 
+#[test]
+fn undo_term_status_and_rename() {
+    let mut f = new_book();
+    let applied = f
+        .book
+        .apply(Change::UpsertTerm {
+            id: None,
+            fields: TermFields {
+                source: "탑".into(),
+                rendering: "Tower".into(),
+                note: Some("A place".into()),
+                kind: Some("place".into()),
+                gender: Some("neutral".into()),
+                may_omit: true,
+            },
+            status: TermStatus::Pending,
+            first_chapter: None,
+        })
+        .unwrap();
+    let id = TermId(applied.created[0]);
+    let before = f.book.glossary().unwrap();
+    let revision = f
+        .book
+        .apply(Change::SetTermStatus {
+            term: id,
+            status: TermStatus::Accepted,
+        })
+        .unwrap()
+        .revision;
+    f.book.undo(revision, UndoMode::SkipConflicts).unwrap();
+    assert_eq!(f.book.glossary().unwrap(), before);
+    let revision = f
+        .book
+        .apply(Change::UpsertTerm {
+            id: Some(id),
+            fields: TermFields {
+                source: "new".into(),
+                rendering: "Spire".into(),
+                ..TermFields::default()
+            },
+            status: TermStatus::Accepted,
+            first_chapter: None,
+        })
+        .unwrap()
+        .revision;
+    assert_eq!(f.book.glossary().unwrap().terms[0].forbidden, ["Tower"]);
+    f.book.undo(revision, UndoMode::SkipConflicts).unwrap();
+    assert_eq!(f.book.glossary().unwrap(), before);
+}
+
 struct Fixture {
     _dir: tempfile::TempDir,
     book: Book,

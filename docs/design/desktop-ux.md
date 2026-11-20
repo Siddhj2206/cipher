@@ -157,6 +157,8 @@ These rules apply to Suggestions:
 
 ## Cast & terms (Ctrl+G)
 
+Pending terms have a count filter and can be accepted or dismissed. Open any row to edit its source form, rendering and note inline. Changes affect future translations; renaming preserves the old rendering as forbidden wording for Drift. Each change offers Undo in its toast. Dismissed terms leave both chapter prompts and Drift counts.
+
 The Glossary as a page the Book fills in itself.
 - **Header:** "224 terms" and the drifting count, then a search field (rendering, source form or a forbidden wording) and a **Drifting only** filter, and labels over the columns (Term, Uses, Across the book).
 - **Order:** Terms drifting in the most Chapters first, then by use; a long Book has many Terms missed in one Chapter of hundreds, which sink below the real problems.

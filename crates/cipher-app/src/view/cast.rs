@@ -93,6 +93,23 @@ pub fn cast(s: &State, p: &Pal) -> El {
                 .on_press(|s: &mut State| s.cast_drifting = !s.cast_drifting),
         );
     }
+    tools = tools.child(
+        text(format!("Pending · {}", lib.pending_terms()))
+            .key("cast-pending")
+            .font(SMALL)
+            .color(if s.cast_pending { p.red } else { p.ink2 })
+            .px(10.0)
+            .py(5.0)
+            .radius(6.0)
+            .border(1.0, if s.cast_pending { p.red } else { p.rule })
+            .fill(if s.cast_pending {
+                p.red_tint
+            } else {
+                rune::Color::TRANSPARENT
+            })
+            .cursor(Cursor::Pointer)
+            .on_press(|s: &mut State| s.cast_pending = !s.cast_pending),
+    );
     list = list.child(tools).child(
         row()
             .w_full()
@@ -109,6 +126,7 @@ pub fn cast(s: &State, p: &Pal) -> El {
         .cast_order()
         .into_iter()
         .filter(|&i| !s.cast_drifting || !lib.usage(i).drift_chapters.is_empty())
+        .filter(|&i| !s.cast_pending || lib.terms[i].provisional)
         .filter(|&i| {
             let t = &lib.terms[i];
             query.is_empty()
@@ -144,6 +162,16 @@ pub fn cast(s: &State, p: &Pal) -> El {
                     .fill(p.red_tint)
                     .key(format!("drift{i}")),
             );
+        } else if t.provisional {
+            right = right.child(
+                text("pending")
+                    .font(SMALL)
+                    .color(p.ink3)
+                    .px(8.0)
+                    .py(2.0)
+                    .radius(10.0)
+                    .fill(p.hover),
+            );
         } else if t.may_omit {
             right = right.child(text("may go unnamed").font(SMALL).color(p.ink4));
         }
@@ -152,7 +180,7 @@ pub fn cast(s: &State, p: &Pal) -> El {
             second.push(format!("never {}", t.forbidden.join(", ")));
         }
         if t.provisional {
-            second.push("provisional".into());
+            second.push("pending".into());
         }
         let line = row()
             .key(format!("term{i}"))
@@ -228,7 +256,15 @@ pub fn cast(s: &State, p: &Pal) -> El {
                 .color(p.ink3)
                 .wrap()
             });
-            item = item.child(col().w_full().pl(8.0).pr(8.0).pb(14.0).child(detail));
+            item = item.child(
+                col()
+                    .w_full()
+                    .pl(8.0)
+                    .pr(8.0)
+                    .pb(14.0)
+                    .child(super::term_editor::panel(s, i, p))
+                    .child(detail),
+            );
         }
         list = list.child(item);
     }

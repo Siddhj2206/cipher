@@ -794,6 +794,67 @@ fn drift_metadata_review_reloads_the_glossary_and_undo_restores_pending_items() 
 }
 
 #[test]
+fn term_editing_and_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let id = term(&mut b, LORD, "Lord", TermStatus::Pending);
+    let original = b.glossary().unwrap();
+    let mut lib = Library::open_quick(b.path()).unwrap();
+    assert_eq!(lib.pending_terms(), 1);
+    let (rev, label) = lib.set_term_status(0, TermStatus::Accepted).unwrap();
+    assert_eq!(label, "Accepted Lord");
+    assert!(!lib.terms[0].provisional);
+    lib.undo_term(rev).unwrap();
+    assert_eq!(lib.book().glossary().unwrap(), original);
+    let (rev, _) = lib.set_term_status(0, TermStatus::Dismissed).unwrap();
+    assert!(lib.terms.is_empty());
+    lib.undo_term(rev).unwrap();
+    assert_eq!(lib.terms[0].id, id);
+    assert_eq!(lib.book().glossary().unwrap(), original);
+    assert!(lib.edit_term(0, " ", "Lord", "").is_err());
+    assert!(lib.edit_term(0, LORD, " ", "").is_err());
+    assert!(lib.edit_term(99, LORD, "Lord", "").is_err());
+    assert!(lib.edit_term(0, LORD, " Lord ", " ").unwrap().is_none());
+    let (rev, label) = lib
+        .edit_term(0, " source ", " Keeper ", " note ")
+        .unwrap()
+        .unwrap();
+    assert_eq!(label, "Renamed Lord → Keeper");
+    assert_eq!(lib.terms[0].source, "source");
+    assert_eq!(lib.terms[0].note.as_deref(), Some("note"));
+    assert!(lib.terms[0].provisional);
+    assert_eq!(lib.terms[0].forbidden, ["Lord"]);
+    lib.undo_term(rev).unwrap();
+    assert_eq!(lib.book().glossary().unwrap(), original);
+    lib.set_term_status(0, TermStatus::Accepted).unwrap();
+    lib.book_mut()
+        .apply(Change::UpsertTerm {
+            id: Some(id),
+            fields: TermFields {
+                source: LORD.into(),
+                rendering: "Lord".into(),
+                kind: Some("title".into()),
+                gender: Some("male".into()),
+                may_omit: true,
+                note: Some("old note".into()),
+            },
+            status: TermStatus::Accepted,
+            first_chapter: None,
+        })
+        .unwrap();
+    lib.reload().unwrap();
+    let before = lib.book().glossary().unwrap();
+    let (rev, _) = lib.edit_term(0, LORD, "Keeper", " ").unwrap().unwrap();
+    assert!(!lib.terms[0].provisional);
+    assert_eq!(lib.terms[0].kind.as_deref(), Some("title"));
+    assert_eq!(lib.terms[0].gender.as_deref(), Some("male"));
+    assert!(lib.terms[0].may_omit);
+    assert_eq!(lib.terms[0].note, None);
+    lib.undo_term(rev).unwrap();
+    assert_eq!(lib.book().glossary().unwrap(), before);
+}
+
+#[test]
 fn counts_and_order_of_first_appearance() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);

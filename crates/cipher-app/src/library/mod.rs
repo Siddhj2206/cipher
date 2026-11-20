@@ -13,6 +13,7 @@ mod page;
 mod queue;
 mod scan;
 mod stats;
+mod terms;
 #[cfg(test)]
 mod tests;
 
