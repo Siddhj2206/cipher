@@ -143,7 +143,7 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Piece Q: Drift Keep stages persistent Glossary, Story Note and prose proposals, with explicit independent Review decisions, conflict checks and Revision-based Undo. Cast says "No drift flagged" rather than claiming uniformity. From now on Suggestions outside Drift Keep are unchanged.
 - [ ] Term editing (accept or dismiss pending Terms, notes, forms, merging duplicate Terms such as 포혈공 / 포혈공(怖血公)) and a Book notes page (Story Notes, Forms of Address).
 - [x] Chapter actions: Translate again, and Translate all N from here (2026-11-16).
-- [ ] Delete a Chapter.
+- [x] Delete a Chapter.
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
 - [ ] "Fetch models" from an API-key Endpoint's `/models`; several chapters at once (a multi-file pick, or a paste holding several numbered chapters).
 - [x] Sidebars that give way on narrow windows (2026-11-16).

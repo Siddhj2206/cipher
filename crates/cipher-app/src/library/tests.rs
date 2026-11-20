@@ -137,6 +137,91 @@ fn translate(book: &mut Book, ch: ChapterId, translation: &[&str], flag: Option<
 
 const LORD: &str = "마탑주";
 
+#[test]
+fn chapter_menu_blocks_cross_chapter_fix_jobs() {
+    use cipher_book::{NewSuggestion, Scope, SuggestionId, SuggestionKind, SuggestionState};
+
+    let (_dir, mut lib) = history_fixture();
+    let origin = lib.chapters[0].id;
+    let block = lib.book().chapter(origin).unwrap().translation[0].id;
+    let suggestion = SuggestionId(
+        lib.book_mut()
+            .apply(Change::AddSuggestion(NewSuggestion {
+                chapter: origin,
+                block,
+                quote: "opening".into(),
+                said: "Fix everywhere".into(),
+                scope: Scope::Everywhere,
+                is_rename: false,
+                source_expr: None,
+                state: SuggestionState::Working,
+                kind: SuggestionKind::Reader,
+                edits: vec![],
+            }))
+            .unwrap()
+            .created[0],
+    );
+    assert!(!lib.chapter_has_active_job(1));
+    let id = lib
+        .book_mut()
+        .enqueue(JobSpec {
+            kind: JobKind::SuggestBatch,
+            parent: None,
+            chapter: None,
+            suggestion: Some(suggestion),
+            input: None,
+        })
+        .unwrap();
+    assert!(lib.chapter_has_active_job(1));
+    assert!(lib.delete_chapter(1).is_err());
+    let mut job = lib.book().job(id).unwrap();
+    job.state = cipher_book::JobState::Failed;
+    lib.book_mut().save_job(&job).unwrap();
+    assert!(!lib.chapter_has_active_job(1));
+    lib.delete_chapter(1).unwrap();
+}
+
+#[test]
+fn delete_reopen_undo_chapter() {
+    let (_dir, mut lib) = history_fixture();
+    let original = lib.book().chapters().unwrap();
+    let index = 1;
+    lib.delete_chapter(index).unwrap();
+    assert_eq!(lib.chapters[index].id, original[index + 1].id);
+    let revision = lib.revisions().unwrap()[0].id;
+    let path = lib.book().path().to_owned();
+    drop(lib);
+    let mut lib = Library::open(&path).unwrap();
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        cipher_book::UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.book().chapters().unwrap(), original);
+    assert_eq!(lib.chapters.len(), original.len());
+    assert!(lib.chapters.iter().any(|c| c.id == original[index].id));
+}
+
+#[test]
+fn delete_last_chapters_and_undo_empty_library() {
+    let (_dir, mut lib) = history_fixture();
+    while !lib.chapters.is_empty() {
+        let index = lib.chapters.len() - 1;
+        assert!(!lib.chapter_has_active_job(index));
+        lib.delete_chapter(index).unwrap();
+        if index > 0 {
+            assert_eq!(lib.current(), index - 1);
+        }
+    }
+    assert!(lib.delete_chapter(0).is_err());
+    let revision = lib.revisions().unwrap()[0].id;
+    assert!(matches!(
+        lib.undo_revision(revision).unwrap(),
+        cipher_book::UndoOutcome::Undone { .. }
+    ));
+    assert_eq!(lib.chapters.len(), 1);
+    assert_eq!(lib.current(), 0);
+}
+
 fn history_fixture() -> (tempfile::TempDir, Library) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("quiet.cipher");
@@ -767,6 +852,41 @@ fn page_renders_blocks_and_finds_terms_on_both_sides() {
     assert_eq!(&s.text[s.terms[0].range.clone()], LORD);
     assert_eq!(lib.terms[s.terms[0].term].id, lord);
     assert_eq!(lib.first_use(s.terms[0].term), Some(t.id));
+}
+
+#[test]
+fn deleting_drifting_chapters_rebuilds_usage_and_cast_summary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let lord = term(&mut b, LORD, "Magic Tower Lord", TermStatus::Accepted);
+    b.apply(Change::AddForbidden {
+        term: lord,
+        rendering: "Tower Master".into(),
+    })
+    .unwrap();
+    for number in 1..=2 {
+        let c = chapter(&mut b, number, &["마탑주가 왔다."]);
+        translate(&mut b, c, &["The Tower Master came."], None);
+    }
+    let mut state = crate::state::State::new(Library::from_book(b).unwrap());
+    let li = state.lib.terms.iter().position(|t| t.id == lord).unwrap();
+    assert_eq!(state.lib.usage(li).drift_chapters, vec![0, 1]);
+    assert_eq!(state.drift_summary(li).forbidden_chapters, 2);
+
+    state.lib.delete_chapter(0).unwrap();
+    assert_eq!(state.lib.usage(li).drift_chapters, vec![0]);
+    assert_eq!(state.drift_summary(li).forbidden_chapters, 1);
+    assert_eq!(state.lib.drifting_terms(), 1);
+    assert_eq!(state.lib.usage(li).total, 0);
+
+    state.lib.delete_chapter(0).unwrap();
+    assert_eq!(*state.lib.usage(li), TermUsage::default());
+    assert_eq!(
+        state.drift_summary(li),
+        crate::drift::DriftSummary::default()
+    );
+    assert_eq!(state.lib.cast_order(), vec![li]);
+    assert!(state.lib.scanned);
 }
 
 #[test]

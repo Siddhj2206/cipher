@@ -37,6 +37,11 @@ An empty Book opens on the page for its first chapter (Adding chapters).
 
 ## History
 
+The Chapter context menu offers **Delete chapter…** when it has no active jobs.
+Confirmation names the Chapter and points to History (Ctrl+H), where deletion can
+be undone as a whole. After deletion the next Chapter opens, or the previous one
+when deleting the last Chapter.
+
 Open History beside Style in Contents, with Ctrl+H, or the palette's “History — Undo translations, reviews and edits”. It reads the latest 200 Revisions from the Book, newest first, including work from earlier sessions. Each row shows its label, kind, age and a greyed “Undone” marker. Up/Down selects; Tab and Enter reach and activate actions; Esc returns to reading.
 
 The selected Revision previews affected Chapters (links back to reading), change counts in plain words and rows changed since, grouped by Chapter. Translation, added Chapter, Import (including re-pair), and Undo Revisions are all-or-nothing: conflicts disable Undo and explain why. Reviews, Hand Edits, Glossary, Suggestions and Notes offer “Undo what's unchanged” when needed. Undo rechecks conflicts transactionally, reports its result in a toast and refreshes both history and the Book's reading data. An Undo Revision can itself be undone to redo.

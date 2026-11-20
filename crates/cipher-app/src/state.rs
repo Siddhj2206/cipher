@@ -232,6 +232,7 @@ pub struct State {
     pub model_menu: Option<(Vec<cipher_llm::Endpoint>, Option<String>)>,
     /// A Chapter's right-click menu: the Chapter and where the pointer was.
     pub chapter_menu: Option<(usize, f32, f32)>,
+    pub chapter_delete_confirm: bool,
     /// Files are being dragged over the window.
     pub drop_hover: bool,
     /// The Library load whose scan is running (`Library::generation`).
@@ -308,6 +309,7 @@ impl State {
             shortcuts_open: false,
             type_open: false,
             chapter_menu: None,
+            chapter_delete_confirm: false,
             model_menu: None,
             drop_hover: false,
             scanning: 0,
@@ -328,6 +330,9 @@ impl State {
         };
         let at = state.lib.current();
         state.load_strip(at);
+        if state.lib.is_saved() && state.lib.chapters.is_empty() {
+            state.open_draft("");
+        }
         state
     }
 
@@ -344,6 +349,28 @@ impl State {
             self.fail(e);
         }
         self.pending_scroll = (!self.strip.is_empty()).then(|| (format!("sec{at}"), 0.0));
+    }
+
+    pub fn delete_chapter(&mut self, index: usize) {
+        let Some(chapter) = self.lib.chapters.get(index) else {
+            return;
+        };
+        let number = chapter.number;
+        self.chapter_menu = None;
+        self.chapter_delete_confirm = false;
+        self.toast_undo = None;
+        self.toast = Some(match self.lib.delete_chapter(index) {
+            Ok(()) => {
+                self.term_card = None;
+                self.fix.picked = None;
+                self.load_strip(self.lib.current());
+                if self.lib.chapters.is_empty() {
+                    self.open_draft("");
+                }
+                format!("Deleted Chapter {number}. Undo from History (Ctrl+H).")
+            }
+            Err(e) => format!("Could not delete chapter: {e}"),
+        });
     }
 
     /// Reading has moved into Chapter `at` (it crosses the reading line): it becomes current,
@@ -890,6 +917,7 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.chapter_menu.is_some() && k.key == Key::Escape {
         s.chapter_menu = None;
+        s.chapter_delete_confirm = false;
         return true;
     }
     if s.type_open && k.key == Key::Escape {
@@ -906,7 +934,12 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     if s.screen == Screen::Notes {
         match &k.key {
             Key::Command('s') => s.save_notes(),
-            Key::Escape => s.screen = Screen::Reading,
+            Key::Escape => {
+                s.screen = Screen::Reading;
+                if s.lib.chapters.is_empty() {
+                    s.open_draft("");
+                }
+            }
             _ => return false,
         }
         return true;
@@ -928,6 +961,7 @@ fn screen_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     }
     if s.screen == Screen::Draft && s.draft.is_some() {
         match &k.key {
+            Key::Command('h') if s.lib.chapters.is_empty() => s.open_history(),
             Key::Enter if k.mods.cmd => s.add_draft(tx),
             Key::Escape => s.leave_draft(tx, false),
             _ => return false,

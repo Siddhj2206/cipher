@@ -19,6 +19,75 @@ pub fn undo_mode(revision: &RevisionSummary) -> UndoMode {
 }
 
 impl Library {
+    pub fn chapter_has_active_job(&self, index: usize) -> bool {
+        let Some(chapter) = self.chapters.get(index) else {
+            return true;
+        };
+        self.book.chapter_has_active_job(chapter.id).unwrap_or(true)
+    }
+
+    pub fn delete_chapter(&mut self, index: usize) -> Result<()> {
+        let chapter = self
+            .chapters
+            .get(index)
+            .ok_or_else(|| cipher_book::Error::Invalid("No chapter selected".into()))?
+            .id;
+        self.book
+            .apply(cipher_book::Change::DeleteChapter { chapter })?;
+        self.rebuild_after_history(None, index)?;
+        self.refresh_suggestions()?;
+        Ok(())
+    }
+
+    fn rebuild_after_history(
+        &mut self,
+        current: Option<cipher_book::ChapterId>,
+        index: usize,
+    ) -> Result<()> {
+        self.chapters = self
+            .book
+            .chapters()?
+            .into_iter()
+            .enumerate()
+            .map(|(i, c)| super::ChapterRow {
+                id: c.id,
+                title: c.title,
+                number: c.number.unwrap_or(i as i64 + 1),
+                state: c.state,
+                outdated: c.outdated,
+                opening: String::new(),
+                failure: None,
+                queue_place: None,
+                pending_edits: 0,
+                made_by: None,
+            })
+            .collect();
+        self.near.clear();
+        self.page = super::Page::default();
+        self.stats = vec![super::ChapterStats::default(); self.chapters.len()];
+        self.generation = super::GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.terms = self
+            .book
+            .glossary()?
+            .terms
+            .into_iter()
+            .filter(|t| t.status != cipher_book::TermStatus::Dismissed)
+            .map(super::term_info)
+            .collect();
+        self.check = super::stats::check_terms(&self.terms);
+        self.finder = super::SourceFinder::new(&self.terms);
+        self.pre = super::scan::Prefilter::new(&self.terms);
+        self.scanned = self.chapters.is_empty();
+        self.refresh_queue()?;
+        if !self.chapters.is_empty() {
+            let at = current
+                .and_then(|id| self.chapters.iter().position(|c| c.id == id))
+                .unwrap_or(index.min(self.chapters.len() - 1));
+            self.open_chapter(at)?;
+        }
+        self.derive_usage();
+        Ok(())
+    }
     pub fn revisions(&self) -> Result<Vec<RevisionSummary>> {
         self.book.revisions(200)
     }
@@ -38,48 +107,7 @@ impl Library {
                 .iter()
                 .any(|(entity, _)| matches!(*entity, "chapter" | "term" | "forbidden_rendering"));
             if rebuild {
-                self.chapters = self
-                    .book
-                    .chapters()?
-                    .into_iter()
-                    .enumerate()
-                    .map(|(i, c)| super::ChapterRow {
-                        id: c.id,
-                        number: c.number.unwrap_or(i as i64 + 1),
-                        title: c.title,
-                        state: c.state,
-                        outdated: c.outdated,
-                        opening: String::new(),
-                        failure: None,
-                        queue_place: None,
-                        pending_edits: 0,
-                        made_by: None,
-                    })
-                    .collect();
-                self.near.clear();
-                self.page = super::Page::default();
-                self.stats = vec![super::ChapterStats::default(); self.chapters.len()];
-                self.generation =
-                    super::GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                self.terms = self
-                    .book
-                    .glossary()?
-                    .terms
-                    .into_iter()
-                    .filter(|t| t.status != cipher_book::TermStatus::Dismissed)
-                    .map(super::term_info)
-                    .collect();
-                self.check = super::stats::check_terms(&self.terms);
-                self.finder = super::SourceFinder::new(&self.terms);
-                self.pre = super::scan::Prefilter::new(&self.terms);
-                self.scanned = self.chapters.is_empty();
-                self.refresh_queue()?;
-                if !self.chapters.is_empty() {
-                    let at = current
-                        .and_then(|id| self.chapters.iter().position(|c| c.id == id))
-                        .unwrap_or(index.min(self.chapters.len() - 1));
-                    self.open_chapter(at)?;
-                }
+                self.rebuild_after_history(current, index)?;
             } else {
                 let affected: Vec<_> = preview
                     .chapters

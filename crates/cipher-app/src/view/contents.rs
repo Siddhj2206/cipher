@@ -114,6 +114,7 @@ fn chapter_row(s: &State, i: usize, p: &Pal) -> El {
         })
         .on_secondary_press(move |s: &mut State, at: rune::PointerPress, _| {
             if let Some(i) = index(s) {
+                s.chapter_delete_confirm = false;
                 s.chapter_menu = Some((i, at.x, at.y))
             }
         })
@@ -437,6 +438,57 @@ pub fn scrubber(s: &State, p: &Pal) -> El {
 pub fn chapter_menu(s: &State, p: &Pal) -> Option<El> {
     let (i, x, y) = s.chapter_menu?;
     let ch = s.lib.chapters.get(i)?;
+    let number = ch.number;
+    if s.chapter_delete_confirm {
+        let name = ch.title.as_deref().filter(|t| !t.is_empty()).map_or_else(
+            || format!("Chapter {number}"),
+            |title| format!("Chapter {number}: {title}"),
+        );
+        return Some(
+            super::widgets::card(p)
+                .key("chapter-delete-confirm")
+                .w(340.0)
+                .padding(16.0)
+                .child(
+                    col()
+                        .gap(12.0)
+                        .child(text(format!("Delete {name}?")).font(UI).color(p.ink).wrap())
+                        .child(
+                            text("You can undo this from History (Ctrl+H).")
+                                .font(SMALL)
+                                .color(p.ink2)
+                                .wrap(),
+                        )
+                        .child(
+                            row()
+                                .gap(12.0)
+                                .child(
+                                    text("Cancel")
+                                        .font(UI)
+                                        .color(p.ink)
+                                        .cursor(Cursor::Pointer)
+                                        .on_press(|s: &mut State| {
+                                            s.chapter_menu = None;
+                                            s.chapter_delete_confirm = false;
+                                        }),
+                                )
+                                .child(
+                                    text("Delete chapter")
+                                        .key("cm-delete-confirm")
+                                        .font(UI)
+                                        .color(p.red)
+                                        .cursor(Cursor::Pointer)
+                                        .on_press(move |s: &mut State| s.delete_chapter(i)),
+                                ),
+                        ),
+                )
+                .pin(Some(x / s.prefs.zoom), Some(y / s.prefs.zoom), None, None)
+                .modal(true, |s: &mut State| {
+                    s.chapter_menu = None;
+                    s.chapter_delete_confirm = false;
+                }),
+        );
+    }
     let item = |label: &str, key: &str| {
         text(label.to_string())
             .key(key.to_string())
@@ -503,6 +555,13 @@ pub fn chapter_menu(s: &State, p: &Pal) -> Option<El> {
             }))
         }
         _ => {}
+    }
+    if !s.lib.chapter_has_active_job(i) {
+        menu = menu.child(
+            item("Delete chapter…", "cm-delete")
+                .color(p.red)
+                .on_press(|s: &mut State| s.chapter_delete_confirm = true),
+        );
     }
     Some(
         menu.pin(Some(x / s.prefs.zoom), Some(y / s.prefs.zoom), None, None)

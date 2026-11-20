@@ -13,7 +13,9 @@ pub struct History {
 
 impl State {
     pub fn open_history(&mut self) {
-        if self.screen == Screen::Draft || self.fix.review.is_some() {
+        if (self.screen == Screen::Draft && !self.lib.chapters.is_empty())
+            || self.fix.review.is_some()
+        {
             return;
         }
         self.palette = None;
@@ -150,7 +152,12 @@ pub fn entity_words(entity: &str, count: usize) -> String {
 pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
     match k.key {
         Key::Enter => s.undo_history(),
-        Key::Escape => s.screen = Screen::Reading,
+        Key::Escape => {
+            s.screen = Screen::Reading;
+            if s.lib.chapters.is_empty() {
+                s.open_draft("");
+            }
+        }
         Key::Up | Key::Down if !s.history.revisions.is_empty() => {
             let at = s.history.selected;
             let next = if k.key == Key::Up {
@@ -169,6 +176,63 @@ pub fn on_key(s: &mut State, k: &KeyEvent, tx: &mut Tx) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleting_final_chapter_renders_empty_book_and_history_undo_restores_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quiet.cipher");
+        cipher_engine::import(
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures/the-quiet-tower"),
+            &path,
+        )
+        .unwrap();
+        let state = State::new(crate::library::Library::open(&path).unwrap());
+        let mut runtime = rune::Runtime::new(
+            state,
+            crate::view::view,
+            (1280.0, 900.0),
+            rune::Env::new(false, 1.0),
+        );
+        runtime.on_key = Some(crate::state::on_key);
+        while !runtime.state.lib.chapters.is_empty() {
+            runtime
+                .state
+                .delete_chapter(runtime.state.lib.chapters.len() - 1);
+            runtime.invalidate();
+            runtime.frame(1.0 / 60.0);
+        }
+        assert_eq!(runtime.state.screen, Screen::Draft);
+        assert!(runtime.state.draft.as_ref().unwrap().text.text.is_empty());
+        assert!(runtime.state.strip.is_empty());
+        assert!(
+            runtime
+                .elements()
+                .iter()
+                .any(|e| e.key.as_deref() == Some("draft-text"))
+        );
+        // Reading can also be reached from History or Contents in an empty Book.
+        runtime.state.screen = Screen::Reading;
+        runtime.invalidate();
+        runtime.frame(1.0 / 60.0);
+        runtime.state.screen = Screen::Draft;
+        runtime.key(KeyEvent {
+            key: Key::Command('h'),
+            mods: Default::default(),
+        });
+        runtime.invalidate();
+        runtime.frame(1.0 / 60.0);
+        assert_eq!(runtime.state.screen, Screen::History);
+        runtime.state.undo_history();
+        runtime.invalidate();
+        runtime.frame(1.0 / 60.0);
+        assert_eq!(runtime.state.lib.chapters.len(), 1);
+        assert_eq!(runtime.state.strip, vec![0]);
+        runtime.state.screen = Screen::Reading;
+        runtime.invalidate();
+        runtime.frame(1.0 / 60.0);
+        assert!(!runtime.state.lib.page().translation.is_empty());
+    }
 
     #[test]
     fn enter_undoes_the_selected_revision_and_explains_disabled_actions() {

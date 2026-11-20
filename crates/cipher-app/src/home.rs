@@ -487,6 +487,73 @@ mod tests {
     use crate::state::Section;
 
     #[test]
+    fn empty_file_books_open_on_the_new_chapter_page_through_every_entry_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("empty.cipher");
+        drop(
+            cipher_book::Book::create(
+                &path,
+                cipher_book::BookMeta {
+                    title: "Empty".into(),
+                    source_lang: "ko".into(),
+                    target_lang: "en".into(),
+                },
+            )
+            .unwrap(),
+        );
+        let check = |state: State| {
+            assert!(state.home.is_none());
+            assert!(state.lib.chapters.is_empty());
+            assert!(state.strip.is_empty());
+            assert_eq!(state.screen, Screen::Draft);
+            assert!(state.draft.as_ref().unwrap().text.text.is_empty());
+            let mut runtime = rune::Runtime::new(
+                state,
+                crate::view::view,
+                (1280.0, 900.0),
+                rune::Env::new(false, 1.0),
+            );
+            runtime.frame(1.0 / 60.0);
+            assert!(
+                runtime
+                    .elements()
+                    .iter()
+                    .any(|e| e.key.as_deref() == Some("draft-text"))
+            );
+            assert!(
+                !runtime
+                    .elements()
+                    .iter()
+                    .any(|e| e.text.as_deref() == Some("Chapter 0"))
+            );
+        };
+        for deleted in [false, true] {
+            if deleted {
+                let mut book = cipher_book::Book::open(&path).unwrap();
+                let chapter = book
+                    .apply(cipher_book::Change::AddChapter {
+                        number: Some(1),
+                        title: None,
+                        source: vec!["A chapter".into()],
+                    })
+                    .unwrap()
+                    .created[0];
+                book.apply(cipher_book::Change::DeleteChapter {
+                    chapter: cipher_book::ChapterId(chapter),
+                })
+                .unwrap();
+            }
+            check(State::new(Library::open_quick(&path).unwrap()));
+            for open in [State::reopen, State::open_book, State::open_from_desktop] {
+                let mut state = State::new(Library::blank());
+                state.home = Some(Home::load(Some(dir.path())));
+                open(&mut state, &path);
+                check(state);
+            }
+        }
+    }
+
+    #[test]
     fn show_in_files_reports_errors_at_the_entry_point() {
         let scratch = tempfile::tempdir().unwrap();
         let path = scratch.path().join("Missing Book é.cipher");
