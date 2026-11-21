@@ -213,6 +213,11 @@ fn book_notes(s: &mut State) {
 /// What a reader would copy from a web novel site: a heading, then paragraphs.
 const PASTED: &str = "321화\n\n그날 밤, 탑 위에서 바람이 불었다.\n\n테실리드는 조용히 고개를 들었다.\n\n\"이제 시작이군.\"\n\n마탑주의 목소리가 멀리서 들려왔다.";
 
+fn intake_issues(s: &mut State) {
+    let existing = s.lib.chapters.first().map_or(1, |c| c.number);
+    s.open_draft(&format!("321화\n\nThe wind rose above the tower.\n\n322화\n\nThe keeper opened the gate.\n\n321화\n\nA second copy of the chapter.\n\n{existing}화\n\nA chapter already in the book."));
+}
+
 /// Adds the pasted Chapter (queued) and opens it.
 fn add_pasted(s: &mut State) -> usize {
     let intake = s.lib.intake(PASTED).expect("the pasted text is a Chapter");
@@ -555,6 +560,36 @@ pub const SCENES: &[Scene] = &[
     ("intake", |s| {
         at_227(s);
         s.open_draft(PASTED);
+    }),
+    ("intake-batch", |s| {
+        s.open_draft("321화\n\nThe wind rose above the tower.\n\n322화\n\nThe keeper opened the gate.\n\n323화\n\nA bell rang in the distance.");
+    }),
+    ("intake-issues", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        intake_issues(s);
+    }),
+    ("dark-intake-issues", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Dark;
+        intake_issues(s);
+    }),
+    ("intake-files", |s| {
+        s.prefs.appearance = crate::prefs::Appearance::Light;
+        s.open_draft("");
+        let d = s.draft.as_mut().expect("draft");
+        d.files = vec![
+            (
+                "chapter-323.txt".into(),
+                "323화\n\nA bell rang in the distance.".into(),
+            ),
+            (
+                "chapter-321.txt".into(),
+                "321화\n\nThe wind rose above the tower.".into(),
+            ),
+            (
+                "tower-notes.txt".into(),
+                "The keeper opened the gate.".into(),
+            ),
+        ];
     }),
     ("dark-intake", |s| {
         s.prefs.appearance = crate::prefs::Appearance::Dark;

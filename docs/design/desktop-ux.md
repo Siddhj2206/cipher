@@ -203,6 +203,10 @@ The page is set like a chapter's opening page:
 
 Adding inserts the chapter in number order, queues it and opens it where it landed. Esc goes back to reading and keeps the draft for later; pasting while a draft exists adds to it. When the clipboard already holds a chapter, New chapter starts the page with it.
 
+A paste with two or more numbered heading Blocks opens an ordered **NEW CHAPTERS** preview. Text before the first heading becomes its own part. Each row shows its real number, title or opening line, paragraph count and source file, when present. Unnumbered parts stay in pick order at the end, with explicit next-free numbers and an amber note. Numbers already in the Book and repeated numbers within the batch have red notes and are skipped by default; the first occurrence in the batch is kept unless already in the Book. Every row has a Skip/Include action, kept until the source text changes.
+
+Open a text file… still fills the page from one file. **Add another file…** collects more files into the same preview, splitting each file by its numbered headings. This uses repeated native single-file dialogs because Rune's public file dialog API does not support multi-selection; its Linux portal parent-window handling is private. **Add N chapters** (Ctrl+Enter) adds included rows with their previewed numbers, queues them together in Book order after existing jobs, and opens the first added chapter. With no included rows it is faint and does nothing. The no-model card and single-chapter page stay unchanged.
+
 ![A pasted chapter](img/light-new-chapter-pasted.png)
 
 ## Palette (Ctrl+K)

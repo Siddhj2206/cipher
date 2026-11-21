@@ -148,7 +148,8 @@ Asked by the user (2026-11-15): "a proper desktop app … how it auto syncs to d
 - [x] Chapter actions: Translate again, and Translate all N from here (2026-11-16).
 - [x] Delete a Chapter.
 - [x] A signed-in plan's models as choices in the form (2026-11-16).
-- [ ] "Fetch models" from an API-key Endpoint's `/models`; several chapters at once (a multi-file pick, or a paste holding several numbered chapters).
+- [ ] "Fetch models" from an API-key Endpoint's `/models`.
+- [x] Several chapters at once: numbered multi-chapter paste or repeated file picks, with ordered preview, conflict notes and per-chapter Include/Skip.
 - [x] Sidebars that give way on narrow windows (2026-11-16).
 - [x] Resizable, remembered sidebar widths.
 - [x] A History panel: persistent Revisions with dry-run previews, chapter conflicts and Undo, including re-translations and re-pairs (Ctrl+H).

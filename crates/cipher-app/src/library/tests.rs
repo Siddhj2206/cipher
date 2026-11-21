@@ -1365,6 +1365,771 @@ fn an_untranslated_chapter_can_be_queued_and_a_failed_one_retried() {
 }
 
 #[test]
+fn batch_splitting_preserves_single_reading_and_tracks_earlier_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 2, &["Already here."]);
+    let lib = Library::from_book(b).unwrap();
+    assert!(lib.intakes(" \n\n ").is_empty());
+    for text in ["Some prose.\n\nMore prose.", "3화\n\nA chapter."] {
+        assert_eq!(lib.intakes(text), vec![lib.intake(text).unwrap()]);
+    }
+    let parts = lib.intakes("Preamble.\n\n4화\n\nFour.\n\n3화\n\nThree.\n\n4화\n\nAnother four.");
+    assert_eq!(
+        parts.iter().map(|p| p.number).collect::<Vec<_>>(),
+        [None, Some(4), Some(3), Some(4)]
+    );
+    assert_eq!(parts[0].blocks, ["Preamble."]);
+    assert_eq!(parts[1].after, Some(2));
+    assert_eq!(parts[3].after, Some(3));
+    assert!(parts[3].exists);
+    assert!(!parts[1].exists);
+}
+
+#[test]
+fn batch_plan_orders_numbers_marks_conflicts_and_assigns_unnumbered_parts() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 10, &["Existing."]);
+    let lib = Library::from_book(b).unwrap();
+    assert!(lib.intake_plan(&[], "").is_empty());
+    let files = vec![
+        (
+            "first.txt".into(),
+            "12화\n\nFirst twelve.\n\n11화\n\nEleven.".into(),
+        ),
+        ("second.txt".into(), "Unnumbered file.".into()),
+    ];
+    let plan = lib.intake_plan(
+        &files,
+        "Preamble.\n\n12화\n\nDuplicate.\n\n10화\n\nIn book.",
+    );
+    assert_eq!(
+        plan.iter()
+            .map(|p| p.intake.number.unwrap())
+            .collect::<Vec<_>>(),
+        [10, 11, 12, 12, 13, 14]
+    );
+    assert_eq!(
+        plan.iter().map(|p| p.issue).collect::<Vec<_>>(),
+        [
+            Some(IntakeIssue::InBook),
+            None,
+            None,
+            Some(IntakeIssue::Duplicate),
+            Some(IntakeIssue::NoNumber),
+            Some(IntakeIssue::NoNumber)
+        ]
+    );
+    assert_eq!(
+        plan.iter().map(|p| p.include).collect::<Vec<_>>(),
+        [false, true, true, false, true, true]
+    );
+    assert_eq!(plan[2].source.as_deref(), Some("first.txt"));
+    assert_eq!(plan[4].source.as_deref(), Some("second.txt"));
+    assert_eq!(plan[4].intake.after, Some(12));
+    assert_eq!(plan[5].intake.after, Some(13));
+    assert_ne!(plan[2].key, plan[3].key);
+}
+
+#[test]
+fn batch_commit_queues_selected_chapters_in_book_order_after_existing_jobs() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    let existing = chapter(&mut b, 20, &["Existing."]);
+    cipher_engine::translate(&mut b, &[existing]).unwrap();
+    let mut lib = Library::from_book(b).unwrap();
+    let mut plan = lib.intake_plan(
+        &[],
+        "23화\n\nTwenty-three.\n\n21화\n\nTwenty-one.\n\n21화\n\nDuplicate.\n\n22화\n\nSkip me.",
+    );
+    plan.iter_mut()
+        .find(|p| p.intake.number == Some(22))
+        .unwrap()
+        .include = false;
+    assert_eq!(lib.add_intakes(&plan).unwrap(), Some(1));
+    assert_eq!(
+        lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+        [20, 21, 23]
+    );
+    assert_eq!(
+        lib.chapters
+            .iter()
+            .map(|c| c.queue_place)
+            .collect::<Vec<_>>(),
+        [Some(1), Some(2), Some(3)]
+    );
+    assert_eq!(
+        lib.book.chapter(lib.chapters[1].id).unwrap().source[0].text,
+        "Twenty-one."
+    );
+    let jobs = lib.book.jobs(false).unwrap();
+    assert_eq!(
+        jobs.iter()
+            .filter(|j| j.kind == JobKind::Translate)
+            .map(|j| j.chapter.unwrap())
+            .collect::<Vec<_>>(),
+        lib.chapters.iter().map(|c| c.id).collect::<Vec<_>>()
+    );
+    for part in &mut plan {
+        part.include = false;
+    }
+    assert_eq!(lib.add_intakes(&plan).unwrap(), None);
+    assert_eq!(lib.chapters.len(), 3);
+}
+
+#[test]
+fn batch_commit_rejects_empty_parts_before_adding_anything_and_allows_opted_in_duplicates() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    let plan = lib.intake_plan(&[], "1화\n\nOne.\n\n2화");
+    assert!(lib.add_intakes(&plan).is_err());
+    assert!(lib.book.chapters().unwrap().is_empty());
+    let mut plan = lib.intake_plan(&[], "1화\n\nOne.\n\n1화\n\nAnother one.");
+    plan[1].include = true;
+    lib.add_intakes(&plan).unwrap();
+    assert_eq!(
+        lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+        [1, 1]
+    );
+}
+
+#[test]
+fn picking_more_files_preserves_the_first_file_and_any_later_paste() {
+    let mut draft = crate::draft::Draft {
+        text: rune::TextEdit::new("Old draft."),
+        back: None,
+        files: Vec::new(),
+        file_name: None,
+        included: Default::default(),
+        added: Default::default(),
+        numbers: Default::default(),
+    };
+    draft.pick_file("one.txt".into(), "1화\n\nOne.".into(), false);
+    assert_eq!(draft.text.text, "1화\n\nOne.");
+    assert!(draft.files.is_empty());
+    draft.included.insert((0, 0), false);
+    draft.pick_file("two.txt".into(), "2화\n\nTwo.".into(), true);
+    assert_eq!(draft.files.len(), 2);
+    assert_eq!(draft.files[0].0, "one.txt");
+    assert!(draft.text.text.is_empty());
+    assert_eq!(draft.included.get(&(0, 0)), Some(&false));
+    draft.text = rune::TextEdit::new("3화\n\nPasted three.");
+    draft.pick_file("four.txt".into(), "4화\n\nFour.".into(), true);
+    assert_eq!(draft.files.len(), 3);
+    assert_eq!(draft.text.text, "3화\n\nPasted three.");
+    draft.pick_file("empty.txt".into(), "".into(), false);
+    assert!(draft.files.is_empty());
+    assert!(draft.text.text.is_empty());
+}
+
+#[test]
+fn partial_batch_failure_queues_created_chapters_in_book_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut lib = Library::from_book(book(&dir)).unwrap();
+    let existing = lib.intake("10화\n\nAlready queued.").unwrap();
+    lib.add_chapter(&existing).unwrap();
+    let mut plan = lib.intake_plan(&[], "1화\n\nOne.\n\n2화\n\nTwo.\n\n3화\n\nThree.");
+    plan.swap(0, 1);
+    let error = lib
+        .add_intakes_with(&plan, |lib, intake| {
+            if intake.number == Some(3) {
+                return Err(cipher_book::Error::Invalid("creation failed".into()));
+            }
+            let applied = lib.book.apply(Change::AddChapter {
+                number: intake.number,
+                title: intake.title.clone(),
+                source: intake.blocks.clone(),
+            })?;
+            Ok(ChapterId(applied.created[0]))
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("creation failed"));
+    assert_eq!(
+        lib.chapters
+            .iter()
+            .map(|c| (c.number, c.queue_place))
+            .collect::<Vec<_>>(),
+        [(1, Some(2)), (2, Some(3)), (10, Some(1))]
+    );
+    let error = lib
+        .add_intakes_with(&plan, |_, _| {
+            Err(cipher_book::Error::Invalid("first failed".into()))
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("first failed"));
+    assert_eq!(lib.book.jobs(false).unwrap().len(), 3);
+}
+
+#[test]
+fn batch_range_tracks_selection_and_falls_back_when_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    let mut plan = lib.intake_plan(&[], "1화\n\nOne.\n\n321화\n\nNext.\n\n322화\n\nLast.");
+    plan[0].include = false;
+    assert_eq!(crate::draft::batch_range(&plan), "321–322");
+    plan[1].include = false;
+    assert_eq!(crate::draft::batch_range(&plan), "322");
+    plan[2].include = false;
+    assert_eq!(crate::draft::batch_range(&plan), "1–322");
+    assert_eq!(crate::draft::batch_range(&[]), "");
+}
+
+#[test]
+fn batch_boundaries_do_not_treat_numbered_lists_as_chapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    let single = "Chapter 321\n\nA checklist.\n\n1. Check the gate\n\n2. Light the lamp";
+    assert_eq!(lib.intakes(single), vec![lib.intake(single).unwrap()]);
+    let text = format!("{single}\n\n322화\n\nThe next chapter.");
+    let parts = lib.intakes(&text);
+    assert_eq!(parts.len(), 2);
+    assert!(parts[0].blocks.contains(&"1. Check the gate".into()));
+    for marker in [
+        "1화",
+        "1話",
+        "1章",
+        "1장",
+        "1回",
+        "제1",
+        "第1",
+        "Chapter 1",
+        "Ch. 1",
+        "# 1",
+    ] {
+        assert_eq!(
+            lib.intakes(&format!("{marker}\n\nFirst.\n\n2\n\nSecond."))
+                .len(),
+            2,
+            "{marker}"
+        );
+    }
+    assert!(lib.intakes("").is_empty());
+}
+
+#[test]
+fn failed_batch_queue_keeps_every_saved_chapter_visible_and_refreshed() {
+    for partial_queue in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lib = Library::from_book(book(&dir)).unwrap();
+        let plan = lib.intake_plan(&[], "1화\n\nOne.\n\n2화\n\nTwo.");
+        let error = lib
+            .add_intakes_using(
+                &plan,
+                |lib, intake| {
+                    let applied = lib.book.apply(Change::AddChapter {
+                        number: intake.number,
+                        title: intake.title.clone(),
+                        source: intake.blocks.clone(),
+                    })?;
+                    Ok(ChapterId(applied.created[0]))
+                },
+                |book, ids| {
+                    if partial_queue {
+                        cipher_engine::translate(book, &ids[..1]).map_err(super::engine_error)?;
+                    }
+                    Err(cipher_book::Error::Invalid("job insertion failed".into()))
+                },
+            )
+            .unwrap_err();
+        assert!(error.to_string().contains("job insertion failed"));
+        assert_eq!(lib.book.chapters().unwrap().len(), 2);
+        assert_eq!(lib.chapters.len(), 2);
+        assert_eq!(
+            lib.chapters[0].state,
+            if partial_queue {
+                ChapterState::Queued
+            } else {
+                ChapterState::Waiting
+            }
+        );
+        assert_eq!(lib.chapters[1].state, ChapterState::Waiting);
+        lib.open_chapter(1).unwrap();
+        assert_eq!(lib.page().source[0].text, "Two.");
+    }
+}
+
+#[test]
+fn a_large_batch_fits_between_existing_chapters_in_number_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 0, &["Before."]);
+    chapter(&mut b, 1000, &["After."]);
+    let mut lib = Library::from_book(b).unwrap();
+    let text = (1..=128)
+        .map(|n| format!("Chapter {n}\n\nPart {n}."))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let plan = lib.intake_plan(&[], &text);
+    assert_eq!(lib.add_intakes(&plan).unwrap(), Some(1));
+    let expected = (0..=128).chain([1000]).collect::<Vec<_>>();
+    assert_eq!(
+        lib.book
+            .chapters()
+            .unwrap()
+            .iter()
+            .map(|c| c.number.unwrap())
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+        expected
+    );
+    assert_eq!(
+        lib.chapters[1..129]
+            .iter()
+            .map(|c| c.queue_place.unwrap())
+            .collect::<Vec<_>>(),
+        (1..=128).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_partial_draft_import_retains_unsaved_parts_and_retries_without_duplicates() {
+    for unnumbered_files in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("11화\n\nOne.\n\n12화\n\nTwo.\n\n13화\n\nThree.");
+        if unnumbered_files {
+            let d = s.draft.as_mut().unwrap();
+            d.text = rune::TextEdit::new("");
+            d.files = vec![
+                ("one.txt".into(), "One.".into()),
+                ("two.txt".into(), "Two.".into()),
+                ("three.txt".into(), "Three.".into()),
+            ];
+        }
+        let numbers = s
+            .draft_plan()
+            .iter()
+            .map(|p| (p.key, p.intake.number))
+            .collect::<Vec<_>>();
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        assert_eq!(s.lib.chapters.len(), 2);
+        assert!(
+            s.draft.is_some(),
+            "unsaved source must remain available for retry"
+        );
+        assert!(matches!(s.screen, crate::state::Screen::Draft));
+        let plan = s.draft_plan();
+        assert_eq!(
+            plan.iter()
+                .map(|p| (p.key, p.intake.number))
+                .collect::<Vec<_>>(),
+            numbers
+        );
+        let saved = plan
+            .iter()
+            .find(|p| p.intake.number == Some(12))
+            .unwrap()
+            .key;
+        assert!(!plan.iter().find(|p| p.key == saved).unwrap().include);
+        s.toggle_draft_part(saved);
+        assert!(
+            !s.draft_plan()
+                .iter()
+                .find(|p| p.key == saved)
+                .unwrap()
+                .include
+        );
+        assert!(
+            s.toast
+                .as_deref()
+                .unwrap()
+                .starts_with("Added 1 of 3 chapters:")
+        );
+        s.add_draft(&mut rune::Tx::default());
+        assert!(s.draft.is_none());
+        assert!(matches!(s.screen, crate::state::Screen::Reading));
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            [10, 11, 12, 13]
+        );
+    }
+}
+
+#[test]
+fn a_draft_import_with_nothing_saved_keeps_the_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 10, &["Existing."]);
+    let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+    s.open_draft("11화\n\nOne.\n\n12화\n\nTwo.");
+    s.add_draft_with(&mut rune::Tx::default(), |_, _| {
+        Err(cipher_book::Error::Invalid("nothing saved".into()))
+    });
+    assert!(s.draft.is_some());
+    assert!(matches!(s.screen, crate::state::Screen::Draft));
+    assert!(s.toast.as_deref().unwrap().contains("nothing saved"));
+    assert_eq!(s.lib.chapters.len(), 1);
+}
+
+#[test]
+fn a_fully_saved_draft_leaves_even_if_queueing_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 10, &["Existing."]);
+    let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+    s.open_draft("11화\n\nOne.\n\n12화\n\nTwo.");
+    s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+        lib.add_intakes_using(
+            plan,
+            |lib, intake| {
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            },
+            |_, _| Err(cipher_book::Error::Invalid("job insertion failed".into())),
+        )
+    });
+    assert!(s.draft.is_none());
+    assert!(matches!(s.screen, crate::state::Screen::Reading));
+    assert_eq!(s.lib.chapters[s.lib.current()].number, 11);
+    assert!(
+        s.toast
+            .as_deref()
+            .unwrap()
+            .starts_with("Added 2 of 2 chapters:")
+    );
+}
+
+#[test]
+fn titled_markdown_headings_split_without_splitting_plain_lists() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    for first in ["# 321: The Gate", "## 321. The Gate", "# 321 - The Gate"] {
+        let hashes = first.split_whitespace().next().unwrap();
+        let text = format!(
+            "{first}\n\nOpening.\n\n1. Check the gate\n\n2. Light the lamp\n\n{hashes} 322: The Tower\n\nNext."
+        );
+        let parts = lib.intakes(&text);
+        assert_eq!(parts.len(), 2, "{first}");
+        assert_eq!(parts[0].number, Some(321));
+        assert_eq!(parts[0].title.as_deref(), Some("The Gate"));
+        assert_eq!(
+            parts[0].blocks,
+            ["Opening.", "1. Check the gate", "2. Light the lamp"]
+        );
+        assert_eq!(parts[1].number, Some(322));
+    }
+}
+
+#[test]
+fn titled_markdown_subsections_stay_inside_the_shallowest_chapters() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    let single = "# 321: The Gate\n\nOpening.\n\n## 1. Arrival\n\nAt the gate.";
+    assert_eq!(lib.intakes(single), vec![lib.intake(single).unwrap()]);
+    let parts = lib.intakes(&format!(
+        "{single}\n\n# 322: The Tower\n\n## 2. Climbing\n\nUpstairs."
+    ));
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[0].number, Some(321));
+    assert!(parts[0].blocks.contains(&"## 1. Arrival".into()));
+    assert!(parts[1].blocks.contains(&"## 2. Climbing".into()));
+    assert_eq!(
+        lib.intakes("# 321: The Gate\n\nOpening.\n\n### Chapter 322\n\nNext.")
+            .len(),
+        2
+    );
+    assert_eq!(
+        lib.intakes("# 321: The Gate\n\nOpening.\n\n### 322\n\nNext.")
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn appending_a_file_after_partial_import_preserves_saved_and_skipped_parts() {
+    for sources in 0..3 {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("");
+        let d = s.draft.as_mut().unwrap();
+        if sources == 0 {
+            d.text = rune::TextEdit::new("11화\n\nOne.\n\n12화\n\nTwo.\n\n13화\n\nThree.");
+        } else {
+            d.files = vec![
+                ("one.txt".into(), "One.".into()),
+                ("two.txt".into(), "Two.".into()),
+            ];
+            if sources == 1 {
+                d.files.push(("three.txt".into(), "Three.".into()));
+            } else {
+                d.text = rune::TextEdit::new("Three.");
+            }
+        }
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        let skipped = s
+            .draft_plan()
+            .iter()
+            .find(|p| p.intake.number == Some(13))
+            .unwrap()
+            .key;
+        s.toggle_draft_part(skipped);
+        s.draft
+            .as_mut()
+            .unwrap()
+            .pick_file("four.txt".into(), "Four.".into(), true);
+        let plan = s.draft_plan();
+        let saved = plan.iter().find(|p| p.intake.number == Some(12)).unwrap();
+        assert!(saved.added);
+        assert!(!saved.include);
+        let skipped = plan.iter().find(|p| p.intake.number == Some(13)).unwrap();
+        assert!(!skipped.include);
+        assert_eq!(skipped.intake.blocks, ["Three."]);
+        let skipped_key = skipped.key;
+        assert_eq!(
+            plan.iter()
+                .find(|p| p.intake.blocks == ["Four."])
+                .unwrap()
+                .intake
+                .number,
+            Some(14)
+        );
+        s.toggle_draft_part(skipped_key);
+        s.add_draft(&mut rune::Tx::default());
+        assert!(s.draft.is_none());
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            [10, 11, 12, 13, 14]
+        );
+    }
+}
+
+#[test]
+fn leaving_a_partial_draft_returns_to_the_original_chapter_after_insertions() {
+    for discard in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Before."]);
+        let original = chapter(&mut b, 20, &["Reading."]);
+        chapter(&mut b, 30, &["After."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.go(&mut rune::Tx::default(), 1);
+        s.open_draft("1화\n\nOne.\n\n2화\n\nTwo.\n\n3화\n\nThree.");
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(1) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        assert!(s.draft.is_some());
+        assert_eq!(s.lib.chapters[0].number, 2);
+        s.leave_draft(&mut rune::Tx::default(), discard);
+        assert!(matches!(s.screen, crate::state::Screen::Reading));
+        assert_eq!(s.lib.chapters[s.lib.current()].id, original);
+        assert_eq!(s.draft.is_none(), discard);
+    }
+}
+
+#[test]
+fn appended_explicit_numbers_conflict_with_restored_automatic_numbers() {
+    for claimed in [13, 12] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("");
+        s.draft.as_mut().unwrap().files = vec![
+            ("one.txt".into(), "One.".into()),
+            ("two.txt".into(), "Two.".into()),
+            ("three.txt".into(), "Three.".into()),
+        ];
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        s.draft.as_mut().unwrap().pick_file(
+            "claimed.txt".into(),
+            format!("Chapter {claimed}\n\nClaimed."),
+            true,
+        );
+        let plan = s.draft_plan();
+        let appended = plan
+            .iter()
+            .find(|p| p.source.as_deref() == Some("claimed.txt"))
+            .unwrap();
+        assert_eq!(appended.issue, Some(IntakeIssue::Duplicate));
+        assert_eq!(appended.intake.exists, claimed == 12);
+        assert!(!appended.include);
+        assert_eq!(
+            plan.iter()
+                .filter(|p| p.include && p.intake.number == Some(claimed))
+                .count(),
+            usize::from(claimed == 13)
+        );
+        s.add_draft(&mut rune::Tx::default());
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            [10, 11, 12, 13]
+        );
+    }
+}
+
+#[test]
+fn punctuated_bare_markdown_numbers_split_at_the_same_heading_level() {
+    let dir = tempfile::tempdir().unwrap();
+    let lib = Library::from_book(book(&dir)).unwrap();
+    for hashes in ["#", "###"] {
+        for punctuation in [".", ":", ")"] {
+            let text = format!("{hashes} 321\n\nFirst.\n\n{hashes} 322{punctuation}\n\nSecond.");
+            let parts = lib.intakes(&text);
+            assert_eq!(parts.len(), 2, "{hashes} 322{punctuation}");
+            assert_eq!(parts[1].number, Some(322));
+            assert_eq!(parts[1].title, None);
+            assert_eq!(parts[1].blocks, ["Second."]);
+        }
+    }
+    let plain = "321\n\nFirst.\n\n322.\n\nSecond.";
+    assert_eq!(lib.intakes(plain), vec![lib.intake(plain).unwrap()]);
+}
+
+#[test]
+fn bare_markdown_chapters_set_the_depth_for_titled_subsections() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut b = book(&dir);
+    chapter(&mut b, 1, &["Existing chapter one."]);
+    let lib = Library::from_book(b).unwrap();
+    for first in ["# 321", "# 321.", "# 321:", "# 321)"] {
+        let text = format!("{first}\n\nOpening.\n\n## 1. Arrival\n\nAt the gate.");
+        assert_eq!(
+            lib.intakes(&text),
+            vec![lib.intake(&text).unwrap()],
+            "{first}"
+        );
+        let plan = lib.intake_plan(&[], &text);
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].intake.number, Some(321));
+        assert!(plan[0].include);
+    }
+    let parts = lib.intakes("# 321\n\nFirst.\n\n# 322.\n\nSecond.");
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1].number, Some(322));
+}
+
+#[test]
+fn appended_files_cannot_claim_pending_paste_numbers() {
+    for explicit in [true, false] {
+        let dir = tempfile::tempdir().unwrap();
+        let mut b = book(&dir);
+        chapter(&mut b, 10, &["Existing."]);
+        let mut s = crate::state::State::new(Library::from_book(b).unwrap());
+        s.open_draft("");
+        let d = s.draft.as_mut().unwrap();
+        d.files = vec![
+            ("one.txt".into(), "One.".into()),
+            ("two.txt".into(), "Two.".into()),
+        ];
+        d.text = rune::TextEdit::new("Pending paste.");
+        s.add_draft_with(&mut rune::Tx::default(), |lib, plan| {
+            lib.add_intakes_with(plan, |lib, intake| {
+                if intake.number == Some(11) {
+                    return Err(cipher_book::Error::Invalid("creation failed".into()));
+                }
+                let applied = lib.book.apply(Change::AddChapter {
+                    number: intake.number,
+                    title: intake.title.clone(),
+                    source: intake.blocks.clone(),
+                })?;
+                Ok(ChapterId(applied.created[0]))
+            })
+        });
+        s.draft.as_mut().unwrap().pick_file(
+            "new.txt".into(),
+            if explicit {
+                "Chapter 13\n\nNew."
+            } else {
+                "New."
+            }
+            .into(),
+            true,
+        );
+        let plan = s.draft_plan();
+        let paste = plan
+            .iter()
+            .find(|p| p.intake.blocks == ["Pending paste."])
+            .unwrap();
+        assert_eq!(paste.intake.number, Some(13));
+        assert_eq!(paste.issue, Some(IntakeIssue::NoNumber));
+        assert!(paste.include);
+        let new = plan
+            .iter()
+            .find(|p| p.source.as_deref() == Some("new.txt"))
+            .unwrap();
+        assert_eq!(new.intake.number, Some(if explicit { 13 } else { 14 }));
+        assert_eq!(
+            new.issue,
+            Some(if explicit {
+                IntakeIssue::Duplicate
+            } else {
+                IntakeIssue::NoNumber
+            })
+        );
+        assert_eq!(new.include, !explicit);
+        s.add_draft(&mut rune::Tx::default());
+        let expected = if explicit {
+            vec![10, 11, 12, 13]
+        } else {
+            vec![10, 11, 12, 13, 14]
+        };
+        assert_eq!(
+            s.lib.chapters.iter().map(|c| c.number).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(s.draft.is_none());
+    }
+}
+
+#[test]
 fn a_quick_open_and_its_scan_count_what_a_full_open_counts() {
     let dir = tempfile::tempdir().unwrap();
     let mut b = book(&dir);

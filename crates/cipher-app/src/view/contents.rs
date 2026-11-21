@@ -319,7 +319,21 @@ pub fn contents(s: &State, p: &Pal, width: f32) -> El {
             .draft_intake()
             .and_then(|i| i.number)
             .unwrap_or_else(|| s.next_number());
-        let label = format!("Chapter {n}");
+        let plan = s.draft_plan();
+        let batch = plan.len() > 1 || s.draft.as_ref().is_some_and(|d| !d.files.is_empty());
+        let label = if batch {
+            format!(
+                "{} {}",
+                if plan.iter().filter(|p| p.include).count() == 1 {
+                    "Chapter"
+                } else {
+                    "Chapters"
+                },
+                crate::draft::batch_range(&plan)
+            )
+        } else {
+            format!("Chapter {n}")
+        };
         list = list.child(
             row()
                 .key("ch-draft")
@@ -339,7 +353,7 @@ pub fn contents(s: &State, p: &Pal, width: f32) -> El {
                         .grow(1.0),
                 )
                 .child(
-                    text("draft")
+                    text(if batch { "· draft" } else { "draft" })
                         .font(TextStyle::new(11.0, 400.0))
                         .color(p.ink3),
                 )
