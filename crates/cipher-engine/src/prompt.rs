@@ -5,7 +5,7 @@
 //! milestone 4 by measuring on real Chapters.
 
 use cipher_book::{Book, Chapter, Glossary, Term, TermStatus};
-use cipher_text::matching;
+use cipher_text::matching::SourceForms;
 
 use crate::Result;
 
@@ -66,8 +66,9 @@ impl Context {
             .iter()
             .filter(|t| t.status != TermStatus::Dismissed)
             .collect();
-        let sources: Vec<&str> = live.iter().map(|t| t.fields.source.as_str()).collect();
-        let terms: Vec<Term> = matching::terms_in(&source, &sources)
+        let sources = SourceForms::new(live.iter().map(|t| t.source_forms()));
+        let terms: Vec<Term> = sources
+            .terms_in(&source)
             .into_iter()
             .map(|i| live[i].clone())
             .collect();
@@ -118,6 +119,7 @@ impl Context {
 /// `마탑주 = Magic Tower Lord (title, male; Head of the Magic Tower…)`
 pub(crate) fn term_line(t: &Term) -> String {
     let f = &t.fields;
+    let sources = t.source_forms().collect::<Vec<_>>().join(" / ");
     let mut extra: Vec<String> = Vec::new();
     let mut tags: Vec<&str> = Vec::new();
     if t.status == TermStatus::Pending {
@@ -139,9 +141,9 @@ pub(crate) fn term_line(t: &Term) -> String {
         extra.push(format!("never: {}", t.forbidden.join(", ")));
     }
     if extra.is_empty() {
-        format!("{} = {}", f.source, f.rendering)
+        format!("{sources} = {}", f.rendering)
     } else {
-        format!("{} = {} ({})", f.source, f.rendering, extra.join("; "))
+        format!("{sources} = {} ({})", f.rendering, extra.join("; "))
     }
 }
 
@@ -209,6 +211,65 @@ fn cut(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
     use cipher_book::{BookMeta, Change, ChapterId, TermFields};
+
+    #[test]
+    fn glossary_context_includes_the_survivor_when_only_an_alias_appears() {
+        use cipher_book::TermId;
+        let dir = tempfile::tempdir().unwrap();
+        let mut book = Book::create(
+            dir.path().join("aliases.cipher"),
+            BookMeta {
+                title: "Test".into(),
+                source_lang: "ko".into(),
+                target_lang: "en".into(),
+            },
+        )
+        .unwrap();
+        let id = |book: &mut Book, source: &str, rendering: &str| {
+            TermId(
+                book.apply(Change::UpsertTerm {
+                    id: None,
+                    fields: TermFields {
+                        source: source.into(),
+                        rendering: rendering.into(),
+                        ..Default::default()
+                    },
+                    status: TermStatus::Accepted,
+                    first_chapter: None,
+                })
+                .unwrap()
+                .created[0],
+            )
+        };
+        let keep = id(&mut book, "고요한 탑", "Quiet Tower");
+        let other = id(&mut book, "고요의 탑", "Silent Spire");
+        let merge = book.preview_term_merge(keep, other).unwrap();
+        book.apply(Change::MergeTerms(Box::new(merge))).unwrap();
+        let chapter = ChapterId(
+            book.apply(Change::AddChapter {
+                number: Some(1),
+                title: None,
+                source: vec!["고요의 탑이 나타났다.".into()],
+            })
+            .unwrap()
+            .created[0],
+        );
+        let context = Context::gather(
+            &book,
+            &book.chapter(chapter).unwrap(),
+            &book.glossary().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            context.terms.iter().map(|t| t.id).collect::<Vec<_>>(),
+            [keep]
+        );
+        assert!(
+            context
+                .text
+                .contains("고요한 탑 / 고요의 탑 = Quiet Tower (never: Silent Spire)")
+        );
+    }
 
     #[test]
     fn term_status_controls_prompt_context() {

@@ -62,6 +62,7 @@ pub fn cast(s: &State, p: &Pal) -> El {
     let mut tools = row().w_full().gap(10.0).center_y().pb(14.0).child(
         text_input(&s.cast_search, UI)
             .key("cast-search")
+            .label("Find a Term in Cast")
             .w(260.0)
             .px(10.0)
             .py(5.0)
@@ -127,15 +128,7 @@ pub fn cast(s: &State, p: &Pal) -> El {
         .into_iter()
         .filter(|&i| !s.cast_drifting || !lib.usage(i).drift_chapters.is_empty())
         .filter(|&i| !s.cast_pending || lib.terms[i].provisional)
-        .filter(|&i| {
-            let t = &lib.terms[i];
-            query.is_empty()
-                || t.rendering.to_lowercase().contains(&query)
-                || t.source.contains(&query)
-                || t.forbidden
-                    .iter()
-                    .any(|f| f.to_lowercase().contains(&query))
-        })
+        .filter(|&i| lib.terms[i].matches_query(&query))
         .collect();
     if order.is_empty() {
         list = list.child(
@@ -175,7 +168,7 @@ pub fn cast(s: &State, p: &Pal) -> El {
         } else if t.may_omit {
             right = right.child(text("may go unnamed").font(SMALL).color(p.ink4));
         }
-        let mut second = vec![t.source.clone()];
+        let mut second = vec![t.source_forms().collect::<Vec<_>>().join(" / ")];
         if !t.forbidden.is_empty() {
             second.push(format!("never {}", t.forbidden.join(", ")));
         }
@@ -247,24 +240,21 @@ pub fn cast(s: &State, p: &Pal) -> El {
             .border_sides([0.0, 0.0, 1.0, 0.0], p.rule)
             .child(line);
         if open {
-            let detail = super::drift::drift_panel(s, i, p).unwrap_or_else(|| {
-                text(format!(
-                    "No drift flagged for \u{201c}{}\u{201d}.",
-                    t.rendering
-                ))
-                .font(SMALL)
-                .color(p.ink3)
-                .wrap()
-            });
-            item = item.child(
+            let detail = if let Some(editor) = s.term_merge.as_ref().filter(|m| m.anchor == t.id) {
+                super::term_merge::panel(s, editor, i, p)
+            } else {
+                let drift = super::drift::drift_panel(s, i, p).unwrap_or_else(|| {
+                    text(format!("No drift flagged for “{}”.", t.rendering))
+                        .font(SMALL)
+                        .color(p.ink3)
+                        .wrap()
+                });
                 col()
                     .w_full()
-                    .pl(8.0)
-                    .pr(8.0)
-                    .pb(14.0)
                     .child(super::term_editor::panel(s, i, p))
-                    .child(detail),
-            );
+                    .child(drift)
+            };
+            item = item.child(col().w_full().pl(8.0).pr(8.0).pb(14.0).child(detail));
         }
         list = list.child(item);
     }

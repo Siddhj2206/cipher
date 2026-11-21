@@ -1,4 +1,4 @@
-use cipher_book::{RevisionId, TermId, TermStatus};
+use cipher_book::{Change, RevisionId, TermId, TermMerge, TermStatus};
 use rune::TextEdit;
 
 use crate::state::State;
@@ -9,7 +9,68 @@ pub struct TermEditor {
     pub note: TextEdit,
 }
 
+pub struct TermMergeEditor {
+    pub anchor: TermId,
+    pub search: TextEdit,
+    pub preview: Option<TermMerge>,
+}
+
 impl State {
+    pub fn start_term_merge(&mut self, index: usize) {
+        self.term_editor = None;
+        self.term_merge = Some(TermMergeEditor {
+            anchor: self.lib.terms[index].id,
+            search: TextEdit::new(""),
+            preview: None,
+        });
+    }
+
+    pub fn preview_term_merge(&mut self, partner: TermId) {
+        let Some(editor) = &mut self.term_merge else {
+            return;
+        };
+        match self.lib.book().preview_term_merge(editor.anchor, partner) {
+            Ok(preview) => editor.preview = Some(preview),
+            Err(e) => self.toast = Some(e.to_string()),
+        }
+    }
+
+    pub fn confirm_term_merge(&mut self) -> bool {
+        let Some(preview) = self.term_merge.as_mut().and_then(|e| e.preview.take()) else {
+            return false;
+        };
+        let id = preview.survivor.id;
+        let card = self.term_card_id().map(|card| {
+            if card == preview.duplicate.id {
+                id
+            } else {
+                card
+            }
+        });
+        let label = format!("Merged into {}", preview.survivor.fields.rendering);
+        let result = self
+            .lib
+            .book_mut()
+            .apply(Change::MergeTerms(Box::new(preview)))
+            .and_then(|applied| {
+                self.lib.reload()?;
+                Ok(Some((applied.revision, label)))
+            });
+        let merged = result.is_ok();
+        self.finish_term(result, Some(id), card);
+        if merged {
+            self.term_merge = None;
+            self.cast_pending = false;
+            self.cast_drifting = false;
+            if let Some(t) = self.cast_open.and_then(|i| self.lib.terms.get(i))
+                && !t.matches_query(&self.cast_search.text.trim().to_lowercase())
+            {
+                self.cast_search = TextEdit::new("");
+            }
+        }
+        merged
+    }
+
     pub fn edit_cast_term(&mut self, index: usize) {
         let t = &self.lib.terms[index];
         self.term_editor = Some(TermEditor {
@@ -98,6 +159,7 @@ impl State {
             Err(e) => self.toast = Some(e.to_string()),
         }
         self.term_editor = None;
+        self.term_merge = None;
         self.term_toast_undo = None;
     }
 }
@@ -182,6 +244,66 @@ mod tests {
         s.pending_scroll = Some(("row42".into(), 160.0));
         s.decide_term(0, true);
         assert_eq!(s.pending_scroll, Some(("row42".into(), 160.0)));
+    }
+
+    #[test]
+    fn cast_merge_updates_drift_without_editing_prose_and_history_undo_reverts_it() {
+        let (_dir, mut s) = state();
+        let chapter = cipher_book::ChapterId(
+            s.lib
+                .book_mut()
+                .apply(Change::AddChapter {
+                    number: Some(1),
+                    title: None,
+                    source: vec!["마탑주가 왔다.".into()],
+                })
+                .unwrap()
+                .created[0],
+        );
+        let source = s.lib.book().chapter(chapter).unwrap().source[0].id;
+        s.lib
+            .book_mut()
+            .apply(Change::SetTranslation {
+                chapter,
+                pairs: vec![cipher_book::NewPair {
+                    source: vec![source],
+                    translation: vec!["마탑주 arrived.".into()],
+                    flagged: None,
+                }],
+            })
+            .unwrap();
+        s.lib.reload().unwrap();
+        s.lib.apply_scan(s.lib.scan()().unwrap());
+        assert_eq!(s.lib.drifting_terms(), 0);
+        let before = s.lib.book().chapter(chapter).unwrap();
+        let kept = s.lib.terms[1].id;
+        let removed = s.lib.terms[0].id;
+        s.screen = Screen::Cast;
+        s.cast_open = Some(1);
+        s.start_term_merge(1);
+        s.preview_term_merge(removed);
+        assert_eq!(s.lib.terms.len(), 3, "preview must not apply changes");
+        assert!(s.confirm_term_merge());
+        let index = s.cast_open.unwrap();
+        assert_eq!(s.lib.terms[index].id, kept);
+        assert_eq!(s.lib.terms[index].aliases, ["마탑주"]);
+        s.lib.apply_scan(s.lib.scan()().unwrap());
+        assert_eq!(s.lib.usage(index).drift_chapters, [0]);
+        assert_eq!(
+            s.lib.book().chapter(chapter).unwrap().translation,
+            before.translation
+        );
+        assert_eq!(s.lib.book().chapter(chapter).unwrap().source, before.source);
+        s.open_history();
+        assert_eq!(
+            s.history.revisions[0].kind,
+            cipher_book::RevisionKind::TermMerge
+        );
+        s.undo_history();
+        assert_eq!(s.lib.terms.len(), 3);
+        assert!(s.lib.terms.iter().any(|t| t.id == removed));
+        s.lib.apply_scan(s.lib.scan()().unwrap());
+        assert_eq!(s.lib.drifting_terms(), 0);
     }
 
     #[test]

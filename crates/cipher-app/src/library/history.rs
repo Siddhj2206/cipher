@@ -9,6 +9,7 @@ pub fn undo_mode(revision: &RevisionSummary) -> UndoMode {
         RevisionKind::Translation
         | RevisionKind::Chapter
         | RevisionKind::Import
+        | RevisionKind::TermMerge
         | RevisionKind::Undo => UndoMode::Whole,
         RevisionKind::Review
         | RevisionKind::HandEdit
@@ -102,10 +103,12 @@ impl Library {
         let current = self.chapters.get(index).map(|c| c.id);
         let outcome = self.book.undo(id, undo_mode(&preview.revision))?;
         if matches!(outcome, UndoOutcome::Undone { .. }) {
-            let rebuild = preview
-                .changes
-                .iter()
-                .any(|(entity, _)| matches!(*entity, "chapter" | "term" | "forbidden_rendering"));
+            let rebuild = preview.changes.iter().any(|(entity, _)| {
+                matches!(
+                    *entity,
+                    "chapter" | "term" | "term_alias" | "forbidden_rendering"
+                )
+            });
             if rebuild {
                 self.rebuild_after_history(current, index)?;
             } else {

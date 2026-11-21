@@ -16,7 +16,7 @@
 use std::collections::BTreeMap;
 use std::ops::Range;
 
-use crate::matching::{count_matches, find_rendering};
+use crate::matching::{SourceForms, find_rendering};
 use crate::script::{Script, script_of};
 
 /// The source and translation text of one Pair (a run of source Blocks and the
@@ -32,15 +32,23 @@ pub struct PairText<'a> {
 /// A Term as the checks see it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CheckTerm {
-    /// Source form. One per Term; the precision matcher handles grammatical
+    /// Primary source form; the precision matcher handles grammatical
     /// forms (particles) itself. An empty source never matches.
     pub source: String,
+    /// Additional names for this same Term.
+    pub aliases: Vec<String>,
     /// The approved rendering. An empty rendering disables the missing-name check.
     pub rendering: String,
     /// Renderings that must not appear.
     pub forbidden: Vec<String>,
     /// The translation may leave it unnamed: the missing-name check skips it.
     pub may_omit: bool,
+}
+
+impl CheckTerm {
+    fn source_forms(&self) -> impl Iterator<Item = &str> {
+        std::iter::once(self.source.as_str()).chain(self.aliases.iter().map(String::as_str))
+    }
 }
 
 /// A run of source-script characters found in a translation.
@@ -252,8 +260,8 @@ pub fn forbidden_in_pair(pair: &PairText, terms: &[CheckTerm]) -> Vec<ForbiddenH
     if terms.iter().all(|t| t.forbidden.is_empty()) {
         return Vec::new();
     }
-    let sources: Vec<&str> = terms.iter().map(|t| t.source.as_str()).collect();
-    let counts = count_matches(pair.source, &sources);
+    let sources = SourceForms::new(terms.iter().map(CheckTerm::source_forms));
+    let counts = sources.counts(pair.source);
     let named: Vec<usize> = (0..terms.len()).filter(|&i| counts[i] > 0).collect();
     if named.is_empty() {
         return Vec::new();
@@ -287,10 +295,10 @@ pub fn forbidden_in_pair(pair: &PairText, terms: &[CheckTerm]) -> Vec<ForbiddenH
 
 /// How often each Term's source is named across all `pairs`, by Term index.
 pub fn source_counts(pairs: &[PairText], terms: &[CheckTerm]) -> Vec<usize> {
-    let sources: Vec<&str> = terms.iter().map(|t| t.source.as_str()).collect();
+    let sources = SourceForms::new(terms.iter().map(CheckTerm::source_forms));
     let mut totals = vec![0; terms.len()];
     for pair in pairs {
-        for (t, n) in totals.iter_mut().zip(count_matches(pair.source, &sources)) {
+        for (t, n) in totals.iter_mut().zip(sources.counts(pair.source)) {
             *t += n;
         }
     }
@@ -310,7 +318,7 @@ pub fn never_rendered(pairs: &[PairText], terms: &[CheckTerm]) -> Vec<(usize, us
     for (i, term) in terms.iter().enumerate() {
         if term.rendering.is_empty()
             || term.may_omit
-            || term.source.trim().chars().count() <= 1
+            || !term.source_forms().any(|s| s.trim().chars().count() > 1)
             || counts[i] < MISSING_NAME_MIN_COUNT
         {
             continue;

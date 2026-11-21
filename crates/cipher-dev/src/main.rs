@@ -340,12 +340,14 @@ fn drift_map(book: &Book) -> Result<Vec<(cipher_book::Term, Vec<cipher_book::Cha
         .iter()
         .map(|t| CheckTerm {
             source: t.fields.source.clone(),
+            aliases: t.aliases.clone(),
             rendering: t.fields.rendering.clone(),
             forbidden: t.forbidden.clone(),
             may_omit: t.fields.may_omit,
         })
         .collect();
-    let sources: Vec<&str> = terms.iter().map(|t| t.fields.source.as_str()).collect();
+    let sources =
+        cipher_text::matching::SourceForms::new(terms.iter().map(cipher_book::Term::source_forms));
     let mut out: Vec<Vec<cipher_book::ChapterId>> = vec![Vec::new(); terms.len()];
     for summary in book.chapters()? {
         let chapter = book.chapter(summary.id)?;
@@ -381,7 +383,7 @@ fn drift_map(book: &Book) -> Result<Vec<(cipher_book::Term, Vec<cipher_book::Cha
             .map(|(s, _)| s.as_str())
             .collect::<Vec<_>>()
             .join("\n");
-        let named = cipher_text::matching::terms_in(&all, &sources);
+        let named = sources.terms_in(&all);
         let subset: Vec<CheckTerm> = named.iter().map(|&i| check[i].clone()).collect();
         for d in cipher_text::drift::drift(&pairs, &subset) {
             let t = named[d.term_index];

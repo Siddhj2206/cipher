@@ -7,6 +7,55 @@ use rusqlite::OptionalExtension;
 use crate::types::*;
 use crate::{Book, Error, Result};
 
+pub(crate) fn read_terms(conn: &rusqlite::Connection) -> Result<Vec<Term>> {
+    let mut aliases: HashMap<i64, Vec<String>> = HashMap::new();
+    let mut stmt = conn.prepare("SELECT term_id, source FROM term_alias ORDER BY source")?;
+    for row in stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+        let (term, source) = row?;
+        aliases.entry(term).or_default().push(source);
+    }
+    let mut forbidden: HashMap<i64, Vec<String>> = HashMap::new();
+    let mut stmt =
+        conn.prepare("SELECT term_id, rendering FROM forbidden_rendering ORDER BY rendering")?;
+    for row in stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
+        let (term, rendering) = row?;
+        forbidden.entry(term).or_default().push(rendering);
+    }
+
+    let mut stmt = conn.prepare(
+        "SELECT id, source, rendering, kind, gender, note, status, first_chapter_id, may_omit
+         FROM term ORDER BY id",
+    )?;
+    let rows = stmt.query_map([], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            TermFields {
+                source: r.get(1)?,
+                rendering: r.get(2)?,
+                kind: r.get(3)?,
+                gender: r.get(4)?,
+                note: r.get(5)?,
+                may_omit: r.get(8)?,
+            },
+            r.get::<_, String>(6)?,
+            r.get::<_, Option<i64>>(7)?,
+        ))
+    })?;
+    let mut terms = Vec::new();
+    for row in rows {
+        let (id, fields, status, first) = row?;
+        terms.push(Term {
+            id: TermId(id),
+            fields,
+            status: TermStatus::parse(&status)?,
+            first_chapter: first.map(ChapterId),
+            aliases: aliases.remove(&id).unwrap_or_default(),
+            forbidden: forbidden.remove(&id).unwrap_or_default(),
+        });
+    }
+    Ok(terms)
+}
+
 impl Book {
     pub fn meta(&self) -> Result<BookMeta> {
         let get = |key: &str| -> Result<String> {
@@ -143,45 +192,7 @@ impl Book {
 
     /// Terms of every status, Style Rules and Forms of Address.
     pub fn glossary(&self) -> Result<Glossary> {
-        let mut forbidden: HashMap<i64, Vec<String>> = HashMap::new();
-        let mut stmt = self
-            .conn
-            .prepare("SELECT term_id, rendering FROM forbidden_rendering ORDER BY rendering")?;
-        for row in stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))? {
-            let (term, rendering) = row?;
-            forbidden.entry(term).or_default().push(rendering);
-        }
-
-        let mut stmt = self.conn.prepare(
-            "SELECT id, source, rendering, kind, gender, note, status, first_chapter_id, may_omit
-             FROM term ORDER BY id",
-        )?;
-        let rows = stmt.query_map([], |r| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                TermFields {
-                    source: r.get(1)?,
-                    rendering: r.get(2)?,
-                    kind: r.get(3)?,
-                    gender: r.get(4)?,
-                    note: r.get(5)?,
-                    may_omit: r.get(8)?,
-                },
-                r.get::<_, String>(6)?,
-                r.get::<_, Option<i64>>(7)?,
-            ))
-        })?;
-        let mut terms = Vec::new();
-        for row in rows {
-            let (id, fields, status, first) = row?;
-            terms.push(Term {
-                id: TermId(id),
-                fields,
-                status: TermStatus::parse(&status)?,
-                first_chapter: first.map(ChapterId),
-                forbidden: forbidden.remove(&id).unwrap_or_default(),
-            });
-        }
+        let terms = read_terms(&self.conn)?;
 
         let mut stmt = self
             .conn

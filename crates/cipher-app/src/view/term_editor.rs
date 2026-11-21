@@ -59,7 +59,15 @@ pub fn panel(s: &State, index: usize, p: &Pal) -> El {
         .color(p.ink3)
         .wrap(),
     );
-    let mut actions = row().gap(8.0);
+    if !t.aliases.is_empty() {
+        panel = panel.child(
+            text(format!("Also matches {}", t.aliases.join(" · ")))
+                .font(UI)
+                .color(p.ink2)
+                .wrap(),
+        );
+    }
+    let mut actions = row().gap(8.0).flex_wrap();
     if t.provisional {
         actions = actions.child(
             btn("Accept", true, p)
@@ -67,6 +75,19 @@ pub fn panel(s: &State, index: usize, p: &Pal) -> El {
                 .on_press(move |s: &mut State| s.decide_term(index, true)),
         );
     }
-    panel.child(actions.child(btn("Dismiss", false, p).key("term-dismiss").help("Dismissed terms are no longer sent with chapters and no longer counted for Drift.").on_press(move |s: &mut State| s.decide_term(index, false)))
-        .child(btn("Edit", false, p).key("term-edit").on_press(move |s: &mut State| s.edit_cast_term(index))))
+    actions = actions.child(btn("Dismiss", false, p).key("term-dismiss").help("Dismissed terms are no longer sent with chapters and no longer counted for Drift.").on_press(move |s: &mut State| s.decide_term(index, false)))
+        .child(btn("Edit", false, p).key("term-edit").on_press(move |s: &mut State| s.edit_cast_term(index)));
+    if s.lib.terms.len() > 1 {
+        actions = actions.child(
+            btn("Merge duplicate…", false, p)
+                .key("term-merge-start")
+                .focusable(true)
+                .focus_ring(2.0, 2.0, p.red)
+                .on_press_tx(move |s: &mut State, tx| {
+                    s.start_term_merge(index);
+                    tx.scroll_key_to(format!("term{index}"), 16.0);
+                }),
+        );
+    }
+    panel.child(actions)
 }

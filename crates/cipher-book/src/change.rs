@@ -7,7 +7,7 @@ use rusqlite::{OptionalExtension, params};
 
 use crate::revision::{Table, Writer, snapshot};
 use crate::types::*;
-use crate::{Error, Result};
+use crate::{Error, Result, TermMerge};
 
 /// One edit. `Book::apply` turns it into one Revision, so it is also one undo step.
 #[derive(Debug, Clone, PartialEq)]
@@ -81,6 +81,9 @@ pub enum Change {
     DeleteTerm {
         term: TermId,
     },
+    /// Keep one active Term, combining its source forms and Forbidden Renderings with the
+    /// duplicate's. Reject a stale preview. Never changes prose.
+    MergeTerms(Box<TermMerge>),
     /// No-op if already forbidden.
     AddForbidden {
         term: TermId,
@@ -139,6 +142,7 @@ impl Change {
             | AddProposedEdits { .. }
             | SetSuggestionState { .. } => RevisionKind::Suggestion,
             DecideEdits { .. } | DecideMetadata { .. } => RevisionKind::Review,
+            MergeTerms(_) => RevisionKind::TermMerge,
             UpsertTerm { .. }
             | SetTermStatus { .. }
             | DeleteTerm { .. }
@@ -179,6 +183,11 @@ pub(crate) fn metadata_snapshot(
                 .collect::<rusqlite::Result<Vec<_>>>()?;
             for id in ids {
                 rows.push(snapshot(conn, Table::ForbiddenRendering, id)?);
+            }
+            let mut stmt =
+                conn.prepare("SELECT id FROM term_alias WHERE term_id = ?1 ORDER BY source, id")?;
+            for id in stmt.query_map([term.0], |r| r.get::<_, i64>(0))? {
+                rows.push(snapshot(conn, Table::TermAlias, id?)?);
             }
             rows
         }
@@ -578,6 +587,17 @@ fn write(w: &mut Writer<'_>, change: Change, created: &mut Vec<i64>) -> Result<S
                         ));
                     }
                     w.update(Table::Term, term.0, &cols)?;
+                    let primary_alias: Option<i64> = w
+                        .tx()
+                        .query_row(
+                            "SELECT id FROM term_alias WHERE term_id = ?1 AND source = ?2",
+                            params![term.0, fields.source],
+                            |r| r.get(0),
+                        )
+                        .optional()?;
+                    if let Some(id) = primary_alias {
+                        w.delete(Table::TermAlias, id)?;
+                    }
                     if old != fields.rendering {
                         add_forbidden(w, term, &old)?;
                         remove_forbidden(w, term, &fields.rendering)?;
@@ -601,16 +621,11 @@ fn write(w: &mut Writer<'_>, change: Change, created: &mut Vec<i64>) -> Result<S
 
         Change::DeleteTerm { term } => {
             let name = term_name(w, term)?;
-            for id in ids(
-                w,
-                "SELECT id FROM forbidden_rendering WHERE term_id = ?1",
-                term.0,
-            )? {
-                w.delete(Table::ForbiddenRendering, id)?;
-            }
-            w.delete(Table::Term, term.0)?;
+            delete_term(w, term)?;
             Ok(format!("Deleted {name}"))
         }
+
+        Change::MergeTerms(preview) => merge_terms(w, &preview),
 
         Change::AddForbidden { term, rendering } => {
             add_forbidden(w, term, &rendering)?;
@@ -1025,6 +1040,63 @@ fn decide_edits(w: &mut Writer<'_>, decisions: Vec<(ProposedEditId, bool)>) -> R
     } else {
         label
     })
+}
+
+fn delete_term(w: &mut Writer<'_>, term: TermId) -> Result<()> {
+    for (table, sql) in [
+        (
+            Table::ForbiddenRendering,
+            "SELECT id FROM forbidden_rendering WHERE term_id = ?1 ORDER BY id",
+        ),
+        (
+            Table::TermAlias,
+            "SELECT id FROM term_alias WHERE term_id = ?1 ORDER BY id",
+        ),
+    ] {
+        for id in ids(w, sql, term.0)? {
+            w.delete(table, id)?;
+        }
+    }
+    w.delete(Table::Term, term.0)
+}
+
+fn merge_terms(w: &mut Writer<'_>, preview: &TermMerge) -> Result<String> {
+    let keep = preview.survivor.id;
+    let remove = preview.duplicate.id;
+    match TermMerge::read(w.tx(), keep, remove) {
+        Ok(current) if current == *preview => {}
+        Ok(_) | Err(Error::NotFound(..)) => {
+            return Err(Error::Invalid(
+                "These Terms changed. Open the merge preview again.".into(),
+            ));
+        }
+        Err(e) => return Err(e),
+    }
+    for source in preview.aliases() {
+        if !preview.survivor.aliases.iter().any(|s| s == source) {
+            w.insert(
+                Table::TermAlias,
+                &[("term_id", int(keep.0)), ("source", text(source))],
+            )?;
+        }
+    }
+    let forbidden = preview.forbidden();
+    for old in &preview.survivor.forbidden {
+        if !forbidden.contains(&old.as_str()) {
+            remove_forbidden(w, keep, old)?;
+        }
+    }
+    for rendering in forbidden {
+        add_forbidden(w, keep, rendering)?;
+    }
+    delete_term(w, remove)?;
+    Ok(format!(
+        "Merged {} ({}) into {} ({})",
+        preview.duplicate.fields.rendering,
+        preview.duplicate.fields.source,
+        preview.survivor.fields.rendering,
+        preview.survivor.fields.source
+    ))
 }
 
 fn add_forbidden(w: &mut Writer<'_>, term: TermId, rendering: &str) -> Result<()> {

@@ -4,10 +4,33 @@ use cipher_text::drift::{Drift, DriftKind, drift};
 fn term(source: &str, rendering: &str, forbidden: &[&str]) -> CheckTerm {
     CheckTerm {
         source: source.into(),
+        aliases: Vec::new(),
         rendering: rendering.into(),
         forbidden: forbidden.iter().map(|s| s.to_string()).collect(),
         may_omit: false,
     }
+}
+
+#[test]
+fn alternate_forms_count_together_once_per_occurrence_and_find_forbidden_wording() {
+    let mut t = term("포혈공", "Blood Duke", &["Blood Lord"]);
+    t.aliases = vec!["포혈공(怖血公)".into(), "혈공작".into()];
+    let pairs = [
+        pair("포혈공(怖血公)이 말했다.", "The Blood Lord spoke."),
+        pair("혈공작이 웃었다.", "He smiled."),
+        pair("포혈공이 떠났다.", "He left."),
+        pair("다른 사람", "The Blood Lord listened."),
+    ];
+    let found = drift(&pairs, &[t]);
+    assert_eq!(found.len(), 2);
+    assert_eq!(
+        found[0].kind,
+        DriftKind::ForbiddenPresent {
+            rendering: "Blood Lord".into(),
+            count: 1
+        }
+    );
+    assert_eq!(found[1].kind, DriftKind::NeverRendered { source_count: 3 });
 }
 
 fn pair<'a>(source: &'a str, translation: &'a str) -> PairText<'a> {
